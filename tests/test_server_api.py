@@ -10,7 +10,7 @@ def test_health_endpoint():
     assert response.json() == {"status": "ok"}
 
 
-def test_deck_endpoint_reports_cell_instance_kind_and_elements():
+def test_deck_endpoint_reports_cell_instance_source_and_elements():
     app = App()
 
     @app.cell
@@ -36,9 +36,11 @@ def test_deck_endpoint_reports_cell_instance_kind_and_elements():
 
     assert body["cells"]["setup"]["instance"] == "static"
     assert body["cells"]["setup"]["elements"] == []
+    assert "def setup" in body["cells"]["setup"]["source"]
 
     live_demo_meta = body["cells"]["live_demo"]
     assert live_demo_meta["instance"] == "editable"
     assert live_demo_meta["elements"] == [
         {"name": "speed", "kind": "slider", "config": {"min": 1, "max": 10, "default": 3}}
     ]
+    assert "def live_demo(speed)" in live_demo_meta["source"]

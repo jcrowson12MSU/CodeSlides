@@ -56,9 +56,21 @@ Then drive the served app with a script (see the two written during the
   part of `TODO.md` #6 (`cli.py:load_deck`) -- if `/api/deck` returns
   empty `cells`, check the server was started against a real file and the
   frontend was rebuilt after any backend/protocol changes.
-- `/api/deck`'s shape is `{cells: {name: {instance, elements}}, slides}` --
-  not a flat `cells: string[]` list (that was the original placeholder
+- `/api/deck`'s shape is `{cells: {name: {instance, source, elements}}, slides}`
+  -- not a flat `cells: string[]` list (that was the original placeholder
   shape; watch for stale assumptions if returning to old code/docs).
+- The Vite template's `index.css` still has `#root { text-align: center }`
+  from the original scaffold -- it cascades into anything added under
+  `.app` (including CodeMirror's `.cm-content`) unless overridden. If a
+  screenshot shows unexpectedly centered text, check for this before
+  assuming it's a new bug.
+- `@codemirror/lang-python`'s `python()` extension only provides the
+  *grammar* (parsing) -- it does not colorize tokens by itself. Colored
+  syntax highlighting requires also adding
+  `syntaxHighlighting(defaultHighlightStyle)` from `@codemirror/language`
+  as a separate extension. A `.cm-editor` with no visible token colors is
+  this, not a build/render failure -- verify by checking for `.cm-editor`
+  is not enough, look for actual colored `<span>`s inside `.cm-content`.
 - Two browser tabs against the same server are two independent Sessions
   (isolation guarantee, ARCHITECTURE.md section 1/R2) -- a good adjacent
   probe for any change touching Session/element state: open two tabs,

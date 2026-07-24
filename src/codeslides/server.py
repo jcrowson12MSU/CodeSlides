@@ -35,6 +35,7 @@ def create_app(deck: Deck | None = None) -> FastAPI:
             "cells": {
                 name: {
                     "instance": cell.instance,
+                    "source": cell.source,
                     "elements": [
                         {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                     ],

@@ -91,12 +91,19 @@ reshape the plan below and are called out explicitly where they apply:
   browser tabs (two Sessions) stay fully isolated. CLI now loads a real
   deck file into the server (`cli.py:load_deck`) so this is demoable.
 
-- [ ] **7. Build code editor UI (edit mode)**
+- [x] **7. Build code editor UI (edit mode)**
   Integrate a browser code editor (CodeMirror 6) per cell with Python
   syntax highlighting, keyboard shortcuts to run a cell/all cells, inline
-  display of output (stdout, errors with traceback, rendered
-  values/plots), and visual status indicators (stale/running/error) per
-  cell.
+  display of output (stdout, errors with traceback), and visual status
+  indicators (idle/running/error) per cell. Implemented in
+  `frontend/src/widgets/CodeEditor.tsx` (Shift+Enter runs the cell,
+  Mod+Shift+Enter runs the whole deck) and `Cell.tsx` (combines editor +
+  status + input elements + output). Static (`instance="static"`) cells
+  render read-only, matching ARCHITECTURE.md section 2. Verified in a real
+  browser: syntax highlighting, editing and re-running a cell changes its
+  behavior live, error tracebacks display with distinct styling, and the
+  cell recovers cleanly once fixed. Rendered values/plots (beyond
+  text/error) are TODO.md #9.
 
 - [ ] **8. Implement cell viewer elements**
   Beyond input widgets (item 6), a cell can attach: an image viewer, an
