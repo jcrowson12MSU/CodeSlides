@@ -15,35 +15,56 @@ something like marimo":
   produced a copy that didn't update independently of the original.
 - **(R3) Turtle support.** `turtle`-based lessons must render in the
   browser, animated, without a native Tk window.
+- **(R4) Cell composition.** A cell is a code editor plus a set of
+  attachable elements — sliders, buttons, text inputs, a turtle canvas, an
+  image viewer, an iframe viewer, and a markdown editor/viewer toggle for
+  notes — all reacting to the cell's code. Per `VISION.md`: "A cell should
+  consist of a code editor. When changes to this code editor are made, the
+  reactive elements in the cell should automatically update."
+- **(R5) Collapsibility.** Cells collapse like markdown headers; individual
+  elements within a cell minimize independently. Per `VISION.md`: "These
+  individual elements within a cell should be able to be minimized, and
+  cells should be able to be collapsed like collapsing a markdown header."
 
 ---
 
 ## 1. Core concepts
 
-Four concepts, kept strictly distinct because conflating them is what
-causes bugs like the marimo one:
+Six concepts, kept strictly distinct because conflating them is what causes
+bugs like the marimo one:
 
 | Concept | What it is | Lifetime |
 |---|---|---|
-| **Deck** | The parsed, static representation of a `.py` source file: cells, their source text, and the dependency graph computed from them. | Reparsed whenever source changes; otherwise immutable. |
-| **Session** | One live runtime instance of (all or part of) a Deck: a namespace (variable bindings), widget values, and last-computed outputs. | Created when a deck (or a clonable region of it) starts running; destroyed when closed. |
-| **Cell** | A named unit of code within a Deck: source text + statically-derived reads/writes. Purely static — a Cell has no state of its own. | Belongs to the Deck; recreated on reparse. |
-| **Cell instance** | A Cell as it exists inside one specific Session: its current output, error state, and execution status. | Belongs to exactly one Session. |
+| **Deck** | The parsed, static representation of a `.py` source file: cells, their source text, their attached elements, and the dependency graph computed from them. | Reparsed whenever source changes; otherwise immutable. |
+| **Session** | One live runtime instance of (all or part of) a Deck: a namespace (variable bindings), element values, UI state, and last-computed outputs. | Created when a deck (or a clonable region of it) starts running; destroyed when closed. |
+| **Cell** | A named unit of code within a Deck: source text + statically-derived reads/writes + an ordered list of attached Elements (R4). Purely static — a Cell has no state of its own. | Belongs to the Deck; recreated on reparse. |
+| **Cell instance** | A Cell as it exists inside one specific Session: its current output, error state, execution status, and collapse state (R5). | Belongs to exactly one Session. |
+| **Element** | A named, typed attachment on a Cell: an input widget (slider, button, text input) or a viewer (image, iframe, turtle canvas, markdown notes toggle). Purely static — declares its kind and config, not its current value. | Belongs to the Cell; recreated on reparse. |
+| **Element instance** | An Element as it exists inside one specific Session: its current value (for inputs) or rendered content (for viewers), and its minimized state (R5). | Belongs to exactly one Session. |
 
-The critical invariant, directly targeting R2:
+The critical invariant, directly targeting R2, now extended to cover R4/R5:
 
-> **A Session owns exactly one namespace dict and one set of cell-instance
-> outputs. No two Sessions ever share either.** Cloning always means
-> "create a new Session from the same Deck," never "create a new view onto
-> an existing Session."
+> **A Session owns exactly one namespace dict, one set of cell-instance
+> states, and one set of element-instance states (values + UI state). No
+> two Sessions ever share any of these.** Cloning always means "create a
+> new Session from the same Deck," never "create a new view onto an
+> existing Session."
 
 This is the opposite of what the buggy marimo code did: `app.clone()` was
 presumably intended to produce a new Session, but the observed behavior
 (cloned editor's output not updating independently) is consistent with the
 clone sharing the original's namespace/output state rather than getting its
-own. CodeSlides makes "new Session = new namespace, full stop" a structural
-guarantee enforced by the kernel (§3), not a convention authors have to get
-right.
+own. CodeSlides makes "new Session = new namespace + new element state,
+full stop" a structural guarantee enforced by the kernel (§3) and the
+element model (§3a), not a convention authors have to get right.
+
+Note that **Element instance state splits into two kinds that must not be
+conflated**: *value* state (a slider's current number, a text input's
+current string) participates in reactivity — changing it can trigger cell
+re-runs, same as an edited cell. *UI* state (collapsed/minimized, R5) never
+does — toggling a cell closed must never re-execute anything underneath
+it. Both are per-Session and per-instance (so cloning duplicates both
+independently), but only value state touches the dependency graph (§3).
 
 ## 2. File format
 
@@ -52,7 +73,7 @@ JSON. Cells are demarcated with a lightweight decorator, close to marimo's
 `@app.cell` but with an explicit slide association:
 
 ```python
-from codeslides import App
+from codeslides import App, ui
 
 app = App()
 
@@ -65,11 +86,16 @@ def intro():
 def slide_1():
     """Markdown/notes shown alongside the slide."""
 
-@app.cell(instance="editable")
-def live_demo():
+@app.cell(instance="editable", elements=[
+    ui.slider("speed", min=1, max=10, default=3),
+    ui.turtle_canvas("canvas", width=400, height=400),
+    ui.notes("notes", default="# Live Coding\nWatch `speed` change the turtle."),
+])
+def live_demo(speed):
     # this cell's source is editable in the browser at present-time;
-    # edits here are scoped to the presenting Session only, unless saved
-    y = x * 2
+    # edits here are scoped to the presenting Session only, unless saved.
+    # `speed` is bound to the slider element's current value.
+    y = x * speed
     return y
 
 @app.slide("Live Coding", cells=["live_demo"], reveal_code=True)
@@ -87,7 +113,16 @@ Design points:
   from the browser at present-time (the instructor live-codes it). Plain
   `@app.cell` is authored ahead of time and can still be reactive, but its
   source isn't meant to be edited mid-presentation. This distinction
-  matters for the dependency graph (§3) and for save/load (`TODO.md` #12).
+  matters for the dependency graph (§3) and for save/load (`TODO.md` #14).
+- `elements=[...]` (R4) declares a cell's attached Elements. Each element
+  has a stable name (unique within the cell), a kind (`slider`, `button`,
+  `text_input`, `turtle_canvas`, `image`, `iframe`, `notes`), and
+  kind-specific config. Input-kind elements (`slider`, `button`,
+  `text_input`) bind their current value into the cell function's
+  parameters by name — same mechanism marimo uses for `mo.ui` widgets —
+  so `speed` above is a plain function parameter, not a special object the
+  cell has to unwrap. Viewer-kind elements (`turtle_canvas`, `image`,
+  `iframe`, `notes`) instead *receive* output the cell produces (§3a).
 - `app.slide(...)` is metadata only — it never introduces new variables
   into the dependency graph and never executes anything itself.
 - Because it's plain `ast`-parseable Python with plain decorators, the file
@@ -129,6 +164,36 @@ Sessions. This is what makes "clone this slide, then edit each copy
 independently" (the exact scenario from the marimo bug report) a correct,
 first-class operation instead of an edge case.
 
+## 3a. Element reactivity (R4)
+
+Elements attach to the dependency graph at the Cell level, not as separate
+graph nodes — this keeps the graph's unit of reactivity simple (Cells only)
+while still letting elements drive and reflect it:
+
+- **Input elements** (`slider`, `button`, `text_input`) act as an implicit
+  extra "producer" for their bound parameter name. A `set_element_value`
+  message (§5) for element `speed` on cell `live_demo` is handled exactly
+  like an edit to `live_demo`'s inputs: the Cell instance re-runs with the
+  new value bound to its `speed` parameter, and the normal minimal re-run
+  set (§3) propagates from there. No separate graph edges are needed
+  because the binding is positional/by-name at call time, not a
+  cross-cell dependency.
+- **Viewer elements** (`turtle_canvas`, `image`, `iframe`, `notes`) are
+  populated *from* a cell's execution, not consumed as inputs to it. A
+  cell writes to a viewer the same way it produces any other output —
+  e.g. `cs.image(path)` or turtle drawing calls (§7) target a specific
+  named element on the current cell. When the cell re-runs, its viewer
+  elements' content updates as part of that same run; they never trigger
+  a re-run themselves. `notes` is the one viewer with two modes (markdown
+  source vs. rendered view); toggling between them is UI state (see
+  below), not a re-run trigger.
+- Because both kinds of element state live inside the owning Cell
+  instance's slice of Session state, R2's isolation guarantee already
+  covers them: cloning a Session (§5) duplicates every element's current
+  value/content independently, so two clones of a slide with a slider on
+  it get two independently-movable sliders, not one slider driving two
+  displays.
+
 ## 4. Process & concurrency model
 
 - One **kernel subprocess per Deck-serving server process**, not per
@@ -156,26 +221,33 @@ first-class operation instead of an edge case.
 
 One websocket connection per browser tab, addressing a `(deck_id,
 session_id)` pair. Every message carries a `session_id` and (for cell-level
-messages) a `cell_id`, so the frontend and kernel always agree on which
-Session's which Cell a message concerns — required once the same Cell can
-be running in multiple Sessions at once (R2).
+messages) a `cell_id`, plus an `element_id` for element-scoped messages, so
+the frontend and kernel always agree on which Session's which Cell's which
+Element a message concerns — required once the same Cell (and its
+elements) can be running in multiple Sessions at once (R2).
 
 Message types (illustrative, refined during implementation):
 
 - `client -> server`: `edit_cell {session_id, cell_id, source}`,
-  `run_all {session_id}`, `set_widget_value {session_id, widget_id, value}`,
-  `clone_session {source_session_id} -> new session_id`,
-  `navigate_slide {session_id, slide_id}`.
+  `run_all {session_id}`, `set_element_value {session_id, cell_id,
+  element_id, value}` (sliders/buttons/text inputs — §3a),
+  `set_ui_state {session_id, cell_id, element_id?, collapsed?, minimized?}`
+  (R5 — cell-collapse or element-minimize; explicitly does **not** trigger
+  re-execution, see §8), `clone_session {source_session_id} -> new
+  session_id`, `navigate_slide {session_id, slide_id}`.
 - `server -> client`: `cell_status {session_id, cell_id, status}` (queued /
   running / idle / error), `cell_output {session_id, cell_id, output}`
-  (tagged union — see §6), `graph_updated {session_id, edges}` (for
-  editable-instance cells whose local graph changed).
+  (tagged union — see §6), `element_output {session_id, cell_id,
+  element_id, output}` (viewer elements — §3a), `graph_updated
+  {session_id, edges}` (for editable-instance cells whose local graph
+  changed).
 
 `clone_session` is the explicit operation backing "duplicate this slide's
 live editor": it creates a brand-new Session seeded by copying the source
-Session's *current* namespace values and cell source overrides at the
-moment of cloning, then severs any further connection — exactly the
-semantics R2 requires and the ones the marimo bug failed to provide.
+Session's *current* namespace values, cell source overrides, and every
+element's current value/UI-state at the moment of cloning, then severs any
+further connection — exactly the semantics R2 requires and the ones the
+marimo bug failed to provide.
 
 ## 6. Output model
 
@@ -186,14 +258,17 @@ rendered by type-specific frontend components:
 - `error` — exception + traceback.
 - `markdown` / `html` — rich authored content (`cs.md()`, matching
   marimo's `mo.md()`).
-- `image` — static image (matplotlib figures render to this).
+- `image` — static image (matplotlib figures render to this, and it's also
+  the output kind an `image` viewer element displays — §3a).
 - `dataframe` — tabular data, rendered as a table.
 - `turtle_frame` — see §7; a sequence of drawing commands or a rasterized
-  frame, depending on which turtle strategy is chosen.
+  frame, targeted at a specific `turtle_canvas` element.
+- `iframe_src` — a URL/srcdoc payload for an `iframe` viewer element.
 
-Every output type keeps its own inline `session_id`/`cell_id` scoping, so
-independently cloned instances (R2) each render into their own DOM region
-fed only by their own Session's messages.
+Every output type keeps its own inline `session_id`/`cell_id` (and, for
+element-targeted output, `element_id`) scoping, so independently cloned
+instances (R2) each render into their own DOM region fed only by their own
+Session's messages.
 
 ## 7. Turtle support (R3)
 
@@ -226,13 +301,45 @@ participates in the same reactivity and instance-isolation model as
 everything else: two cloned Sessions running the same turtle-drawing cell
 get their own independent turtle state and canvas, per R2.
 
-## 8. What's deliberately deferred
+## 8. Collapse & minimize (R5)
+
+Cell collapse and element minimize are **pure UI state**, deliberately kept
+outside the dependency graph so toggling them is instantaneous and never
+triggers execution:
+
+- A Cell instance carries a `collapsed: bool`. Collapsed renders as a
+  single-line header (cell name / first line of source, like a collapsed
+  markdown heading); everything else about the cell — its namespace
+  contributions, its elements' current values, its last output — is
+  untouched and keeps participating in reactivity while collapsed. A
+  dependent cell downstream of a collapsed one still re-runs normally when
+  the collapsed cell's code changes (edits still happen through the same
+  `edit_cell` path; the editor UI just isn't currently visible for it).
+- Each Element instance carries its own `minimized: bool`, independent of
+  its Cell's `collapsed` state and of every other element on the same
+  cell. Minimizing a slider, say, hides its control but keeps its current
+  value bound into the cell exactly as before.
+- Both flags live in Session state (§1), set via `set_ui_state` (§5), and
+  are duplicated — independently — on `clone_session`, consistent with
+  R2: collapsing one clone of a slide must never collapse another clone's
+  copy.
+- Because `set_ui_state` is handled entirely client-and-kernel-state-side
+  without touching the dependency graph or re-running any Cell, it's cheap
+  and instantaneous by construction — there's no execution path for it to
+  accidentally trigger, rather than a re-run being suppressed by a special
+  case.
+
+## 9. What's deliberately deferred
 
 - Multi-user real-time collaborative editing (out of scope per
   `VISION.md`'s non-goals) — the Session model above assumes one editor
   per Session, not concurrent editors on one Session.
 - Persisting Session state across server restarts — Sessions are
   in-memory; only the Deck's source file is durable.
-- A plugin API for third-party widgets — the widget set in `TODO.md` #6 is
-  fixed for v1; the Session/output model above doesn't preclude adding one
-  later.
+- A plugin API for third-party elements — the element kinds in `TODO.md`
+  #6/#16 (slider, button, text input, turtle canvas, image, iframe, notes)
+  are fixed for v1; the Element model above (§1, §3a) doesn't preclude
+  adding a registration API for custom kinds later.
+- Nested/recursive collapse hierarchies beyond one level (a collapsed cell
+  containing collapsible sub-regions) — R5 as scoped here is cell-level
+  and element-level, not arbitrarily nested.
