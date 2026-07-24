@@ -24,8 +24,7 @@ def setup():
 )
 def live_demo(speed):
     # `base` comes from the `setup` cell via the reactive dependency graph
-    # (TODO.md #3) -- not yet resolvable by static tools until the kernel
-    # (TODO.md #4) actually wires cross-cell namespaces together.
+    # (codeslides.graph.build_graph); ruff can't see that wiring, hence noqa.
     result = base * speed  # noqa: F821
     return result
 
