@@ -67,7 +67,7 @@ An instructor can write a lesson as a single `.py` file, open it with
 `codeslides edit lesson.py` to build and test it cell-by-cell, then run
 `codeslides present lesson.py` in front of a class, walk through slides,
 reveal and tweak code live, and have every downstream output update
-correctly and instantly — with zero notebook-state footguns.
+correctly and instantly — with zero notebook-state footguns. Each slide should focus on a specific chunk of code and be able to have interactive elements to reflect what the code does. The code on a slide should be part of the overall python program.
 
 ## Relationship to marimo
 
@@ -75,3 +75,75 @@ CodeSlides is not a fork of marimo and doesn't aim for feature parity. It
 borrows marimo's reactive-kernel architecture and file-format philosophy as
 proven ideas, and builds a distinct product on top: a teaching-first
 presentation tool rather than a general-purpose reactive notebook.
+
+
+## Goals that marimo do not meet
+
+My issue with jupyter notebooks is that the code chucks feel independet from one cell to the next. I think that marimo handles this well. My biggest issues that I do not like about marimo are
+
+1. I use python turtles alot. I would like this to work directly with python turtles or to have the tool to mimic python turtle functionality with in the browser.
+2. Marimo has slides, but the slides are for presenting the output of the code not the code itself. I would like the widgets on the slide to update when the code changes reactively.
+3. This is a bug that I reported more than a year ago and it was never fixed. This is also a pretty big issue for me.
+
+I wrote a module that contains a code editor and a buffer. This module imports and works fine, but when I clone the module to add a separate editor the cloned editor does not update to output in the display. The main thing that I want is to be able to execute code in slides.
+
+Here is my codeEditor module.
+
+import marimo
+
+__generated_with = "0.11.17"
+app = marimo.App(width="medium")
+
+
+@app.cell
+def editor():
+    import marimo as mo
+    editor = mo.ui.code_editor(value="#Code\nprint(1111)", min_height=400, language="python")
+    return editor, mo
+
+
+@app.cell
+def outputcell(editor, mo):
+    with mo.capture_stdout() as buffer:
+        try:
+            exec(editor.value)
+        except Exception as e:
+            print(e)
+
+    mo.hstack([editor, buffer.getvalue()])
+    return (buffer,)
+
+
+if __name__ == "__main__":
+    app.run()
+Here is where I attempt to import them.
+
+import marimo
+
+__generated_with = "0.11.17"
+app = marimo.App(width="medium")
+
+
+@app.cell
+def _():
+    import marimo as mo
+    from codeEditor import app
+    return app, mo
+
+
+@app.cell
+async def _(app, mo):
+    result = await app.embed()
+    mo.md(f"{result.output}")
+    return (result,)
+
+
+@app.cell
+async def _(app, mo):
+    result1 = await app.clone().embed()
+    mo.md(f"{result1.output}")
+    return (result1,)
+
+
+if __name__ == "__main__":
+    app.run()
