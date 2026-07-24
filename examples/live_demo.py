@@ -15,14 +15,19 @@ def setup():
     return base
 
 
-@app.cell(elements=[ui.image("preview")])
+@app.cell(instance="editable", elements=[ui.image("preview")])
 def make_preview():
-    # a tiny inline PNG so this renders without depending on an external
-    # file -- a real lesson would point cs.image() at a matplotlib figure
-    # or a saved file path instead.
+    # a small inline checkerboard PNG so this renders without depending on
+    # an external file -- a real lesson would point cs.image() at a
+    # matplotlib figure or a saved file path instead. Edit the code below
+    # (e.g. swap the color) and press Shift+Enter to see the image update.
     swatch = (
-        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
-        "+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAKAAAABkCAIAAACO1KzYAAABCUlEQVR42u3c"
+        "sQkAMQwEQfWljt2k3YMMF4h5Pj/YSYXr9B3/P5/dzG4JDVhowEIDBgzYLmC7gO0CBiw0YKEBCw3YLmC7"
+        "gO0CBiw0YKEBCw0YcBRYrN27gAELDVhowIAB2wVsF7BdwICFBiw0YKEB2wVsF7BdwICFBiw0YKEBA84C"
+        "i+WqUmjAQgMGDNguYLuA7QIGLDRgoQELDdguYLuA7QIGLDRgoQELDRgwYLveybLrqtIuYMBCAxYasNCA"
+        "7QK2C9guYMBCAxYasNCA7QK2C9guYMBCAxYasNDeyYLkqtIuYLuA7QIGLDRgoQELDdguYLuA7QIGLDRg"
+        "oQELDRgwYLuA7QIGLPTq3Qfu4oAp8ZZdwwAAAABJRU5ErkJggg=="
     )
     cs.image("preview", swatch)
     return swatch
