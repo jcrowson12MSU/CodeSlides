@@ -1,19 +1,19 @@
-"""Minimal FastAPI server: serves the frontend and a health/status API.
-
-The full websocket protocol (ARCHITECTURE.md section 5) lands in a
-follow-up task; for now this exposes just enough to prove the server and
-frontend run together end-to-end.
+"""FastAPI server: serves the frontend, a health/status API, and the
+websocket endpoint implementing ARCHITECTURE.md section 5.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from codeslides.deck import Deck
+from codeslides.kernel import Kernel
+from codeslides.protocol import ErrorMessage, SessionCreated, decode_client_message, encode
+from codeslides.ws_handler import SessionRegistry, handle_message
 
 FRONTEND_DIST = Path(__file__).parent / "static"
 
@@ -21,6 +21,8 @@ FRONTEND_DIST = Path(__file__).parent / "static"
 def create_app(deck: Deck | None = None) -> FastAPI:
     api = FastAPI(title="CodeSlides")
     api.state.deck = deck or Deck()
+    api.state.kernel = Kernel(api.state.deck)
+    api.state.registry = SessionRegistry(kernel=api.state.kernel)
 
     @api.get("/api/health")
     def health() -> dict:
@@ -33,6 +35,28 @@ def create_app(deck: Deck | None = None) -> FastAPI:
             "cells": list(d.cells.keys()),
             "slides": [s.title for s in d.slides],
         }
+
+    @api.websocket("/ws")
+    async def websocket_endpoint(websocket: WebSocket) -> None:
+        """One connection per browser tab. The first message implicitly
+        creates that tab's Session; every message after addresses it by
+        session_id (ARCHITECTURE.md section 5)."""
+        await websocket.accept()
+        registry: SessionRegistry = api.state.registry
+        session = registry.create()
+        await websocket.send_json(encode(SessionCreated(session_id=session.session_id)))
+        try:
+            while True:
+                payload = await websocket.receive_json()
+                try:
+                    message = decode_client_message(payload)
+                except ValueError as exc:
+                    await websocket.send_json(encode(ErrorMessage(message=str(exc))))
+                    continue
+                for reply in handle_message(registry, message):
+                    await websocket.send_json(encode(reply))
+        except WebSocketDisconnect:
+            pass
 
     if FRONTEND_DIST.exists():
         api.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="static")
