@@ -3,14 +3,20 @@
 Build order for the initial version of CodeSlides. See `VISION.md` for the
 "why"; this is the "what, in what order."
 
-Three requirements from the vision doc's "Goals that marimo do not meet"
-section reshape the plan below and are called out explicitly where they
-apply:
+Requirements from the vision doc's "Goals that marimo do not meet" section
+reshape the plan below and are called out explicitly where they apply:
 
 - **Code cells live directly on slides** and are reactive in place — not
   just their output. Marimo's slides present code's output; here the code
   editor itself is a slide element that can be shown, edited, and re-run
   live.
+- **A cell is a composite of an editor plus attachable elements** — sliders,
+  buttons, text inputs, a turtle canvas, a markdown editor/viewer toggle for
+  cell notes, an image viewer, and an iframe viewer — all of which update
+  reactively when the cell's code changes.
+- **Cells and their individual elements must be collapsible/minimizable** —
+  a cell collapses like a markdown header, and elements within it can be
+  minimized independently.
 - **Each embedded/cloned editor instance must be fully isolated** — its own
   namespace, its own output, no cross-talk between copies. This is a direct
   fix for a long-standing marimo bug described in the vision doc: cloning an
@@ -20,7 +26,7 @@ apply:
   the browser, or via a turtle-compatible API purpose-built for canvas
   rendering in-browser.
 
-- [ ] **1. Define architecture & write design doc**
+- [x] **1. Define architecture & write design doc**
   Decide on the core architecture: Python reactive kernel (dependency graph
   over cells, marimo-style static analysis of variable reads/writes),
   websocket protocol between kernel and frontend, slide grouping model
@@ -30,54 +36,53 @@ apply:
   isolation model** — every slide-embedded code editor gets its own kernel
   namespace/session id, so cloning a slide or reusing a component never
   shares mutable state between instances. This is the root-cause fix for
-  the marimo cloned-editor bug in the vision doc, so get the design right
-  here rather than patching it in later. Write a short `ARCHITECTURE.md`
-  capturing decisions.
+  the marimo cloned-editor bug in the vision doc. `ARCHITECTURE.md` is
+  written and captures these decisions (Deck/Session/Cell/Cell-instance
+  model).
 
-- [ ] **2. Scaffold project structure**
-  Set up Python package layout (e.g. `src/codeslides/`), `pyproject.toml`
-  with dependencies (e.g. FastAPI/Starlette + uvicorn for the server,
-  websockets), frontend scaffold (React + Vite, TypeScript), and basic dev
-  tooling (ruff/black, pytest, npm scripts). Get a "hello world" server and
-  frontend running together.
+- [x] **2. Scaffold project structure**
+  Python package layout (`src/codeslides/`), `pyproject.toml`, frontend
+  scaffold (React + Vite, TypeScript), dev tooling (ruff, pytest, npm
+  scripts). Server and frontend run together end-to-end.
 
 - [ ] **3. Implement cell parser & dependency graph**
-  Parse a `.py` source file into cells (delimited by markers, e.g.
-  `# %% cell`, or decorator-based like marimo's `@app.cell`). Use Python's
-  `ast` module to statically detect variable reads/writes per cell, build a
-  directed dependency graph, detect cycles/multiple-definition errors, and
-  compute topological execution order.
+  Parse a `.py` source file into cells (decorator-based, per
+  `ARCHITECTURE.md` §2 — `@app.cell`). Use Python's `ast` module to
+  statically detect variable reads/writes per cell, build a directed
+  dependency graph, detect cycles/multiple-definition errors, and compute
+  topological execution order. This replaces the placeholder
+  `Cell.reads`/`Cell.writes` fields already scaffolded in `deck.py`.
 
 - [ ] **4. Build reactive execution kernel with isolated instance sessions**
-  Implement the runtime that executes cells in dependency order in a
-  persistent Python process/namespace. When a cell's source changes,
-  recompute the graph, determine the minimal set of descendant cells to
-  re-run, execute them, and capture stdout/stderr/exceptions/last-expression
-  value per cell. Must run in an isolated subprocess so a crashing cell
-  doesn't kill the server. Critically: the kernel must support multiple
-  concurrent **instances** of the same cell/editor (e.g. a cloned slide),
-  each with its own private namespace and output stream, so instances never
-  leak state into each other — this is the specific marimo bug the vision
-  doc calls out, and it needs to be a load-bearing part of the kernel's
-  design, not an afterthought.
+  Implement the runtime that executes cells in dependency order inside a
+  Session's namespace (per `ARCHITECTURE.md` §3–4). When a cell's source
+  changes, recompute the graph, determine the minimal set of descendant
+  cells to re-run, execute them, and capture stdout/stderr/exceptions/
+  last-expression value per cell instance. Runs in a kernel subprocess so a
+  crashing cell doesn't kill the server. Critically: the kernel must
+  support multiple concurrent Sessions of the same Deck (e.g. a cloned
+  slide), each with its own private namespace and output stream — this is
+  the specific marimo bug the vision doc calls out, and it needs to be
+  load-bearing in the kernel's design, not an afterthought.
 
 - [ ] **5. Design websocket protocol between kernel and frontend**
   Define message schema (JSON) for: cell source updates, run requests,
-  output updates (text/html/error/plot/canvas-frame), widget value changes,
-  slide navigation events, kernel status (idle/running/queued per cell),
-  and an **instance id** on every message so the frontend and kernel agree
-  on which editor/cell instance a message belongs to (needed once the same
-  cell can appear multiple times across cloned slides). Implement the
-  server-side websocket handler wrapping the kernel.
+  output updates (text/html/error/plot/canvas-frame/image/iframe), widget
+  value changes, cell/element collapse-state changes, slide navigation
+  events, kernel status (idle/running/queued per cell), and a `session_id`
+  + `cell_id` on every message so the frontend and kernel agree on which
+  Session's which cell a message belongs to (needed once the same cell can
+  appear multiple times across cloned slides). Implement the server-side
+  websocket handler wrapping the kernel.
 
-- [ ] **6. Implement UI widget library (Python + JS)**
-  Build core interactive widgets bound to Python variables: slider,
-  dropdown/select, text input, checkbox, button. Python side: widget
-  classes that register with the kernel and expose a current `.value`; JS
-  side: React components that render controls and send value-change
-  messages over the websocket, triggering reactive re-run of dependent
-  cells. Widgets placed on a slide must update reactively when the slide's
-  own code changes, not just when their own value changes.
+- [ ] **6. Implement reactive input widgets (Python + JS)**
+  Build the core interactive-input widgets a cell can attach: slider,
+  button, text input box. Python side: widget classes that register with
+  the kernel and expose a current `.value`; JS side: React components that
+  render controls and send value-change messages over the websocket,
+  triggering reactive re-run of dependent cells. Widgets on a slide must
+  update reactively when the slide's own code changes, not just when their
+  own value changes.
 
 - [ ] **7. Build code editor UI (edit mode)**
   Integrate a browser code editor (CodeMirror 6) per cell with Python
@@ -86,7 +91,25 @@ apply:
   values/plots), and visual status indicators (stale/running/error) per
   cell.
 
-- [ ] **8. Build slideshow/presentation mode with live code cells**
+- [ ] **8. Implement cell viewer elements**
+  Beyond input widgets (item 6), a cell can attach: an image viewer, an
+  iframe viewer, and a markdown editor/viewer toggle for cell notes (author
+  writes notes in markdown, viewer renders them, and a cell-level toggle
+  switches between the two). Each viewer element updates reactively when
+  the cell's code re-runs, and is addressed by the same instance-scoped
+  protocol as everything else (§5), so cloned cells never leak viewer state
+  across instances.
+
+- [ ] **9. Implement collapsible cells & minimizable elements**
+  A cell can collapse to a single-line header (like collapsing a markdown
+  header), hiding its editor/output/elements but preserving its state and
+  reactivity underneath. Individual elements attached to a cell (a widget,
+  the turtle canvas, the notes viewer, etc.) can be independently
+  minimized without collapsing the whole cell. Collapse/minimize state is
+  part of a cell instance's UI state (own per Session, not shared across
+  clones — consistent with the isolation model in `ARCHITECTURE.md` §1).
+
+- [ ] **10. Build slideshow/presentation mode with live code cells**
   Group cells into slides (via markers or explicit slide boundaries in the
   source file). Implement a presentation view that shows one slide at a
   time, supports next/prev navigation (keyboard + on-screen), and a
@@ -98,46 +121,48 @@ apply:
   display fully independently. Include speaker-friendly large-font
   rendering of outputs/widgets.
 
-- [ ] **9. Add Python Turtle support**
-  Make `turtle`-based lessons work end-to-end in the browser. Investigate
-  two approaches and pick one (or a fallback pair): (a) run real `turtle`
-  in the kernel subprocess with its drawing calls intercepted/redirected
-  into a headless canvas backend, streaming frames/vector commands to the
-  browser instead of opening a native Tk window; or (b) ship a
-  turtle-compatible shim module (matching the standard `turtle` API surface
-  instructors already use — `forward`, `right`, `penup`, etc.) that renders
-  to an HTML canvas via the same output channel as other rich output.
-  Should support both step-by-step and animated drawing so students can see
-  the turtle move, not just the final image.
+- [ ] **11. Add Python Turtle support**
+  Make `turtle`-based lessons work end-to-end in the browser, exposed as a
+  cell's canvas element (item 8). Investigate two approaches and pick one
+  (or a fallback pair): (a) run real `turtle` in the kernel subprocess with
+  its drawing calls intercepted/redirected into a headless canvas backend,
+  streaming frames/vector commands to the browser instead of opening a
+  native Tk window; or (b) ship a turtle-compatible shim module (matching
+  the standard `turtle` API surface instructors already use — `forward`,
+  `right`, `penup`, etc.) that renders to an HTML canvas via the same
+  output channel as other rich output. Should support both step-by-step
+  and animated drawing so students can see the turtle move, not just the
+  final image.
 
-- [ ] **10. Implement rich output rendering**
+- [ ] **12. Implement rich output rendering**
   Support rendering common teaching-relevant output types: plain
   text/repr, matplotlib figures, pandas DataFrames as tables,
-  markdown/HTML blocks for explanatory text between code cells, images, and
-  turtle canvas output (from item 9). Mirror marimo's approach of a small
-  `mo`-style helper module (e.g. `cs.md()`, `cs.image()`) for authors to
-  produce rich output.
+  markdown/HTML blocks for explanatory text between code cells, images,
+  and turtle canvas output (from item 11). Mirror marimo's approach of a
+  small `mo`-style helper module (e.g. `cs.md()`, `cs.image()`) for
+  authors to produce rich output.
 
-- [ ] **11. Implement CLI**
+- [ ] **13. Implement CLI**
   Build a command-line entry point (e.g. `codeslides edit deck.py` and
   `codeslides present deck.py`) that starts the server, launches the
   kernel subprocess for the given file, opens the browser, and watches the
   file for external edits.
 
-- [ ] **12. Add file save/load & `.py` format serialization**
+- [ ] **14. Add file save/load & `.py` format serialization**
   Implement saving the in-browser edited deck back to a clean,
   deterministic `.py` file (stable cell ordering/formatting so diffs are
   minimal), and loading existing decks back into the editor faithfully.
 
-- [ ] **13. Write example decks for teaching scenarios**
+- [ ] **15. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
-  using a slider widget, a turtle-graphics drawing lesson, and a deck that
+  using a slider widget, a turtle-graphics drawing lesson, a deck that
   clones a slide with an embedded editor (regression coverage for the
-  marimo bug fix) — to validate the tool end-to-end and serve as templates
-  for instructors.
+  marimo bug fix), and a deck exercising collapsed cells / minimized
+  elements — to validate the tool end-to-end and serve as templates for
+  instructors.
 
-- [ ] **14. Add tests for kernel & dependency graph**
+- [ ] **16. Add tests for kernel & dependency graph**
   Unit tests for `ast`-based variable extraction, dependency graph
   construction/cycle detection, minimal-rerun-set computation, and
   integration tests that run a sample deck through the kernel and assert
@@ -145,7 +170,7 @@ apply:
   specifically clones a cell/editor instance and asserts the two instances'
   namespaces and outputs never cross-contaminate.
 
-- [ ] **15. Polish, README, and packaging**
+- [ ] **17. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
   `pip install` (editable) / eventual PyPI packaging.
