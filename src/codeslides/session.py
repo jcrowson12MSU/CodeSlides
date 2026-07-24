@@ -1,13 +1,15 @@
-"""Session/CellInstance runtime model. See ARCHITECTURE.md section 1 & 3.
+"""Session/CellInstance/ElementInstance runtime model. See ARCHITECTURE.md
+sections 1, 3, 3a, and 8.
 
-A Session owns exactly one namespace dict and one set of cell-instance
-outputs; no two Sessions ever share either. This is the structural fix for
-the cloned-editor bug described in VISION.md: cloning always means
-"new Session from the same Deck," never "new view onto an existing Session."
+A Session owns exactly one namespace dict and one set of cell/element
+instance states; no two Sessions ever share any of them. This is the
+structural fix for the cloned-editor bug described in VISION.md: cloning
+always means "new Session from the same Deck," never "new view onto an
+existing Session."
 
 Reactive re-run scheduling (minimal re-run set, execution) is implemented
 in a follow-up task; this module currently only establishes the isolated
-namespace/output containers.
+namespace/output/element containers.
 """
 
 from __future__ import annotations
@@ -20,12 +22,30 @@ from codeslides.deck import Deck
 
 
 @dataclass
+class ElementInstance:
+    """An Element's live state within one Session.
+
+    `value` holds an input element's current value (slider position,
+    button pressed-count, text input contents); `content` holds a viewer
+    element's last-rendered output (image bytes/path, iframe src, turtle
+    frames, notes markdown). `minimized` is pure UI state (ARCHITECTURE.md
+    section 8) and never participates in reactivity.
+    """
+
+    value: Any = None
+    content: Any = None
+    minimized: bool = False
+
+
+@dataclass
 class CellInstance:
     """A Cell's live state within one Session."""
 
     status: str = "idle"  # "idle" | "queued" | "running" | "error"
     output: Any = None
     error: str | None = None
+    collapsed: bool = False  # pure UI state (ARCHITECTURE.md section 8)
+    elements: dict[str, ElementInstance] = field(default_factory=dict)
 
 
 @dataclass
@@ -41,19 +61,36 @@ class Session:
     source_overrides: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        for name in self.deck.cells:
-            self.instances.setdefault(name, CellInstance())
+        for name, cell in self.deck.cells.items():
+            instance = self.instances.setdefault(name, CellInstance())
+            for element in cell.elements:
+                instance.elements.setdefault(
+                    element.name,
+                    ElementInstance(value=element.config.get("default")),
+                )
 
     def clone(self) -> Session:
         """Create a new, fully independent Session from the same Deck.
 
-        Copies current namespace values and source overrides by value at
-        the moment of cloning, then severs any further connection to the
-        source Session — the semantics ARCHITECTURE.md section 5 requires
-        for `clone_session`.
+        Copies current namespace values, source overrides, and every
+        cell/element instance's state (value, content, UI state) by value
+        at the moment of cloning, then severs any further connection to
+        the source Session — the semantics ARCHITECTURE.md section 5
+        requires for `clone_session`.
         """
         new = Session(deck=self.deck)
         new.namespace = dict(self.namespace)
         new.source_overrides = dict(self.source_overrides)
-        new.instances = {name: CellInstance(**vars(inst)) for name, inst in self.instances.items()}
+        new.instances = {
+            name: CellInstance(
+                status=inst.status,
+                output=inst.output,
+                error=inst.error,
+                collapsed=inst.collapsed,
+                elements={
+                    ename: ElementInstance(**vars(einst)) for ename, einst in inst.elements.items()
+                },
+            )
+            for name, inst in self.instances.items()
+        }
         return new

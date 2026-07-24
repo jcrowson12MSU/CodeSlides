@@ -1,4 +1,5 @@
-"""Static Deck/Cell/Slide model. See ARCHITECTURE.md section 1 (Core concepts).
+"""Static Deck/Cell/Slide/Element model. See ARCHITECTURE.md sections 1-2
+(Core concepts, File format).
 
 Dependency-graph extraction (reads/writes via `ast`) lands in a follow-up
 task; `Cell.reads`/`Cell.writes` are placeholders until then.
@@ -8,6 +9,36 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass, field
+from typing import Any
+
+# Element kinds fixed for v1 (ARCHITECTURE.md section 9): input elements
+# bind their value into the cell's parameters; viewer elements receive
+# output the cell produces (ARCHITECTURE.md section 3a).
+INPUT_KINDS = frozenset({"slider", "button", "text_input"})
+VIEWER_KINDS = frozenset({"turtle_canvas", "image", "iframe", "notes"})
+
+
+@dataclass
+class Element:
+    """A named, typed attachment on a Cell. Purely static — declares its
+    kind and config, not its current value. See ARCHITECTURE.md section 1
+    and 3a."""
+
+    name: str
+    kind: str
+    config: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.kind not in INPUT_KINDS | VIEWER_KINDS:
+            raise ValueError(f"unknown element kind: {self.kind!r}")
+
+    @property
+    def is_input(self) -> bool:
+        return self.kind in INPUT_KINDS
+
+    @property
+    def is_viewer(self) -> bool:
+        return self.kind in VIEWER_KINDS
 
 
 @dataclass
@@ -20,10 +51,23 @@ class Cell:
     instance: str = "static"  # "static" | "editable" (ARCHITECTURE.md section 2)
     reads: frozenset[str] = field(default_factory=frozenset)
     writes: frozenset[str] = field(default_factory=frozenset)
+    elements: list[Element] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        names = [e.name for e in self.elements]
+        if len(names) != len(set(names)):
+            raise ValueError(f"duplicate element names in cell {self.name!r}: {names}")
 
     @classmethod
-    def from_function(cls, fn, *, instance: str = "static") -> Cell:
-        return cls(name=fn.__name__, source=inspect.getsource(fn), instance=instance)
+    def from_function(
+        cls, fn, *, instance: str = "static", elements: list[Element] | None = None
+    ) -> Cell:
+        return cls(
+            name=fn.__name__,
+            source=inspect.getsource(fn),
+            instance=instance,
+            elements=elements or [],
+        )
 
 
 @dataclass
