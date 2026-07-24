@@ -1,0 +1,59 @@
+"""Session/CellInstance runtime model. See ARCHITECTURE.md section 1 & 3.
+
+A Session owns exactly one namespace dict and one set of cell-instance
+outputs; no two Sessions ever share either. This is the structural fix for
+the cloned-editor bug described in VISION.md: cloning always means
+"new Session from the same Deck," never "new view onto an existing Session."
+
+Reactive re-run scheduling (minimal re-run set, execution) is implemented
+in a follow-up task; this module currently only establishes the isolated
+namespace/output containers.
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass, field
+from typing import Any
+
+from codeslides.deck import Deck
+
+
+@dataclass
+class CellInstance:
+    """A Cell's live state within one Session."""
+
+    status: str = "idle"  # "idle" | "queued" | "running" | "error"
+    output: Any = None
+    error: str | None = None
+
+
+@dataclass
+class Session:
+    """One live runtime instance of a Deck."""
+
+    deck: Deck
+    session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    namespace: dict[str, Any] = field(default_factory=dict)
+    instances: dict[str, CellInstance] = field(default_factory=dict)
+    # Per-Session source overrides for cells marked instance="editable"
+    # (ARCHITECTURE.md section 3: "per-Session graph divergence").
+    source_overrides: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for name in self.deck.cells:
+            self.instances.setdefault(name, CellInstance())
+
+    def clone(self) -> Session:
+        """Create a new, fully independent Session from the same Deck.
+
+        Copies current namespace values and source overrides by value at
+        the moment of cloning, then severs any further connection to the
+        source Session — the semantics ARCHITECTURE.md section 5 requires
+        for `clone_session`.
+        """
+        new = Session(deck=self.deck)
+        new.namespace = dict(self.namespace)
+        new.source_overrides = dict(self.source_overrides)
+        new.instances = {name: CellInstance(**vars(inst)) for name, inst in self.instances.items()}
+        return new
