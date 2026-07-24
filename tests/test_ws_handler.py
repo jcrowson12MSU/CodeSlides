@@ -1,4 +1,4 @@
-from codeslides import App, ui
+from codeslides import App, cs, ui
 from codeslides.kernel import Kernel
 from codeslides.protocol import (
     CellOutput,
@@ -51,16 +51,78 @@ def test_run_all_emits_status_and_output_per_cell():
     assert all(m.status == "idle" for m in statuses)
 
 
-def test_run_all_emits_element_output_for_viewer_elements():
+def test_run_all_emits_no_element_output_for_a_viewer_element_never_written_to():
+    # `canvas` is a turtle_canvas the cell never calls cs.* for (turtle
+    # support is TODO.md #15) -- targeted writes mean no broadcast happens.
     registry = SessionRegistry(kernel=Kernel(_build_deck().deck))
+    session = registry.create()
+
+    messages = handle_message(registry, RunAll(session_id=session.session_id))
+
+    assert [m for m in messages if isinstance(m, ElementOutput)] == []
+
+
+def test_run_all_emits_element_output_for_cs_image_write():
+    app = App()
+
+    @app.cell(elements=[ui.image("plot")])
+    def make_plot():
+        cs.image("plot", "/tmp/figure.png")
+        x = 1
+        return x
+
+    registry = SessionRegistry(kernel=Kernel(app.deck))
     session = registry.create()
 
     messages = handle_message(registry, RunAll(session_id=session.session_id))
 
     element_outputs = [m for m in messages if isinstance(m, ElementOutput)]
     assert len(element_outputs) == 1
-    assert element_outputs[0].cell_id == "live_demo"
-    assert element_outputs[0].element_id == "canvas"
+    assert element_outputs[0].cell_id == "make_plot"
+    assert element_outputs[0].element_id == "plot"
+    assert element_outputs[0].content == "/tmp/figure.png"
+
+
+def test_run_all_surfaces_notes_default_without_any_write():
+    app = App()
+
+    @app.cell(elements=[ui.notes("n", default="# Title\nBody")])
+    def cell_with_notes():
+        x = 1
+        return x
+
+    registry = SessionRegistry(kernel=Kernel(app.deck))
+    session = registry.create()
+
+    messages = handle_message(registry, RunAll(session_id=session.session_id))
+
+    element_outputs = [m for m in messages if isinstance(m, ElementOutput)]
+    assert len(element_outputs) == 1
+    assert element_outputs[0].element_id == "n"
+    assert element_outputs[0].content == "# Title\nBody"
+
+
+def test_set_ui_state_notes_source_updates_content_without_rerun():
+    app = App()
+
+    @app.cell(elements=[ui.notes("n", default="original")])
+    def cell_with_notes():
+        x = 1
+        return x
+
+    registry = SessionRegistry(kernel=Kernel(app.deck))
+    session = registry.create()
+    handle_message(registry, RunAll(session_id=session.session_id))
+    namespace_before = dict(session.namespace)
+
+    messages = handle_message(
+        registry,
+        SetUiState(session_id=session.session_id, cell_id="cell_with_notes", element_id="n", notes_source="edited"),
+    )
+
+    assert messages == []
+    assert session.instances["cell_with_notes"].elements["n"].content == "edited"
+    assert session.namespace == namespace_before
 
 
 def test_set_element_value_triggers_minimal_rerun():

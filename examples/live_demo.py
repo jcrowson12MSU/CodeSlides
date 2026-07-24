@@ -1,9 +1,10 @@
-"""Smoke-test deck exercising elements (sliders, turtle canvas, notes).
+"""Smoke-test deck exercising elements (sliders, turtle canvas, notes,
+image/iframe viewers).
 
 See TODO.md #13 for real teaching examples with full reactivity wired up.
 """
 
-from codeslides import App, ui
+from codeslides import App, cs, ui
 
 app = App()
 
@@ -12,6 +13,19 @@ app = App()
 def setup():
     base = 5
     return base
+
+
+@app.cell(elements=[ui.image("preview")])
+def make_preview():
+    # a tiny inline PNG so this renders without depending on an external
+    # file -- a real lesson would point cs.image() at a matplotlib figure
+    # or a saved file path instead.
+    swatch = (
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+        "+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+    cs.image("preview", swatch)
+    return swatch
 
 
 @app.cell(

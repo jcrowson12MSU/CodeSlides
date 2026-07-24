@@ -19,8 +19,9 @@ import io
 import textwrap
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from codeslides import cs
 from codeslides.deck import Cell, Deck
 from codeslides.graph import DependencyGraph, build_graph
 from codeslides.session import Session
@@ -43,6 +44,7 @@ class ExecutionResult:
     stderr: str = ""
     value: object | None = None
     error: str | None = None
+    element_writes: list[cs.ElementWrite] = field(default_factory=list)
 
 
 def _compile_cell_function(source: str, globals_dict: dict[str, object]):
@@ -136,7 +138,14 @@ def execute_cell(cell_name: str, source: str, session: Session) -> ExecutionResu
     """
     stdout, stderr = io.StringIO(), io.StringIO()
     try:
-        call_globals = dict(session.namespace)
+        # `cs` (viewer-element writes, ARCHITECTURE.md section 3a) is a
+        # framework-provided name every cell body can call without its own
+        # import -- the compiled function's globals are otherwise seeded
+        # only from the Session namespace, so without this a bare
+        # `cs.image(...)` call would NameError even though the deck's
+        # source file imports `cs` at module scope (that import context
+        # isn't carried into the per-cell exec).
+        call_globals = {"cs": cs, **session.namespace}
         fn, return_names = _compile_cell_function(source, call_globals)
 
         # Only bind element values for elements that are also declared
@@ -152,7 +161,7 @@ def execute_cell(cell_name: str, source: str, session: Session) -> ExecutionResu
             if element_name in params:
                 kwargs[element_name] = instance.value
 
-        with redirect_stdout(stdout), redirect_stderr(stderr):
+        with redirect_stdout(stdout), redirect_stderr(stderr), cs.execution_context() as writes:
             result = fn(**kwargs)
     except Exception:  # noqa: BLE001 - a cell's own error must not kill the kernel, whether
         # it's a parse/definition problem (CellDefinitionError) or a runtime exception.
@@ -177,7 +186,31 @@ def execute_cell(cell_name: str, source: str, session: Session) -> ExecutionResu
         for name, value in zip(return_names, values, strict=True):
             session.namespace[name] = value
 
-    return ExecutionResult(status="idle", stdout=stdout.getvalue(), stderr=stderr.getvalue(), value=result)
+    element_instances = session.instances[cell_name].elements
+    for write in writes:
+        if write.element_name not in element_instances:
+            return ExecutionResult(
+                status="error",
+                stdout=stdout.getvalue(),
+                stderr=stderr.getvalue(),
+                error=(
+                    f"cell {cell_name!r} called cs.{write.kind}({write.element_name!r}, ...) "
+                    f"but has no element named {write.element_name!r}"
+                ),
+            )
+    # Applied only after every write validates -- a bad element name in a
+    # later cs.* call must not leave earlier ones partially applied,
+    # matching the same all-or-nothing semantics as namespace writes above.
+    for write in writes:
+        element_instances[write.element_name].content = write.content
+
+    return ExecutionResult(
+        status="idle",
+        stdout=stdout.getvalue(),
+        stderr=stderr.getvalue(),
+        value=result,
+        element_writes=writes,
+    )
 
 
 class Kernel:

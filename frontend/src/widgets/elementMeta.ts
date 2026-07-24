@@ -9,7 +9,12 @@ export interface ElementMeta {
 }
 
 const INPUT_KINDS = new Set(['slider', 'button', 'text_input'])
+const VIEWER_KINDS = new Set(['image', 'iframe', 'notes'])
 
 export function isInputElement(kind: string): boolean {
   return INPUT_KINDS.has(kind)
+}
+
+export function isViewerElement(kind: string): boolean {
+  return VIEWER_KINDS.has(kind)
 }

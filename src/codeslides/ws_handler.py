@@ -76,24 +76,43 @@ def _results_to_messages(session_id: str, results: dict[str, ExecutionResult]) -
 
 
 def _element_output_messages(session: Session, results: dict[str, ExecutionResult]) -> list[ServerMessage]:
-    """Emit element_output for every viewer element on a re-run cell.
-    Per-kind content resolution (turtle frames, image bytes, ...) is
-    TODO.md #16; for now this forwards the cell's raw output value to
-    every viewer element it owns, so the wiring is exercised end-to-end
-    ahead of that task."""
+    """Emit element_output for viewer elements a re-run cell actually wrote
+    to via cs.image()/cs.iframe() (ARCHITECTURE.md section 3a) -- each
+    write already names its target element, so this is a direct
+    translation, not a broadcast to every viewer element on the cell
+    (broadcasting was the placeholder behavior this replaces, and it was
+    wrong for any cell with more than one viewer element).
+
+    `notes` elements are handled separately: they're authored content
+    (`ui.notes(default=...)`), not computed from execution, so a
+    freshly-run cell with a `notes` element that received no explicit
+    write still gets its authored default surfaced -- otherwise the
+    frontend would have nothing to render until the author called a cs.*
+    helper that doesn't exist for notes."""
     messages: list[ServerMessage] = []
     for cell_id, result in results.items():
+        for write in result.element_writes:
+            messages.append(
+                ElementOutput(
+                    session_id=session.session_id,
+                    cell_id=cell_id,
+                    element_id=write.element_name,
+                    content=write.content,
+                )
+            )
+
         cell = session.deck.cells.get(cell_id)
         if cell is None:
             continue
+        written_names = {w.element_name for w in result.element_writes}
         for element in cell.elements:
-            if element.is_viewer:
+            if element.kind == "notes" and element.name not in written_names:
                 messages.append(
                     ElementOutput(
                         session_id=session.session_id,
                         cell_id=cell_id,
                         element_id=element.name,
-                        content=result.value,
+                        content=session.instances[cell_id].elements[element.name].content,
                     )
                 )
     return messages
@@ -180,6 +199,8 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 ]
             if message.minimized is not None:
                 instance.elements[message.element_id].minimized = message.minimized
+            if message.notes_source is not None:
+                instance.elements[message.element_id].content = message.notes_source
         return []
 
     if isinstance(message, CloneSession):

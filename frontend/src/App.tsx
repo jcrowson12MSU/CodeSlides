@@ -20,6 +20,11 @@ interface DeckSummary {
 function App() {
   const [deck, setDeck] = useState<DeckSummary | null>(null)
   const [elementValues, setElementValues] = useState<Record<string, Record<string, unknown>>>({})
+  // Local-only override for notes content while editing: set_ui_state
+  // produces no server reply (ARCHITECTURE.md section 8 -- pure UI state,
+  // never a re-run), so without this the textarea would show stale
+  // content until some unrelated cell_output happened to refresh it.
+  const [notesOverrides, setNotesOverrides] = useState<Record<string, Record<string, string>>>({})
   const { sessionId, connected, messages, send } = useCodeSlidesSocket()
   const cellState = useDeckState(messages)
 
@@ -57,6 +62,21 @@ function App() {
     send({ type: 'run_all', session_id: sessionId })
   }
 
+  function handleChangeNotesSource(cellId: string, elementId: string, source: string) {
+    if (!sessionId) return
+    setNotesOverrides((prev) => ({
+      ...prev,
+      [cellId]: { ...prev[cellId], [elementId]: source },
+    }))
+    send({
+      type: 'set_ui_state',
+      session_id: sessionId,
+      cell_id: cellId,
+      element_id: elementId,
+      notes_source: source,
+    })
+  }
+
   return (
     <main className="app">
       <h1>CodeSlides</h1>
@@ -66,18 +86,26 @@ function App() {
       <p className="cs-hint">Shift+Enter: run cell &middot; Mod+Shift+Enter: run all</p>
       {deck && (
         <section>
-          {Object.entries(deck.cells).map(([cellId, meta]) => (
-            <Cell
-              key={cellId}
-              cellId={cellId}
-              meta={meta}
-              state={cellState[cellId]}
-              elementValues={elementValues[cellId] ?? {}}
-              onRunCell={(source) => handleRunCell(cellId, source)}
-              onRunAll={handleRunAll}
-              onSetElementValue={(elementId, value) => handleSetElementValue(cellId, elementId, value)}
-            />
-          ))}
+          {Object.entries(deck.cells).map(([cellId, meta]) => {
+            const overrides = notesOverrides[cellId]
+            const state = cellState[cellId]
+            const mergedState = overrides
+              ? { ...state, elementContent: { ...state?.elementContent, ...overrides } }
+              : state
+            return (
+              <Cell
+                key={cellId}
+                cellId={cellId}
+                meta={meta}
+                state={mergedState}
+                elementValues={elementValues[cellId] ?? {}}
+                onRunCell={(source) => handleRunCell(cellId, source)}
+                onRunAll={handleRunAll}
+                onSetElementValue={(elementId, value) => handleSetElementValue(cellId, elementId, value)}
+                onChangeNotesSource={(elementId, source) => handleChangeNotesSource(cellId, elementId, source)}
+              />
+            )
+          })}
         </section>
       )}
     </main>

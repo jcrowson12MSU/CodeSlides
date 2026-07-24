@@ -56,9 +56,11 @@ class SetElementValue:
 
 @dataclass
 class SetUiState:
-    """Cell-collapse or element-minimize (ARCHITECTURE.md section 8). Pure
-    UI state -- explicitly does NOT trigger re-execution. `element_id` is
-    omitted for a cell-level collapse toggle."""
+    """Cell-collapse, element-minimize (ARCHITECTURE.md section 8), or a
+    `notes` element's markdown source being edited directly in its editor
+    mode. All three are pure UI/authoring state -- explicitly does NOT
+    trigger re-execution, unlike `set_element_value` for input elements.
+    `element_id` is omitted for a cell-level collapse toggle."""
 
     type: ClassVar[str] = "set_ui_state"
     session_id: str
@@ -66,6 +68,7 @@ class SetUiState:
     element_id: str | None = None
     collapsed: bool | None = None
     minimized: bool | None = None
+    notes_source: str | None = None
 
 
 @dataclass

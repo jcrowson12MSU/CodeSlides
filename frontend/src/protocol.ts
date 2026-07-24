@@ -33,6 +33,7 @@ export interface SetUiState {
   element_id?: string
   collapsed?: boolean
   minimized?: boolean
+  notes_source?: string
 }
 
 export interface CloneSession {

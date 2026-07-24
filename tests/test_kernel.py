@@ -1,5 +1,5 @@
 
-from codeslides import App, ui
+from codeslides import App, cs, ui
 from codeslides.kernel import Kernel
 from codeslides.session import Session
 
@@ -161,3 +161,96 @@ def test_clone_isolation_holds_under_real_execution():
     # the shared Deck/Kernel baseline must be untouched by session_b's edit
     assert "live_demo" not in session_a.source_overrides
     assert "result = base * speed" in kernel.deck.cells["live_demo"].source
+
+
+def _build_viewer_deck():
+    app = App()
+
+    @app.cell(elements=[ui.image("plot")])
+    def make_plot():
+        cs.image("plot", "/tmp/figure.png")
+        x = 1
+        return x
+
+    return app
+
+
+def test_cs_image_writes_element_content():
+    app = _build_viewer_deck()
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+
+    results = kernel.run_all(session)
+
+    assert session.instances["make_plot"].status == "idle"
+    assert session.instances["make_plot"].elements["plot"].content == "/tmp/figure.png"
+    assert results["make_plot"].element_writes == [
+        cs.ElementWrite(element_name="plot", kind="image", content="/tmp/figure.png")
+    ]
+
+
+def test_cs_write_to_unknown_element_is_a_cell_error():
+    app = App()
+
+    @app.cell(elements=[ui.image("plot")])
+    def bad_target():
+        cs.image("does_not_exist", "/tmp/figure.png")
+        x = 1
+        return x
+
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+
+    assert session.instances["bad_target"].status == "error"
+    assert "does_not_exist" in session.instances["bad_target"].error
+    # nothing partially applied on error
+    assert session.instances["bad_target"].elements["plot"].content is None
+
+
+def test_cs_write_is_not_applied_when_a_later_write_in_the_same_cell_fails():
+    app = App()
+
+    @app.cell(elements=[ui.image("a"), ui.image("b")])
+    def two_targets():
+        cs.image("a", "1.png")
+        cs.image("does_not_exist", "2.png")
+        x = 1
+        return x
+
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+
+    assert session.instances["two_targets"].status == "error"
+    # the earlier, valid write must not have been applied either --
+    # all-or-nothing, matching namespace write semantics
+    assert session.instances["two_targets"].elements["a"].content is None
+
+
+def test_notes_element_content_seeded_from_default():
+    app = App()
+
+    @app.cell(elements=[ui.notes("n", default="# Title\nBody")])
+    def cell_with_notes():
+        x = 1
+        return x
+
+    session = Session(deck=app.deck)
+    assert session.instances["cell_with_notes"].elements["n"].content == "# Title\nBody"
+
+
+def test_element_writes_isolated_across_cloned_sessions():
+    app = _build_viewer_deck()
+    kernel = Kernel(app.deck)
+
+    session_a = Session(deck=app.deck)
+    kernel.run_all(session_a)
+    session_b = session_a.clone()
+
+    # mutate b's element content directly (simulating a later write) and
+    # confirm a is untouched -- same isolation guarantee as namespace/value
+    session_b.instances["make_plot"].elements["plot"].content = "/tmp/different.png"
+
+    assert session_a.instances["make_plot"].elements["plot"].content == "/tmp/figure.png"
+    assert session_b.instances["make_plot"].elements["plot"].content == "/tmp/different.png"

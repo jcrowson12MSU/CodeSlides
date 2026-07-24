@@ -1,7 +1,8 @@
 import type { CellState } from '../deckState'
 import { CodeEditor } from './CodeEditor'
 import { ElementWidget } from './ElementWidget'
-import { isInputElement, type ElementMeta } from './elementMeta'
+import { ViewerElementWidget } from './ViewerElementWidget'
+import { isInputElement, isViewerElement, type ElementMeta } from './elementMeta'
 
 export interface CellMeta {
   instance: 'static' | 'editable'
@@ -17,9 +18,10 @@ export interface CellProps {
   onRunCell: (source: string) => void
   onRunAll: (source: string) => void
   onSetElementValue: (elementId: string, value: unknown) => void
+  onChangeNotesSource: (elementId: string, source: string) => void
 }
 
-// One cell: editor + status + attached input elements + output
+// One cell: editor + status + attached input/viewer elements + output
 // (ARCHITECTURE.md section 1/3a). Static cells render read-only --
 // per ARCHITECTURE.md section 2, only `instance="editable"` cells accept
 // live edits; a static cell's source is authored ahead of time.
@@ -31,8 +33,10 @@ export function Cell({
   onRunCell,
   onRunAll,
   onSetElementValue,
+  onChangeNotesSource,
 }: CellProps) {
   const inputElements = meta.elements.filter((e) => isInputElement(e.kind))
+  const viewerElements = meta.elements.filter((e) => isViewerElement(e.kind))
 
   return (
     <div className="cs-cell">
@@ -57,6 +61,19 @@ export function Cell({
               element={element}
               value={elementValues[element.name]}
               onSetValue={onSetElementValue}
+            />
+          ))}
+        </div>
+      )}
+
+      {viewerElements.length > 0 && (
+        <div className="cs-cell-elements">
+          {viewerElements.map((element) => (
+            <ViewerElementWidget
+              key={element.name}
+              element={element}
+              content={state?.elementContent[element.name]}
+              onChangeNotesSource={onChangeNotesSource}
             />
           ))}
         </div>

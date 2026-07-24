@@ -105,7 +105,7 @@ reshape the plan below and are called out explicitly where they apply:
   cell recovers cleanly once fixed. Rendered values/plots (beyond
   text/error) are TODO.md #9.
 
-- [ ] **8. Implement cell viewer elements**
+- [x] **8. Implement cell viewer elements**
   Beyond input widgets (item 6), a cell can attach: an image viewer, an
   iframe viewer, and a markdown editor/viewer toggle for cell notes (author
   writes notes in markdown, viewer renders them, and a cell-level toggle
@@ -113,6 +113,35 @@ reshape the plan below and are called out explicitly where they apply:
   the cell's code re-runs, and is addressed by the same instance-scoped
   protocol as everything else (§5), so cloned cells never leak viewer state
   across instances.
+
+  Added `cs.py`: a small author-facing module (`cs.image(element_name,
+  path)`, `cs.iframe(element_name, src)`) that lets a cell body target a
+  *specific* viewer element by name, via a contextvar the kernel
+  establishes around each cell call -- necessary because a cell can own
+  more than one viewer element, so there's no single output to broadcast
+  to all of them (an earlier placeholder did exactly that broadcast and
+  was replaced). Writes are captured during execution and applied
+  all-or-nothing on success, matching namespace-write semantics; a write
+  naming an unknown element is a cell error, not a silent drop.
+
+  `notes` elements are authored content (`ui.notes(default=...)`), not
+  computed from execution -- seeded into `ElementInstance.content` at
+  Session creation, surfaced automatically on `run_all`, and edited via a
+  new `set_ui_state.notes_source` field (pure UI/authoring state, same as
+  collapse/minimize -- never triggers a re-run, per §8).
+
+  Frontend: `widgets/viewerElements.tsx` (ImageViewer, IframeViewer,
+  NotesViewer with its edit/preview toggle, markdown rendered via `marked`
+  and sanitized via `dompurify` since notes may eventually be viewed by
+  students, not just the authoring instructor) and
+  `widgets/ViewerElementWidget.tsx` (kind dispatch, mirroring the input
+  side's `ElementWidget.tsx`). `deckState.ts` extended to track
+  `element_output`-driven content.
+
+  Verified in a real browser: an image written via `cs.image()` renders,
+  a notes element's markdown default renders correctly on load, toggling
+  to edit mode shows the raw source, editing and toggling back shows the
+  updated rendered content -- all with zero console errors.
 
 - [ ] **9. Implement collapsible cells & minimizable elements**
   A cell can collapse to a single-line header (like collapsing a markdown

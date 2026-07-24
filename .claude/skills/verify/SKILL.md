@@ -77,3 +77,16 @@ Then drive the served app with a script (see the two written during the
   mutate one, confirm the other is untouched.
 - Kill stray servers between runs: `pkill -f "codeslides edit"; lsof
   -ti:<port> | xargs -r kill`.
+- `examples/live_demo.py` also has an `image` viewer element cell
+  (`make_preview`) and a `notes` viewer on `live_demo` -- useful for
+  driving viewer-element (not just input-element) flows.
+- A viewer element's content only arrives via an `element_output` message
+  -- unlike `cell_output`, this doesn't fire automatically just because
+  the cell ran successfully; check `deckState.ts`'s `elementContent` is
+  actually being populated (or add a short `waitForTimeout` after
+  `run_all` before asserting on viewer content, since it's a second
+  message following the cell's own status/output).
+- `<img>` with only `max-width: 100%` and no `max-height` will stretch a
+  tiny/oddly-proportioned test image (e.g. a 1x1 PNG) to fill the whole
+  container width -- caught via screenshot, not by any functional check.
+  Always screenshot new visual elements, not just assert on DOM state.

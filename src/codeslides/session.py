@@ -64,9 +64,15 @@ class Session:
         for name, cell in self.deck.cells.items():
             instance = self.instances.setdefault(name, CellInstance())
             for element in cell.elements:
+                default = element.config.get("default")
                 instance.elements.setdefault(
                     element.name,
-                    ElementInstance(value=element.config.get("default")),
+                    # `notes` elements are authored content, not computed
+                    # from cell execution -- seed `content`, not `value`,
+                    # so the notes viewer has something to render before
+                    # any cs.* write or edit happens (ARCHITECTURE.md
+                    # section 3a).
+                    ElementInstance(value=default, content=default if element.kind == "notes" else None),
                 )
 
     def clone(self) -> Session:
