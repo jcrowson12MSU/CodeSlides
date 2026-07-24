@@ -45,35 +45,39 @@ reshape the plan below and are called out explicitly where they apply:
   scaffold (React + Vite, TypeScript), dev tooling (ruff, pytest, npm
   scripts). Server and frontend run together end-to-end.
 
-- [ ] **3. Implement cell parser & dependency graph**
+- [x] **3. Implement cell parser & dependency graph**
   Parse a `.py` source file into cells (decorator-based, per
   `ARCHITECTURE.md` §2 — `@app.cell`). Use Python's `ast` module to
   statically detect variable reads/writes per cell, build a directed
   dependency graph, detect cycles/multiple-definition errors, and compute
-  topological execution order. This replaces the placeholder
-  `Cell.reads`/`Cell.writes` fields already scaffolded in `deck.py`.
+  topological execution order. Implemented in `src/codeslides/graph.py`,
+  replacing the placeholder `Cell.reads`/`Cell.writes` fields.
 
-- [ ] **4. Build reactive execution kernel with isolated instance sessions**
+- [x] **4. Build reactive execution kernel with isolated instance sessions**
   Implement the runtime that executes cells in dependency order inside a
   Session's namespace (per `ARCHITECTURE.md` §3–4). When a cell's source
   changes, recompute the graph, determine the minimal set of descendant
   cells to re-run, execute them, and capture stdout/stderr/exceptions/
-  last-expression value per cell instance. Runs in a kernel subprocess so a
-  crashing cell doesn't kill the server. Critically: the kernel must
-  support multiple concurrent Sessions of the same Deck (e.g. a cloned
-  slide), each with its own private namespace and output stream — this is
-  the specific marimo bug the vision doc calls out, and it needs to be
-  load-bearing in the kernel's design, not an afterthought.
+  return value per cell instance. Critically: the kernel supports multiple
+  concurrent Sessions of the same Deck (e.g. a cloned slide), each with its
+  own private namespace and output stream, and per-Session source overrides
+  for `instance="editable"` cells never mutate the shared Deck — this is
+  the specific marimo bug the vision doc calls out, verified with a
+  dedicated clone-isolation regression test. Implemented in
+  `src/codeslides/kernel.py`. (Subprocess isolation for crash safety is
+  still open — currently runs in-process.)
 
-- [ ] **5. Design websocket protocol between kernel and frontend**
+- [x] **5. Design websocket protocol between kernel and frontend**
   Define message schema (JSON) for: cell source updates, run requests,
-  output updates (text/html/error/plot/canvas-frame/image/iframe), widget
-  value changes, cell/element collapse-state changes, slide navigation
-  events, kernel status (idle/running/queued per cell), and a `session_id`
-  + `cell_id` on every message so the frontend and kernel agree on which
-  Session's which cell a message belongs to (needed once the same cell can
-  appear multiple times across cloned slides). Implement the server-side
-  websocket handler wrapping the kernel.
+  output updates, element value changes, cell/element collapse-state
+  changes, slide navigation events, kernel status (idle/running/queued per
+  cell), and a `session_id` + `cell_id` (+ `element_id`) on every message
+  so the frontend and kernel agree on which Session's which cell/element a
+  message belongs to. Implemented in `src/codeslides/protocol.py`
+  (message schema) and `src/codeslides/ws_handler.py` (dispatch), wired
+  into a `/ws` endpoint in `src/codeslides/server.py`. Verified end-to-end
+  over a real websocket connection, including a clone-session isolation
+  test over the wire.
 
 - [ ] **6. Implement reactive input widgets (Python + JS)**
   Build the core interactive-input widgets a cell can attach: slider,
