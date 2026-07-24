@@ -32,7 +32,15 @@ def create_app(deck: Deck | None = None) -> FastAPI:
     def get_deck() -> dict:
         d: Deck = api.state.deck
         return {
-            "cells": list(d.cells.keys()),
+            "cells": {
+                name: {
+                    "instance": cell.instance,
+                    "elements": [
+                        {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
+                    ],
+                }
+                for name, cell in d.cells.items()
+            },
             "slides": [s.title for s in d.slides],
         }
 

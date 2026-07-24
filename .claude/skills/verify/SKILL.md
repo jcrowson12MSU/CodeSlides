@@ -1,0 +1,67 @@
+---
+name: verify
+description: Build/launch/drive recipe for verifying CodeSlides changes in a real browser end-to-end.
+---
+
+# Verifying CodeSlides
+
+CodeSlides is a Python backend (FastAPI + websocket kernel) with a React
+frontend. Most changes touch the reactive loop, so verification means
+driving a real browser against a real running server, not just running
+tests.
+
+## Build & launch
+
+```bash
+# backend
+python3 -m venv .venv && source .venv/bin/activate   # if not already set up
+pip install -e ".[dev]"
+
+# frontend -- must be rebuilt for the server to serve current code
+cd frontend && npm run build && cd ..
+
+# serve a real deck (CLI now loads the file -- see cli.py:load_deck)
+codeslides edit examples/live_demo.py --port 8130
+```
+
+`examples/live_demo.py` is the best demo deck: two cells, a slider
+element, a cross-cell dependency (`live_demo` reads `base` from `setup`).
+
+## Drive it (headless browser)
+
+No `playwright` npm package or browser binary is installed by default.
+One-time setup:
+
+```bash
+npx playwright install chromium --with-deps   # downloads ~180MB, can take minutes
+mkdir -p /tmp/pw-scratch && cd /tmp/pw-scratch && npm init -y && npm install playwright
+```
+
+Then drive the served app with a script (see the two written during the
+`TODO.md` #6 verification for structure):
+
+- Navigate to `http://127.0.0.1:<port>/`, wait for `.cs-cell` elements and
+  for `.cs-cell-output` to hold real output (websocket connect + `run_all`
+  is automatic on page load).
+- Interact with widgets via native `input`/`change` events on real DOM
+  nodes (don't just set React state) -- e.g. drag a `input[type=range]`
+  slider inside `.cs-cell` matching a cell name via `hasText`.
+- Wait for the corresponding `.cs-cell-output` text to reflect the new
+  value (the round trip is `set_element_value` -> kernel re-run ->
+  `cell_output` -> React re-render).
+
+## Gotchas learned
+
+- The CLI didn't load deck files into the server until this was fixed as
+  part of `TODO.md` #6 (`cli.py:load_deck`) -- if `/api/deck` returns
+  empty `cells`, check the server was started against a real file and the
+  frontend was rebuilt after any backend/protocol changes.
+- `/api/deck`'s shape is `{cells: {name: {instance, elements}}, slides}` --
+  not a flat `cells: string[]` list (that was the original placeholder
+  shape; watch for stale assumptions if returning to old code/docs).
+- Two browser tabs against the same server are two independent Sessions
+  (isolation guarantee, ARCHITECTURE.md section 1/R2) -- a good adjacent
+  probe for any change touching Session/element state: open two tabs,
+  mutate one, confirm the other is untouched.
+- Kill stray servers between runs: `pkill -f "codeslides edit"; lsof
+  -ti:<port> | xargs -r kill`.

@@ -79,14 +79,17 @@ reshape the plan below and are called out explicitly where they apply:
   over a real websocket connection, including a clone-session isolation
   test over the wire.
 
-- [ ] **6. Implement reactive input widgets (Python + JS)**
+- [x] **6. Implement reactive input widgets (Python + JS)**
   Build the core interactive-input widgets a cell can attach: slider,
-  button, text input box. Python side: widget classes that register with
-  the kernel and expose a current `.value`; JS side: React components that
-  render controls and send value-change messages over the websocket,
-  triggering reactive re-run of dependent cells. Widgets on a slide must
-  update reactively when the slide's own code changes, not just when their
-  own value changes.
+  button, text input box. Python side (`ui.py`/`deck.py`/`session.py`,
+  from earlier scaffolding) already exposed `Element`/`ElementInstance`
+  with a current `.value`. This task added the JS side: React components
+  (`frontend/src/widgets/`) that render controls from element metadata and
+  send `set_element_value` over the websocket, triggering reactive re-run
+  of dependent cells. Verified with a real headless-browser end-to-end
+  test: moving a slider updates a dependent cell's output live, and two
+  browser tabs (two Sessions) stay fully isolated. CLI now loads a real
+  deck file into the server (`cli.py:load_deck`) so this is demoable.
 
 - [ ] **7. Build code editor UI (edit mode)**
   Integrate a browser code editor (CodeMirror 6) per cell with Python
