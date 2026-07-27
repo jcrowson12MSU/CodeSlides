@@ -9,7 +9,10 @@ dist/
 # Frontend
 frontend/node_modules/
 frontend/dist/
-src/codeslides/static/
+# src/codeslides/static/ is intentionally tracked: it's the built
+# frontend bundle the server serves, and committing it means `codeslides
+# edit`/`present` works right after a fresh checkout without a manual
+# `npm install && npm run build` step in frontend/.
 
 # Editors / OS
 .idea/

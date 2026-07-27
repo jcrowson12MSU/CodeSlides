@@ -52,6 +52,27 @@ Then drive the served app with a script (see the two written during the
 
 ## Gotchas learned
 
+- **`src/codeslides/static/` (the built frontend bundle) is committed to
+  git**, not gitignored -- it's what the server actually serves, and
+  committing it means a fresh checkout works without a manual frontend
+  build step. This means: after any change to `frontend/`, rebuild
+  (`cd frontend && npm run build`) and commit the resulting
+  `src/codeslides/static/` changes in the *same* commit, or the tracked
+  bundle silently goes stale relative to the source. This bit us once
+  already: a separate working copy (main checkout vs. this worktree) had
+  an old bundle from before CodeMirror/marked/dompurify were added as
+  frontend deps, so it served a UI with no code editors and no working
+  image viewer, with zero error messages anywhere -- it just quietly
+  served old, working-as-designed-for-its-own-version JS. If a running
+  server behaves like an earlier version of the UI, check
+  `grep -c cm-editor src/codeslides/static/assets/*.js` (should be >=1)
+  before assuming the *source* is broken.
+- Also note `frontend/node_modules/` is NOT committed (still gitignored,
+  correctly) -- a working copy that's never run `npm install` since a new
+  frontend dependency was added will fail `npm run build` outright (a
+  clear `Cannot find module` error, unlike the silent stale-bundle case
+  above). Run `npm ci` (not just `npm install`) to match
+  `package-lock.json` exactly.
 - The CLI didn't load deck files into the server until this was fixed as
   part of `TODO.md` #6 (`cli.py:load_deck`) -- if `/api/deck` returns
   empty `cells`, check the server was started against a real file and the

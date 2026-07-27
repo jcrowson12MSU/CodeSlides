@@ -6,12 +6,18 @@ the why, `ARCHITECTURE.md` for the design, and `TODO.md` for build status
 
 ## Status
 
-Early build. The reactive core (parsing, dependency graph, execution
-kernel, websocket protocol) works and is tested end-to-end. There is no
-browser UI yet — the `frontend/` app is still the Vite starter page. The
-`codeslides` CLI boots a server but doesn't yet load a deck file into it
-(that wiring is `TODO.md` #10). The most useful way to see current
-progress is via the Python API directly, or the test suite.
+Early build, but the core loop works end-to-end in a real browser: the
+reactive kernel, websocket protocol, a CodeMirror-based per-cell editor
+(Shift+Enter to run a cell, Mod+Shift+Enter to run the whole deck),
+reactive input widgets (sliders/buttons/text inputs), and viewer elements
+(image, iframe, notes with a markdown edit/preview toggle) are all wired
+up and tested. `codeslides edit <file>.py` loads and serves a real deck.
+Still missing: slideshow/presentation mode, collapsible cells, and Turtle
+support (see `TODO.md` for the full list with checkboxes).
+
+There's no exploratory "click around and see what's built" UI beyond
+what a deck's own cells render, since slideshow mode doesn't exist yet --
+running an example deck (see below) is the way to see it.
 
 ## Setup
 
@@ -37,8 +43,8 @@ test against the FastAPI server (`tests/test_server_ws.py`).
 
 ## See it work: drive the kernel directly
 
-There's no UI to click through yet, but you can run a deck reactively from
-a Python shell and watch cells re-execute as you change things:
+You can also run a deck reactively from a Python shell directly, without
+a browser, and watch cells re-execute as you change things:
 
 ```bash
 python3
@@ -84,7 +90,7 @@ the same way -- load them with `importlib`, then hand `app.deck` to a
 
 ## See it work: the websocket protocol
 
-The real wire protocol the frontend will eventually speak:
+The real wire protocol the frontend speaks:
 
 ```bash
 python3
@@ -111,19 +117,43 @@ with client.websocket_connect("/ws") as ws:
     print(ws.receive_json())  # cell_output -> {'value': 'Hello, CodeSlides!', ...}
 ```
 
-## Run the (placeholder) server + frontend
+## Run it in a browser
 
 ```bash
-codeslides edit examples/hello.py   # starts the FastAPI server; deck loading is TODO.md #10
+codeslides edit examples/live_demo.py
 ```
 
-Frontend (separate terminal, in `frontend/`):
+Open the URL it prints. The server serves the frontend from the
+**committed** `src/codeslides/static/` bundle, so this works right after
+a fresh checkout -- no separate frontend build step needed.
+
+`examples/live_demo.py` exercises most of what's built so far: a static
+(read-only) cell, an editable cell with an image viewer written via
+`cs.image()`, and an editable cell with a slider, a notes viewer
+(markdown edit/preview toggle), and a cross-cell dependency.
+
+### Frontend development
+
+If you're changing anything in `frontend/`, run the dev server for fast
+iteration:
 
 ```bash
+cd frontend
 npm install
 npm run dev
 ```
 
-The frontend currently just confirms it can reach the backend's
-`/api/health` and `/api/deck` endpoints -- the actual editor/slideshow UI
-is `TODO.md` #6 onward.
+But **before committing**, rebuild the production bundle and commit the
+result along with your source change -- `src/codeslides/static/` is
+tracked in git precisely so the server always has something current to
+serve without anyone needing to remember a build step:
+
+```bash
+cd frontend
+npm run build
+git add src/codeslides/static
+```
+
+A frontend change without a matching `src/codeslides/static/` update in
+the same commit means the server keeps serving the *old* UI until someone
+notices and rebuilds -- this has already caused real confusion once.
