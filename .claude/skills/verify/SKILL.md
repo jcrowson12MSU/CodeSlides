@@ -111,3 +111,15 @@ Then drive the served app with a script (see the two written during the
   tiny/oddly-proportioned test image (e.g. a 1x1 PNG) to fill the whole
   container width -- caught via screenshot, not by any functional check.
   Always screenshot new visual elements, not just assert on DOM state.
+- Same lesson, different shape, for turtle drawings: a "some non-white
+  pixels exist on the canvas" check passes even when the actual drawing is
+  imperceptibly small next to the turtle marker glyph -- `examples/
+  live_demo.py`'s star was originally sized ~15px on a 400x400 canvas and
+  looked blank at a glance. Screenshot and visually confirm the shape is
+  actually recognizable, not just "some pixels changed."
+- `codeslides.turtle` (not stdlib `turtle`) is importable in this repo's
+  dev environment; plain `import turtle` is NOT (`_tkinter` isn't
+  installed) -- if you need to sanity-check turtle behavior interactively,
+  use `from codeslides import turtle` inside a
+  `with turtle.execution_context():` block (see test_turtle.py for
+  examples), not the stdlib module.

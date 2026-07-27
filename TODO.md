@@ -22,9 +22,10 @@ reshape the plan below and are called out explicitly where they apply:
   fix for a long-standing marimo bug described in the vision doc: cloning an
   embedded `mo.ui.code_editor` app produces a copy whose output doesn't
   update independently of the original.
-- **Turtle graphics must work** — either by piping real `turtle` output into
-  the browser, or via a turtle-compatible API purpose-built for canvas
-  rendering in-browser.
+- **Turtle graphics must work** — via a turtle-compatible API purpose-built
+  for canvas rendering in-browser (`src/codeslides/turtle.py`). Real
+  `turtle`'s Tk dependency made piping it into the browser nonviable in
+  practice (see item 11 and `ARCHITECTURE.md` §7).
 
 - [x] **1. Define architecture & write design doc**
   Decide on the core architecture: Python reactive kernel (dependency graph
@@ -184,18 +185,25 @@ reshape the plan below and are called out explicitly where they apply:
   display fully independently. Include speaker-friendly large-font
   rendering of outputs/widgets.
 
-- [ ] **11. Add Python Turtle support**
+- [x] **11. Add Python Turtle support**
   Make `turtle`-based lessons work end-to-end in the browser, exposed as a
-  cell's canvas element (item 8). Investigate two approaches and pick one
-  (or a fallback pair): (a) run real `turtle` in the kernel subprocess with
-  its drawing calls intercepted/redirected into a headless canvas backend,
-  streaming frames/vector commands to the browser instead of opening a
-  native Tk window; or (b) ship a turtle-compatible shim module (matching
-  the standard `turtle` API surface instructors already use — `forward`,
-  `right`, `penup`, etc.) that renders to an HTML canvas via the same
-  output channel as other rich output. Should support both step-by-step
-  and animated drawing so students can see the turtle move, not just the
-  final image.
+  cell's canvas element. Investigated both approaches from the original
+  plan: real `turtle` intercepted at the Tk backend turned out nonviable
+  in practice -- `import turtle` fails outright wherever `_tkinter` isn't
+  installed (true of this project's own dev environment, and common in
+  server/CI/sandboxed Python), so a from-scratch stdlib-compatible shim
+  (`src/codeslides/turtle.py`) is the primary approach, not a fallback.
+  See `ARCHITECTURE.md` §7 for the full writeup, including why turtle
+  calls auto-target a cell's one `turtle_canvas` element rather than
+  naming it explicitly like `cs.image()`/`cs.iframe()` do.
+
+  Verified in a real browser: a five-pointed star drawn via
+  `turtle.forward()`/`turtle.right()` renders correctly on an HTML canvas
+  (`TurtleCanvasViewer.tsx`), redraws when a slider changes the step size,
+  and two browser tabs (two Sessions) have fully independent turtle
+  canvas state. Step-by-step/animated drawing (not just the final image)
+  is deferred -- the command list is already ordered and doesn't need a
+  wire-format change to support that later.
 
 - [ ] **12. Implement rich output rendering**
   Support rendering common teaching-relevant output types: plain

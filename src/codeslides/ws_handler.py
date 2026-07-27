@@ -77,11 +77,12 @@ def _results_to_messages(session_id: str, results: dict[str, ExecutionResult]) -
 
 def _element_output_messages(session: Session, results: dict[str, ExecutionResult]) -> list[ServerMessage]:
     """Emit element_output for viewer elements a re-run cell actually wrote
-    to via cs.image()/cs.iframe() (ARCHITECTURE.md section 3a) -- each
-    write already names its target element, so this is a direct
-    translation, not a broadcast to every viewer element on the cell
-    (broadcasting was the placeholder behavior this replaces, and it was
-    wrong for any cell with more than one viewer element).
+    to via cs.image()/cs.iframe(), or via codeslides.turtle calls
+    (ARCHITECTURE.md section 3a/7) -- each write already names its target
+    element, so this is a direct translation, not a broadcast to every
+    viewer element on the cell (broadcasting was the placeholder behavior
+    this replaces, and it was wrong for any cell with more than one viewer
+    element).
 
     `notes` elements are handled separately: they're authored content
     (`ui.notes(default=...)`), not computed from execution, so a

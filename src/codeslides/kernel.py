@@ -18,11 +18,11 @@ import ast
 import io
 import textwrap
 import traceback
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import dataclass, field
 
-from codeslides import cs
-from codeslides.deck import Cell, Deck
+from codeslides import cs, turtle
+from codeslides.deck import Cell, Deck, Element
 from codeslides.graph import DependencyGraph, build_graph
 from codeslides.session import Session
 
@@ -118,7 +118,38 @@ def _own_returns(stmts):
                             yield from _own_returns([item])
 
 
-def execute_cell(cell_name: str, source: str, session: Session) -> ExecutionResult:
+@contextmanager
+def _maybe_turtle_context(turtle_element: str | None):
+    """Only actually establish turtle.execution_context() when the cell
+    has exactly one turtle_canvas element. Without this, a cell with zero
+    or multiple canvases (an ambiguous/invalid target -- see
+    _find_turtle_canvas) would still get a fresh, valid turtle context to
+    draw into, silently swallowing what should be a clear error from
+    `turtle._state()` about calling turtle functions with no valid target.
+    """
+    if turtle_element is None:
+        yield None
+    else:
+        with turtle.execution_context() as commands:
+            yield commands
+
+
+def _find_turtle_canvas(elements: list[Element]) -> str | None:
+    """Return the name of the cell's one `turtle_canvas` element, if it
+    has exactly one. `codeslides.turtle` calls have no way to name a
+    target themselves (unlike `cs.image`/`cs.iframe`) without breaking
+    stdlib `turtle` call syntax, so a cell using turtle must have exactly
+    one such element; zero means turtle calls will raise (from
+    `turtle._state()`), and more than one has no well-defined target so is
+    treated the same as having none -- turtle calls will still raise.
+    """
+    canvases = [e.name for e in elements if e.kind == "turtle_canvas"]
+    return canvases[0] if len(canvases) == 1 else None
+
+
+def execute_cell(
+    cell_name: str, source: str, session: Session, elements: list[Element] | None = None
+) -> ExecutionResult:
     """Call the cell named `cell_name`'s function (compiled fresh from
     `source`, which the caller has already resolved to this Session's
     effective source -- the Deck's, or a per-Session override for
@@ -135,17 +166,24 @@ def execute_cell(cell_name: str, source: str, session: Session) -> ExecutionResu
     is what makes cloned Sessions (ARCHITECTURE.md section 1) fully
     independent at execution time, including per-Session source overrides
     (section 3), not just in the data model.
+
+    `elements` is the cell's static element list (from the Deck, or an
+    editable-instance override) -- needed to find its `turtle_canvas`
+    element, if it has one, since `codeslides.turtle` calls
+    (ARCHITECTURE.md section 7) have no way to name a target themselves
+    without breaking stdlib `turtle` call syntax.
     """
     stdout, stderr = io.StringIO(), io.StringIO()
+    turtle_element = _find_turtle_canvas(elements or [])
     try:
-        # `cs` (viewer-element writes, ARCHITECTURE.md section 3a) is a
-        # framework-provided name every cell body can call without its own
-        # import -- the compiled function's globals are otherwise seeded
-        # only from the Session namespace, so without this a bare
-        # `cs.image(...)` call would NameError even though the deck's
-        # source file imports `cs` at module scope (that import context
-        # isn't carried into the per-cell exec).
-        call_globals = {"cs": cs, **session.namespace}
+        # `cs`/`turtle` are framework-provided names every cell body can
+        # call without its own import -- the compiled function's globals
+        # are otherwise seeded only from the Session namespace, so without
+        # this a bare `cs.image(...)`/`turtle.forward(...)` call would
+        # NameError even though the deck's source file imports them at
+        # module scope (that import context isn't carried into the
+        # per-cell exec).
+        call_globals = {"cs": cs, "turtle": turtle, **session.namespace}
         fn, return_names = _compile_cell_function(source, call_globals)
 
         # Only bind element values for elements that are also declared
@@ -161,7 +199,12 @@ def execute_cell(cell_name: str, source: str, session: Session) -> ExecutionResu
             if element_name in params:
                 kwargs[element_name] = instance.value
 
-        with redirect_stdout(stdout), redirect_stderr(stderr), cs.execution_context() as writes:
+        with (
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+            cs.execution_context() as writes,
+            _maybe_turtle_context(turtle_element) as turtle_commands,
+        ):
             result = fn(**kwargs)
     except Exception:  # noqa: BLE001 - a cell's own error must not kill the kernel, whether
         # it's a parse/definition problem (CellDefinitionError) or a runtime exception.
@@ -171,6 +214,9 @@ def execute_cell(cell_name: str, source: str, session: Session) -> ExecutionResu
             stderr=stderr.getvalue(),
             error=traceback.format_exc(),
         )
+
+    if turtle_commands and turtle_element is not None:
+        writes.append(cs.ElementWrite(element_name=turtle_element, kind="turtle", content=turtle_commands))
 
     if len(return_names) == 1:
         session.namespace[return_names[0]] = result
@@ -292,7 +338,7 @@ class Kernel:
             source = session.source_overrides.get(name, self.deck.cells[name].source)
             instance = session.instances[name]
             instance.status = "running"
-            result = execute_cell(name, source, session)
+            result = execute_cell(name, source, session, elements=self.deck.cells[name].elements)
             instance.status = result.status
             instance.output = {
                 "stdout": result.stdout,

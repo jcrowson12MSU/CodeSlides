@@ -4,7 +4,7 @@ image/iframe viewers).
 See TODO.md #13 for real teaching examples with full reactivity wired up.
 """
 
-from codeslides import App, cs, ui
+from codeslides import App, cs, turtle, ui
 
 app = App()
 
@@ -38,13 +38,22 @@ def make_preview():
     elements=[
         ui.slider("speed", min=1, max=10, default=3),
         ui.turtle_canvas("canvas", width=400, height=400),
-        ui.notes("notes", default="# Live Coding\nWatch `speed` change the turtle."),
+        ui.notes("notes", default="# Live Coding\nWatch `speed` change the turtle's step size."),
     ],
 )
 def live_demo(speed):
     # `base` comes from the `setup` cell via the reactive dependency graph
     # (codeslides.graph.build_graph); ruff can't see that wiring, hence noqa.
-    result = base * speed  # noqa: F821
+    # `speed` scales the step size of a five-pointed star -- moving the
+    # slider redraws it larger or smaller. The x5 keeps it comfortably
+    # visible on the 400x400 canvas across the whole speed range (1-10):
+    # a step size under ~20px is nearly invisible next to the turtle
+    # marker itself.
+    step = base * speed * 5  # noqa: F821
+    for _ in range(5):
+        turtle.forward(step)
+        turtle.right(144)
+    result = step
     return result
 
 

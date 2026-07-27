@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { ImageViewer, IframeViewer, NotesViewer } from './viewerElements'
+import { TurtleCanvasViewer } from './TurtleCanvasViewer'
 import type { ElementMeta } from './elementMeta'
 
 export interface ViewerElementWidgetProps {
@@ -13,10 +14,10 @@ export interface ViewerElementWidgetProps {
 // (ARCHITECTURE.md section 3a). Separate from ElementWidget (input
 // elements) because viewer props don't fit the same shape -- viewers
 // display server-driven `content`, not a value the user directly sets via
-// set_element_value. Unsupported kinds (turtle_canvas -- TODO.md #15)
-// render nothing rather than crashing the whole cell's UI. Wraps
-// whichever viewer renders with a minimize toggle (ARCHITECTURE.md
-// section 8) common to every element kind.
+// set_element_value. Unsupported kinds render nothing rather than
+// crashing the whole cell's UI. Wraps whichever viewer renders with a
+// minimize toggle (ARCHITECTURE.md section 8) common to every element
+// kind.
 export function ViewerElementWidget({
   element,
   content,
@@ -37,6 +38,16 @@ export function ViewerElementWidget({
           elementId={element.name}
           content={content}
           onChangeSource={(source) => onChangeNotesSource(element.name, source)}
+        />
+      )
+      break
+    case 'turtle_canvas':
+      widget = (
+        <TurtleCanvasViewer
+          elementId={element.name}
+          content={content}
+          width={Number(element.config.width ?? 400)}
+          height={Number(element.config.height ?? 400)}
         />
       )
       break

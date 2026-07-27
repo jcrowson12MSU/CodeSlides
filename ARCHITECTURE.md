@@ -272,34 +272,67 @@ Session's messages.
 
 ## 7. Turtle support (R3)
 
-Two viable strategies; the plan is to build (a) first since it maximizes
-compatibility with existing lesson code, and keep (b) as a documented
-fallback if (a) proves too fragile:
+**Decision: shim module (originally "(b)"), not intercepting real
+`turtle`.** The original plan was to try intercepting real `turtle`'s Tk
+backend first, since it preserves the stdlib API exactly, and fall back to
+a from-scratch shim only if that proved fragile. In practice, `import
+turtle` failed immediately in this project's own dev environment —
+`_tkinter` isn't installed, so the stdlib `turtle` module's unconditional
+`import tkinter` at module load time raises before any turtle-specific
+code runs at all. This isn't an edge case to work around: many
+server/CI/sandboxed Python environments simply don't have Tk support, and
+requiring it would make turtle lessons unusable in exactly the deployment
+environments this project targets. The shim is the primary approach, not
+a fallback.
 
-**(a) Real `turtle`, intercepted backend.** `turtle` (via `tkinter`) draws
-through a pluggable `TurtleScreen`/canvas backend. Replace the Tk canvas
-backend with a shim that records each drawing primitive (`goto`, `line`,
-`color`, `stamp`, ...) as a serializable command instead of drawing to a Tk
-widget. Stream these commands to the browser over the existing output
-channel as `turtle_frame` messages; the frontend replays them onto an HTML
-`<canvas>`, optionally animated at the same pacing the instructor's code
-produces them (so students see the turtle move, matching the vision doc's
-ask). This preserves the real `turtle` API exactly — lesson code written
-against the standard library needs zero changes.
+**`codeslides.turtle`** re-implements the common subset of the stdlib
+`turtle` API as module-level functions (`forward`/`fd`, `right`/`rt`,
+`left`/`lt`, `goto`, `penup`/`pendown`, `pencolor`/`fillcolor`/`color`,
+`circle`, `dot`, `stamp`, `write`, `clear`, `reset`, `hideturtle`/
+`showturtle`, position/heading queries, ...), with **zero** dependency on
+`tkinter`. Lesson authors write `from codeslides import turtle` instead of
+`import turtle`; the call syntax is otherwise identical
+(`turtle.forward(100)`, no element name in any call), so existing
+turtle-based lesson bodies need only the import line changed.
 
-**(b) Turtle-compatible shim module.** A `codeslides.turtle` module
-re-implementing the common subset of the `turtle` API (`forward`, `right`,
-`left`, `penup`, `pendown`, `color`, `goto`, ...) that emits the same
-`turtle_frame` commands directly, with no dependency on `tkinter` at all.
-Simpler and more portable (no Tk installation needed, works in more sandbox
-environments) but requires lesson authors to `import codeslides.turtle as
-turtle` instead of the stdlib module, and needs to track stdlib API surface
-by hand.
+**Auto-targeting, not `cs.image`-style explicit naming.** `cs.image(name,
+...)` and `cs.iframe(name, ...)` require the author to name their target
+element on every call, because a cell can own more than one viewer
+element. Turtle calls can't do this without breaking stdlib-compatible
+call syntax (`turtle.forward(100)` has no room for a target name), so
+instead: a cell using `codeslides.turtle` must have exactly one
+`turtle_canvas` element, and every turtle call implicitly targets it. Zero
+or more than one such element on the cell is a configuration error —
+turtle calls raise (the same "outside of cell execution" error used when
+there's no active turtle context at all, since an ambiguous/missing
+target is treated identically to no target).
 
-Either way, turtle output is a Cell instance's output like any other — it
-participates in the same reactivity and instance-isolation model as
-everything else: two cloned Sessions running the same turtle-drawing cell
-get their own independent turtle state and canvas, per R2.
+**Per-execution state via contextvars**, mirroring `cs.py`'s
+`execution_context()`: the kernel wraps each cell call in
+`turtle.execution_context()`, which establishes fresh turtle state
+(position, heading, pen state) and a command list for that call only. A
+cell's drawing commands (`goto`, `heading`, `pencolor`, `dot`, `stamp`,
+`clear`, ...) accumulate during the call and are applied to the cell's
+`turtle_canvas` element only after the call succeeds — same
+collect-then-apply-on-success shape as `cs.*` writes and namespace writes,
+so a failing cell never leaves a half-drawn frame behind. Because this
+state lives entirely in the per-call contextvar, never anywhere shared,
+two cloned Sessions running the same turtle-drawing cell get fully
+independent turtle state and canvas content, per R2 — verified with a
+dedicated clone-isolation test and, at the browser level, two tabs with
+independently redrawable canvases.
+
+Turtle output is a Cell instance's output like any other: it's carried as
+an `ElementOutput`/`element_output` message the same way `cs.image()`
+content is, just with `kind="turtle"` and `content` being the command list
+rather than an image URL. The frontend's `TurtleCanvasViewer` replays the
+command list onto an HTML `<canvas>` on every content change (turtle's
+origin-at-center, y-up coordinate system translated to the canvas's
+origin-at-top-left, y-down one). Redrawing from scratch rather than
+incrementally animating for now; step-by-step/animated drawing (matching
+the vision doc's ask to see the turtle move, not just the final image) can
+build on the same ordered command list later without changing the wire
+format.
 
 ## 8. Collapse & minimize (R5)
 
