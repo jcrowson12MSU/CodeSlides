@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { ImageViewer, IframeViewer, NotesViewer } from './viewerElements'
 import type { ElementMeta } from './elementMeta'
 
@@ -5,6 +6,7 @@ export interface ViewerElementWidgetProps {
   element: ElementMeta
   content: unknown
   onChangeNotesSource: (elementId: string, source: string) => void
+  onToggleMinimize: () => void
 }
 
 // Dispatches a viewer element's (kind, config) to the matching component
@@ -12,22 +14,47 @@ export interface ViewerElementWidgetProps {
 // elements) because viewer props don't fit the same shape -- viewers
 // display server-driven `content`, not a value the user directly sets via
 // set_element_value. Unsupported kinds (turtle_canvas -- TODO.md #15)
-// render nothing rather than crashing the whole cell's UI.
-export function ViewerElementWidget({ element, content, onChangeNotesSource }: ViewerElementWidgetProps) {
+// render nothing rather than crashing the whole cell's UI. Wraps
+// whichever viewer renders with a minimize toggle (ARCHITECTURE.md
+// section 8) common to every element kind.
+export function ViewerElementWidget({
+  element,
+  content,
+  onChangeNotesSource,
+  onToggleMinimize,
+}: ViewerElementWidgetProps) {
+  let widget: ReactNode
   switch (element.kind) {
     case 'image':
-      return <ImageViewer elementId={element.name} content={content} />
+      widget = <ImageViewer elementId={element.name} content={content} />
+      break
     case 'iframe':
-      return <IframeViewer elementId={element.name} content={content} />
+      widget = <IframeViewer elementId={element.name} content={content} />
+      break
     case 'notes':
-      return (
+      widget = (
         <NotesViewer
           elementId={element.name}
           content={content}
           onChangeSource={(source) => onChangeNotesSource(element.name, source)}
         />
       )
+      break
     default:
       return null
   }
+
+  return (
+    <div className="cs-element-wrapper">
+      {widget}
+      <button
+        type="button"
+        className="cs-minimize-toggle"
+        onClick={onToggleMinimize}
+        aria-label={`Minimize ${element.name}`}
+      >
+        {'▾'}
+      </button>
+    </div>
+  )
 }

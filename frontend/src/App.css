@@ -28,6 +28,30 @@
   margin: 0;
 }
 
+.cs-cell-collapsed {
+  padding-bottom: 0.75rem;
+}
+
+.cs-collapse-toggle {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: #888;
+  padding: 0 0.15rem;
+  line-height: 1;
+  align-self: center;
+}
+
+.cs-collapsed-preview {
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  color: #999;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .cs-status {
   font-size: 0.8rem;
   font-weight: normal;
@@ -168,4 +192,39 @@
 
 .cs-notes-rendered :last-child {
   margin-bottom: 0;
+}
+
+.cs-element-wrapper {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+
+.cs-element-wrapper > *:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.cs-minimize-toggle {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: #aaa;
+  padding: 0.1rem 0.2rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.cs-minimize-toggle:hover {
+  color: #666;
+}
+
+.cs-element-minimized {
+  font-size: 0.8rem;
+  color: #999;
+}
+
+.cs-element-minimized .cs-minimize-toggle {
+  color: #999;
 }

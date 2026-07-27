@@ -143,7 +143,7 @@ reshape the plan below and are called out explicitly where they apply:
   to edit mode shows the raw source, editing and toggling back shows the
   updated rendered content -- all with zero console errors.
 
-- [ ] **9. Implement collapsible cells & minimizable elements**
+- [x] **9. Implement collapsible cells & minimizable elements**
   A cell can collapse to a single-line header (like collapsing a markdown
   header), hiding its editor/output/elements but preserving its state and
   reactivity underneath. Individual elements attached to a cell (a widget,
@@ -151,6 +151,26 @@ reshape the plan below and are called out explicitly where they apply:
   minimized without collapsing the whole cell. Collapse/minimize state is
   part of a cell instance's UI state (own per Session, not shared across
   clones — consistent with the isolation model in `ARCHITECTURE.md` §1).
+
+  The backend (`set_ui_state`'s `collapsed`/`minimized` fields,
+  `CellInstance.collapsed`/`ElementInstance.minimized`) already existed
+  from the websocket-protocol task; this task was the frontend: a
+  collapse toggle on each cell's header (hides editor/elements/output,
+  shows a one-line preview of the cell's first source line), and a
+  minimize toggle wrapping every element widget (input and viewer alike)
+  that collapses it to a single label line. Both are local client state in
+  `App.tsx` (same pattern as the notes-source override from item 8, since
+  `set_ui_state` produces no server reply to sync from) sent over the
+  wire for the Session's canonical copy to stay in sync.
+
+  Verified in a real browser: collapsing hides the editor and shows a
+  preview line; expanding restores it with namespace/output state
+  provably unaffected (re-run value unchanged); minimizing/restoring an
+  element works independently of the cell's own collapse state; a
+  websocket frame capture confirmed collapse/expand sends `set_ui_state`
+  and *zero* `cell_status`/`cell_output` messages, i.e. never triggers a
+  re-run; and two browser tabs (two Sessions) have fully independent
+  collapse state, matching the isolation guarantee.
 
 - [ ] **10. Build slideshow/presentation mode with live code cells**
   Group cells into slides (via markers or explicit slide boundaries in the
