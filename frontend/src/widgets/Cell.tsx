@@ -85,67 +85,71 @@ export function Cell({
       </div>
 
       {!collapsed && (
-        <>
+        <div className="cs-cell-body">
           {!hideCode && (
-            <CodeEditor
-              source={meta.source}
-              onRunCell={onRunCell}
-              onRunAll={onRunAll}
-              readOnly={meta.instance === 'static'}
+            <div className="cs-cell-code">
+              <CodeEditor
+                source={meta.source}
+                onRunCell={onRunCell}
+                onRunAll={onRunAll}
+                readOnly={meta.instance === 'static'}
+              />
+            </div>
+          )}
+
+          <div className="cs-cell-side">
+            {inputElements.length > 0 && (
+              <div className="cs-cell-elements">
+                {inputElements.map((element) =>
+                  minimizedElements[element.name] ? (
+                    <MinimizedElement
+                      key={element.name}
+                      elementId={element.name}
+                      onToggleMinimize={() => onToggleMinimize(element.name)}
+                    />
+                  ) : (
+                    <ElementWidget
+                      key={element.name}
+                      element={element}
+                      value={elementValues[element.name]}
+                      onSetValue={onSetElementValue}
+                      onToggleMinimize={() => onToggleMinimize(element.name)}
+                    />
+                  ),
+                )}
+              </div>
+            )}
+
+            {viewerElements.length > 0 && (
+              <div className="cs-cell-elements">
+                {viewerElements.map((element) =>
+                  minimizedElements[element.name] ? (
+                    <MinimizedElement
+                      key={element.name}
+                      elementId={element.name}
+                      onToggleMinimize={() => onToggleMinimize(element.name)}
+                    />
+                  ) : (
+                    <ViewerElementWidget
+                      key={element.name}
+                      element={element}
+                      content={state?.elementContent[element.name]}
+                      onChangeNotesSource={onChangeNotesSource}
+                      onToggleMinimize={() => onToggleMinimize(element.name)}
+                    />
+                  ),
+                )}
+              </div>
+            )}
+
+            <CellOutputView
+              error={state?.error ?? null}
+              kind={state?.kind ?? null}
+              data={state?.data}
+              value={state?.value}
             />
-          )}
-
-          {inputElements.length > 0 && (
-            <div className="cs-cell-elements">
-              {inputElements.map((element) =>
-                minimizedElements[element.name] ? (
-                  <MinimizedElement
-                    key={element.name}
-                    elementId={element.name}
-                    onToggleMinimize={() => onToggleMinimize(element.name)}
-                  />
-                ) : (
-                  <ElementWidget
-                    key={element.name}
-                    element={element}
-                    value={elementValues[element.name]}
-                    onSetValue={onSetElementValue}
-                    onToggleMinimize={() => onToggleMinimize(element.name)}
-                  />
-                ),
-              )}
-            </div>
-          )}
-
-          {viewerElements.length > 0 && (
-            <div className="cs-cell-elements">
-              {viewerElements.map((element) =>
-                minimizedElements[element.name] ? (
-                  <MinimizedElement
-                    key={element.name}
-                    elementId={element.name}
-                    onToggleMinimize={() => onToggleMinimize(element.name)}
-                  />
-                ) : (
-                  <ViewerElementWidget
-                    key={element.name}
-                    element={element}
-                    content={state?.elementContent[element.name]}
-                    onChangeNotesSource={onChangeNotesSource}
-                    onToggleMinimize={() => onToggleMinimize(element.name)}
-                  />
-                ),
-              )}
-            </div>
-          )}
-
-          <CellOutputView
-            error={state?.error ?? null}
-            kind={state?.kind ?? null}
-            data={state?.data}
-            value={state?.value}
-          />
-        </>
+          </div>
+        </div>
       )}
     </div>
   )

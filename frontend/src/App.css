@@ -1,5 +1,5 @@
 .app {
-  max-width: 800px;
+  max-width: 1200px;
   margin: 4rem auto;
   padding: 0 1.5rem;
   font-family: system-ui, sans-serif;
@@ -75,8 +75,32 @@
   padding: 0 0.35rem;
 }
 
-.cs-code-editor {
+.cs-cell-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 1.25rem;
   margin: 0.5rem 0;
+}
+
+/* The code editor is the only thing in the left column; everything else
+   (input/viewer elements, output) moves to the right column -- both the
+   flat Cells view and the Slides view render through this same Cell
+   component, so this layout applies to both. */
+.cs-cell-code {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.cs-cell-side {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.cs-code-editor {
+  margin: 0;
 }
 
 .cs-code-editor .cm-editor {
@@ -91,7 +115,18 @@
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  margin: 0.5rem 0;
+  margin: 0;
+}
+
+@media (max-width: 800px) {
+  .cs-cell-body {
+    flex-direction: column;
+  }
+
+  .cs-cell-code,
+  .cs-cell-side {
+    width: 100%;
+  }
 }
 
 .cs-element {
