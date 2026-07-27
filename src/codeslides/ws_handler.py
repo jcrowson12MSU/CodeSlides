@@ -19,16 +19,19 @@ from codeslides.protocol import (
     CellStatus,
     ClientMessage,
     CloneSession,
+    DeckSaved,
     EditCell,
     ElementOutput,
     ErrorMessage,
     NavigateSlide,
     RunAll,
+    SaveDeck,
     ServerMessage,
     SessionCloned,
     SetElementValue,
     SetUiState,
 )
+from codeslides.serialization import InvalidSourceError, SaveConflictError, save_edits
 from codeslides.session import Session
 
 
@@ -228,5 +231,58 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
         if registry.get(message.session_id) is None:
             return [ErrorMessage(message="unknown session", session_id=message.session_id)]
         return []
+
+    if isinstance(message, SaveDeck):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        deck_path = registry.kernel.deck_path
+        if deck_path is None:
+            return [
+                ErrorMessage(
+                    message="no deck file to save to (not started from a file)",
+                    session_id=message.session_id,
+                )
+            ]
+        if not session.source_overrides:
+            return [DeckSaved(session_id=message.session_id, cells=[])]
+        try:
+            save_edits(deck_path, session.source_overrides)
+        except (SaveConflictError, InvalidSourceError) as exc:
+            # Nothing was written in either case (serialization.save_edits
+            # validates the *whole* resulting file parses before writing
+            # anything) -- this Session's overrides and the Kernel's
+            # baseline are both untouched, so it's safe to just report the
+            # error and let the instructor keep editing.
+            return [ErrorMessage(message=str(exc), session_id=message.session_id)]
+        saved = sorted(session.source_overrides)
+        # Saved edits are now the on-disk baseline -- clear them so this
+        # Session's effective graph reverts to reading straight off
+        # `Kernel.deck` again (identical to a fresh Session's), rather
+        # than perpetually "overriding" a baseline that already matches.
+        # Reload the Kernel's baseline synchronously here too, rather than
+        # waiting on the CLI file-watcher's async debounce (TODO.md #10,
+        # ~1.6s): otherwise the next cell run in *this* (or any other)
+        # Session between the save and the watcher catching up would read
+        # `Kernel.deck`'s stale pre-save source once the override above is
+        # cleared -- a real, if brief, flash of reverted code.
+        session.source_overrides.clear()
+        from codeslides.loader import load_deck
+
+        try:
+            registry.kernel.reload_deck(load_deck(deck_path))
+        except (OSError, ValueError, SyntaxError) as exc:
+            # The write itself succeeded and passed validation above, so
+            # this would mean something external raced with us (e.g. the
+            # file was truncated by another process between our write and
+            # this re-read). Surface it, but the save itself already
+            # succeeded on disk -- don't claim otherwise.
+            return [
+                ErrorMessage(
+                    message=f"saved, but failed to reload the updated deck: {exc}",
+                    session_id=message.session_id,
+                )
+            ]
+        return [DeckSaved(session_id=message.session_id, cells=saved)]
 
     return [ErrorMessage(message=f"unhandled message type: {type(message).__name__}")]

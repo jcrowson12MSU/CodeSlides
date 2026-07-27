@@ -47,6 +47,11 @@ export interface NavigateSlide {
   slide_id: string
 }
 
+export interface SaveDeck {
+  type: 'save_deck'
+  session_id: string
+}
+
 export type ClientMessage =
   | EditCell
   | RunAll
@@ -54,6 +59,7 @@ export type ClientMessage =
   | SetUiState
   | CloneSession
   | NavigateSlide
+  | SaveDeck
 
 // -- Server -> client messages -----------------------------------------------
 
@@ -108,6 +114,12 @@ export interface SessionCreated {
   session_id: string
 }
 
+export interface DeckSaved {
+  type: 'deck_saved'
+  session_id: string
+  cells: string[]
+}
+
 export interface ErrorMessage {
   type: 'error'
   message: string
@@ -122,4 +134,5 @@ export type ServerMessage =
   | GraphUpdated
   | SessionCloned
   | SessionCreated
+  | DeckSaved
   | ErrorMessage

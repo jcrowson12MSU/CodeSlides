@@ -277,9 +277,14 @@ class Kernel:
     this whole model exists for.
     """
 
-    def __init__(self, deck: Deck) -> None:
+    def __init__(self, deck: Deck, deck_path: str | None = None) -> None:
         self.deck = deck
         self.graph: DependencyGraph = build_graph(deck)
+        # The Deck's source file, if this Kernel was started against a real
+        # file (CLI usage) rather than an in-memory Deck (tests). Used only
+        # by `save_edits` (TODO.md #11) to know what to write back to --
+        # never read for execution, which always goes through `self.deck`.
+        self.deck_path = deck_path
 
     def reload_deck(self, deck: Deck) -> None:
         """Replace the baseline Deck/graph wholesale -- used by the CLI's
@@ -304,9 +309,26 @@ class Kernel:
         """Handle a source edit to `cell_name`, scoped to `session` only:
         record the override, recompute *this session's* effective graph,
         and re-run the minimal affected set (ARCHITECTURE.md section 3,
-        steps 1-3). Never touches `self.deck` or any other Session."""
+        steps 1-3). Never touches `self.deck` or any other Session.
+
+        An edit that doesn't even parse (a syntax error while mid-edit --
+        the ordinary, expected state of live-typed code between
+        keystrokes) or that breaks graph-level invariants
+        (`MultipleDefinitionError`/`GraphCycleError`) is reported as this
+        cell's own error, exactly like a runtime exception inside the
+        cell would be -- it must not crash the edit_cell round trip or
+        leave `session.source_overrides` silently unset. The invalid
+        source is still recorded as the override (so the editor keeps
+        showing what the user typed) and no other cell is touched."""
         session.source_overrides[cell_name] = source
-        graph = self._effective_graph(session)
+        try:
+            graph = self._effective_graph(session)
+        except (SyntaxError, ValueError) as exc:
+            session.instances[cell_name].status = "error"
+            session.instances[cell_name].error = str(exc)
+            return {
+                cell_name: ExecutionResult(status="error", error=str(exc)),
+            }
         affected = graph.affected_by(cell_name)
         return self._run_cells(affected, session)
 
@@ -315,9 +337,18 @@ class Kernel:
     ) -> dict[str, ExecutionResult]:
         """Handle an input element's value changing: update the element
         instance and re-run the minimal affected set, same as an edit to
-        the owning cell (ARCHITECTURE.md section 3a)."""
+        the owning cell (ARCHITECTURE.md section 3a).
+
+        Same graceful-failure guard as `on_cell_edited`: some *other*
+        cell in this Session may currently have an invalid (mid-edit)
+        source override sitting in `session.source_overrides` --
+        rebuilding the effective graph must not crash just because this
+        unrelated element's value changed."""
         session.instances[cell_name].elements[element_name].value = value
-        graph = self._effective_graph(session)
+        try:
+            graph = self._effective_graph(session)
+        except (SyntaxError, ValueError) as exc:
+            return {cell_name: ExecutionResult(status="error", error=str(exc))}
         affected = graph.affected_by(cell_name)
         return self._run_cells(affected, session)
 

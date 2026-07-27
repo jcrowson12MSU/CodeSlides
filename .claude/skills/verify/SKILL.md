@@ -173,3 +173,46 @@ Then drive the served app with a script (see the two written during the
   (`cli.py` imports `server.py`, and `server.py` needs `load_deck` too
   for reloads) -- if `load_deck` ever needs to move again, keep it out of
   both `cli.py` and `server.py` themselves.
+- **If you're in a git worktree of this repo** (not the main checkout),
+  `pip install -e ".[dev]"` was very likely run once against the *main*
+  checkout, so the venv's editable install still points at
+  `<main-checkout>/src`, not this worktree's `src/`. Plain `pytest`/
+  `python3 -c "import codeslides"` will silently import the main
+  checkout's (possibly older) code with zero error -- confirmed via
+  `python3 -c "import codeslides; print(codeslides.__file__)"`. Either
+  `pip install -e .` again from *this* worktree, or just run
+  `PYTHONPATH="$(pwd)/src" python3 -m pytest` / `PYTHONPATH="$(pwd)/src"
+  python3 -m codeslides.cli ...` to force this worktree's source onto
+  the path. Don't skip this check after a fresh EnterWorktree -- a test
+  suite that "passes" against the wrong checkout proves nothing about
+  your actual changes.
+- `save_deck` (TODO.md #14, file save/load) writes straight to the
+  deck's `.py` file -- when manually verifying it, always copy the demo
+  deck to a scratch path first (e.g. `$CLAUDE_JOB_DIR/tmp/`), never point
+  a save test directly at a tracked file like `examples/live_demo.py`,
+  or a bad manual test run leaves real edits sitting in git status.
+- Reproduced two real, non-obvious bugs only by driving `save_deck`
+  through an actual Playwright browser session, not by reasoning about
+  the code or via `TestClient`: (1) `Kernel.on_cell_edited`/
+  `on_element_changed` rebuild the session's effective dependency graph
+  with **no exception handling** -- any syntax error from a live edit
+  (the ordinary, expected state of code mid-keystroke) crashed the whole
+  websocket connection; the ASGI traceback pointed at
+  `_effective_graph` -> `build_graph` -> `ast.parse`, several frames
+  removed from `on_cell_edited` itself. (2) Even after fixing that,
+  clicking Save with that same broken override still tried to write it
+  to disk and then reload it, crashing a second time in
+  `load_deck`/`exec_module` -- confirming a save path must independently
+  validate the *whole resulting file* parses before writing anything,
+  never just trust that a cell error was already handled somewhere
+  upstream. If you're testing an edit-then-save flow, deliberately drive
+  it with intentionally-broken intermediate code (not just valid
+  before/after states) -- that's exactly the gap unit tests missed here.
+- CodeMirror's contenteditable content doesn't reliably clear with
+  Playwright's `Ctrl+A`/`Backspace` -- it can silently no-op, and
+  `.pressSequentially()`'d new text then gets inserted into the *middle*
+  of the old content instead of replacing it (looks like a garbled
+  syntax error, but it's a test-script bug, not the app). Use `Meta+A` on
+  macOS (not `Control+A`) followed by `Delete`, and verify the editor's
+  `.textContent` is actually `""` before typing -- don't assume the
+  clear worked.

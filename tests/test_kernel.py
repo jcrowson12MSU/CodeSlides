@@ -311,3 +311,41 @@ def test_reload_deck_does_not_disturb_an_existing_sessions_namespace():
     kernel.run_all(session)
     assert session.namespace["base"] == 999
     assert session.namespace["result"] == 2997
+
+
+def test_on_cell_edited_with_a_syntax_error_reports_a_cell_error_not_a_crash():
+    """An instructor live-typing code passes through invalid intermediate
+    syntax constantly (e.g. an unclosed paren mid-edit) -- this must
+    surface as this cell's own error, not raise out of on_cell_edited and
+    take down the caller (the websocket handler has no try/except around
+    this call; previously an uncaught SyntaxError here crashed the whole
+    connection)."""
+    app = _build_deck()
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+
+    results = kernel.on_cell_edited("live_demo", "def live_demo(speed):\n    result = (\n", session)
+
+    assert results["live_demo"].status == "error"
+    assert session.source_overrides["live_demo"] == "def live_demo(speed):\n    result = (\n"
+    # other cells/namespace are untouched
+    assert session.namespace["base"] == 5
+
+
+def test_on_element_changed_tolerates_an_unrelated_cells_broken_override():
+    """A different cell in the same Session may currently have an invalid
+    (mid-edit) source override sitting around -- changing some other
+    element's value rebuilds the *whole* effective graph and must not
+    crash just because of that unrelated broken cell."""
+    app = _build_deck()
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+
+    kernel.on_cell_edited("live_demo", "def live_demo(speed):\n    result = (\n", session)
+    assert session.source_overrides["live_demo"] == "def live_demo(speed):\n    result = (\n"
+
+    results = kernel.on_element_changed("live_demo", "speed", 7, session)
+
+    assert results["live_demo"].status == "error"

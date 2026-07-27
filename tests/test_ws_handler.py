@@ -1,14 +1,17 @@
 from codeslides import App, cs, ui
 from codeslides.kernel import Kernel
+from codeslides.loader import load_deck
 from codeslides.protocol import (
     CellOutput,
     CellStatus,
     CloneSession,
+    DeckSaved,
     EditCell,
     ElementOutput,
     ErrorMessage,
     NavigateSlide,
     RunAll,
+    SaveDeck,
     SessionCloned,
     SetElementValue,
     SetUiState,
@@ -236,3 +239,150 @@ def test_navigate_slide_is_a_noop_for_known_session():
     )
 
     assert messages == []
+
+
+_DECK_FILE_SOURCE = (
+    "from codeslides import App, ui\n\n"
+    "app = App()\n\n"
+    "@app.cell\n"
+    "def setup():\n"
+    "    base = 5\n"
+    "    return base\n\n"
+    '@app.cell(instance="editable", elements=[ui.slider("speed", min=1, max=10, default=3)])\n'
+    "def live_demo(speed):\n"
+    "    result = base * speed  # noqa: F821\n"
+    "    return result\n"
+)
+
+
+def _build_file_backed_registry(tmp_path):
+    """A SaveDeck test needs a real deck_path on disk (unlike the rest of
+    this file's in-memory `_build_deck()`), since saving writes to it."""
+    path = tmp_path / "deck.py"
+    path.write_text(_DECK_FILE_SOURCE)
+    deck = load_deck(str(path))
+    registry = SessionRegistry(kernel=Kernel(deck, deck_path=str(path)))
+    return registry, path
+
+
+def test_save_deck_writes_the_override_and_clears_it(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    new_source = (
+        '@app.cell(instance="editable", elements=[ui.slider("speed", min=1, max=10, default=3)])\n'
+        "def live_demo(speed):\n"
+        "    result = base * speed * 10  # noqa: F821\n"
+        "    return result\n"
+    )
+    handle_message(registry, EditCell(session_id=session.session_id, cell_id="live_demo", source=new_source))
+    assert session.source_overrides["live_demo"] == new_source
+
+    messages = handle_message(registry, SaveDeck(session_id=session.session_id))
+
+    assert messages == [DeckSaved(session_id=session.session_id, cells=["live_demo"])]
+    assert "base * speed * 10" in path.read_text()
+    # the override is now redundant with the on-disk baseline -- cleared
+    assert session.source_overrides == {}
+    # and the Kernel's own baseline picked up the change synchronously,
+    # not waiting on the CLI file-watcher's async debounce
+    assert "base * speed * 10" in registry.kernel.deck.cells["live_demo"].source
+
+
+def test_save_deck_with_no_overrides_is_a_noop(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    before = path.read_text()
+
+    messages = handle_message(registry, SaveDeck(session_id=session.session_id))
+
+    assert messages == [DeckSaved(session_id=session.session_id, cells=[])]
+    assert path.read_text() == before
+
+
+def test_save_deck_without_a_deck_path_errors_cleanly():
+    registry = SessionRegistry(kernel=Kernel(_build_deck().deck))  # no deck_path
+    session = registry.create()
+    handle_message(
+        registry,
+        EditCell(
+            session_id=session.session_id,
+            cell_id="live_demo",
+            source="def live_demo(speed):\n    result = speed\n    return result\n",
+        ),
+    )
+
+    messages = handle_message(registry, SaveDeck(session_id=session.session_id))
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_save_deck_with_an_unparseable_override_errors_without_writing(tmp_path):
+    """A syntax error left over from live-typing must never reach disk --
+    save_deck must report it as an ErrorMessage, not crash the connection
+    (this reproduces a real bug found via manual browser testing: an
+    in-flight edit_cell with invalid syntax was correctly handled as a
+    per-cell error, but a subsequent save_deck still tried to write --
+    and then reload -- that same broken text)."""
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    before = path.read_text()
+
+    handle_message(
+        registry,
+        EditCell(
+            session_id=session.session_id,
+            cell_id="live_demo",
+            source="def live_demo(speed):\n    result = (\n",
+        ),
+    )
+    assert session.source_overrides["live_demo"] == "def live_demo(speed):\n    result = (\n"
+
+    messages = handle_message(registry, SaveDeck(session_id=session.session_id))
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+    # nothing was written, and the override is still there for the
+    # instructor to keep fixing
+    assert path.read_text() == before
+    assert session.source_overrides["live_demo"] == "def live_demo(speed):\n    result = (\n"
+
+
+def test_save_deck_unknown_session_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+
+    messages = handle_message(registry, SaveDeck(session_id="does-not-exist"))
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_save_deck_only_affects_the_saving_sessions_overrides(tmp_path):
+    """Another Session's independent edit to the same cell must survive a
+    different Session's save untouched (ARCHITECTURE.md section 1
+    isolation guarantee -- saving must not leak across Sessions)."""
+    registry, path = _build_file_backed_registry(tmp_path)
+    session_a = registry.create()
+    session_b = registry.create()
+
+    source_a = (
+        '@app.cell(instance="editable", elements=[ui.slider("speed", min=1, max=10, default=3)])\n'
+        "def live_demo(speed):\n"
+        "    result = base * speed * 100  # noqa: F821\n"
+        "    return result\n"
+    )
+    source_b = (
+        '@app.cell(instance="editable", elements=[ui.slider("speed", min=1, max=10, default=3)])\n'
+        "def live_demo(speed):\n"
+        "    result = base * speed * 200  # noqa: F821\n"
+        "    return result\n"
+    )
+    handle_message(registry, EditCell(session_id=session_a.session_id, cell_id="live_demo", source=source_a))
+    handle_message(registry, EditCell(session_id=session_b.session_id, cell_id="live_demo", source=source_b))
+
+    handle_message(registry, SaveDeck(session_id=session_a.session_id))
+
+    assert "base * speed * 100" in path.read_text()
+    assert session_a.source_overrides == {}
+    # session_b's own override is untouched by session_a's save
+    assert session_b.source_overrides["live_demo"] == source_b

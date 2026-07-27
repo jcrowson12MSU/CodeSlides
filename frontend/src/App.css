@@ -279,8 +279,22 @@
 
 .cs-view-toggle {
   display: flex;
+  align-items: center;
   gap: 0.25rem;
   margin: 0.75rem 0;
+}
+
+.cs-save-status {
+  font-size: 0.85rem;
+  margin-left: 0.5rem;
+}
+
+.cs-save-status-saved {
+  color: #2a8f4d;
+}
+
+.cs-save-status-error {
+  color: #c92a2a;
 }
 
 .cs-view-toggle button {

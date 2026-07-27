@@ -304,10 +304,70 @@ reshape the plan below and are called out explicitly where they apply:
   loading a fresh page shows the new cell, confirming the whole
   watch -> reload -> serve loop works, not just the isolated pieces.
 
-- [ ] **14. Add file save/load & `.py` format serialization**
+- [x] **14. Add file save/load & `.py` format serialization**
   Implement saving the in-browser edited deck back to a clean,
   deterministic `.py` file (stable cell ordering/formatting so diffs are
   minimal), and loading existing decks back into the editor faithfully.
+
+  Loading was already solid (`loader.py`, built for TODO.md #13's CLI).
+  This task added the other half: a `save_deck` websocket message
+  (`protocol.py`) an instructor's "Save" button (new toolbar button in
+  `App.tsx`, next to the Cells/Slides toggle) sends to persist the
+  current Session's `instance="editable"` source_overrides back into the
+  deck's `.py` file on disk.
+
+  Chose **in-place text substitution over regenerating the file from the
+  in-memory Deck model**: `Cell.source` (via `inspect.getsource`) is
+  already exactly the on-disk text of a cell's decorator + function, so
+  `serialization.py`'s `save_edits()` locates each edited cell's original
+  line span (via a fresh `ast.parse` of the current file -- decorator
+  lines included, since `FunctionDef.lineno` points at the `def` line,
+  not the decorator, even on Python 3.13) and replaces just that span.
+  Rejected the "regenerate deterministically" framing from this task's
+  original description: it would strip every comment and reformat every
+  untouched cell on every save, turning a one-cell edit into a
+  repo-diff-hostile whole-file rewrite. In-place substitution keeps
+  everything else -- comments, import order, blank lines, other
+  cells -- byte-identical.
+
+  Validates before writing: the *whole resulting file* (not just the
+  edited cell in isolation) must `ast.parse` cleanly, or the save is
+  rejected with an `InvalidSourceError` and nothing is written. This
+  caught a real bug during manual browser verification: an
+  `instance="editable"` cell mid-keystroke routinely has invalid syntax
+  (a cell's own execution already tolerated this gracefully, ARCHITECTURE
+  section 3), but a naive save would have happily written that broken
+  text straight to the deck's file, corrupting every future load of it.
+  Also found and fixed a second, previously-latent bug while chasing
+  this: `Kernel.on_cell_edited`/`on_element_changed` rebuilt the
+  session's effective dependency graph with no exception handling at
+  all, so *any* syntax error from a live edit crashed the whole websocket
+  connection (not caught by anything -- reproduced via a real Playwright
+  browser session, not assumed), for the ordinary, expected case of an
+  instructor typing invalid intermediate code. Both now report a clean
+  per-cell error instead.
+
+  After a successful save, the Kernel's own baseline is reloaded
+  synchronously in the same request (reusing `loader.load_deck`, same as
+  the CLI file-watcher) rather than waiting on the watcher's async
+  debounce (~1.6s) -- otherwise a cell run in the gap between save and
+  watcher-catch-up would read the stale pre-save source once the
+  session's override is cleared, a real (if brief) flash of reverted
+  code. The saving Session's overrides are cleared on success (they're
+  now redundant with the on-disk baseline); other Sessions' independent
+  overrides on the same cell are untouched (isolation guarantee, verified
+  with a dedicated two-session test).
+
+  Verified end-to-end in a real browser via Playwright: edited a cell's
+  code, ran it (Shift+Enter), clicked Save, confirmed the toolbar showed
+  "Saved: make_preview" and the file on disk contained the exact edited
+  source with the rest of the file byte-identical, plus confirmed
+  `/api/deck` reflected the new baseline immediately (no wait for the
+  watcher). Also drove the crash bug directly in-browser before fixing
+  it, then re-verified clean after. 14 new backend tests (6 in
+  `test_serialization.py`, 6 in `test_ws_handler.py` covering `save_deck`,
+  2 regression tests in `test_kernel.py` for the graceful-syntax-error
+  fix) plus the full existing suite, all green; ruff and oxlint clean.
 
 - [ ] **15. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming

@@ -93,6 +93,19 @@ class NavigateSlide:
     slide_id: str
 
 
+@dataclass
+class SaveDeck:
+    """Persist `session_id`'s current `instance="editable"` source
+    overrides back into the deck's .py file on disk (ARCHITECTURE.md
+    section 2, TODO.md #11) -- the explicit "commit my live edits" action,
+    distinct from `edit_cell`'s per-Session-only override. Only the
+    Session that requests it has its overrides saved/cleared; other
+    Sessions (including clones) keep their own overrides untouched."""
+
+    type: ClassVar[str] = "save_deck"
+    session_id: str
+
+
 # -- Server -> client messages -----------------------------------------------
 
 
@@ -155,6 +168,17 @@ class SessionCloned:
 
 
 @dataclass
+class DeckSaved:
+    """Acknowledges a successful `save_deck`. `cells` lists which cell
+    names had overrides written to disk (empty if there was nothing to
+    save)."""
+
+    type: ClassVar[str] = "deck_saved"
+    session_id: str
+    cells: list[str]
+
+
+@dataclass
 class SessionCreated:
     """Sent once, immediately after a websocket connection is accepted:
     tells the client the session_id implicitly created for that connection
@@ -177,7 +201,9 @@ class ErrorMessage:
     cell_id: str | None = None
 
 
-ClientMessage = EditCell | RunAll | SetElementValue | SetUiState | CloneSession | NavigateSlide
+ClientMessage = (
+    EditCell | RunAll | SetElementValue | SetUiState | CloneSession | NavigateSlide | SaveDeck
+)
 ServerMessage = (
     CellStatus
     | CellOutput
@@ -185,12 +211,21 @@ ServerMessage = (
     | GraphUpdated
     | SessionCloned
     | SessionCreated
+    | DeckSaved
     | ErrorMessage
 )
 
 _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
     cls.type: cls
-    for cls in (EditCell, RunAll, SetElementValue, SetUiState, CloneSession, NavigateSlide)
+    for cls in (
+        EditCell,
+        RunAll,
+        SetElementValue,
+        SetUiState,
+        CloneSession,
+        NavigateSlide,
+        SaveDeck,
+    )
 }
 
 

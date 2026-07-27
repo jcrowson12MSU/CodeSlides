@@ -113,7 +113,19 @@ Design points:
   from the browser at present-time (the instructor live-codes it). Plain
   `@app.cell` is authored ahead of time and can still be reactive, but its
   source isn't meant to be edited mid-presentation. This distinction
-  matters for the dependency graph (§3) and for save/load (`TODO.md` #14).
+  matters for the dependency graph (§3) and for save/load: only
+  `editable` cells ever have a `session.source_overrides` entry to save.
+  Saving (`codeslides/serialization.py`) is in-place text substitution,
+  not a from-model regeneration of the file: `Cell.source` is already
+  exactly the on-disk text of a cell's decorator+function (via
+  `inspect.getsource`), so a save locates that span in the *current*
+  file text (a fresh `ast.parse`, not the already-imported module) and
+  replaces just it, leaving comments/formatting/other cells untouched.
+  It validates the whole resulting file still parses before writing
+  anything — an editable cell's live source is routinely invalid
+  mid-keystroke, and that must never reach disk even though it's fine to
+  transiently run against (see kernel.py's `on_cell_edited`, which
+  reports a syntax error as that cell's own error rather than crashing).
 - `elements=[...]` (R4) declares a cell's attached Elements. Each element
   has a stable name (unique within the cell), a kind (`slider`, `button`,
   `text_input`, `turtle_canvas`, `image`, `iframe`, `notes`), and

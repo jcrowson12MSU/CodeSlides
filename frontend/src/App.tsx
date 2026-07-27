@@ -32,6 +32,17 @@ function initialViewMode(): ViewMode {
 function App() {
   const [deck, setDeck] = useState<DeckSummary | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode)
+  // Feedback for the last save_deck round-trip (TODO.md #11). Cleared on
+  // the next save attempt; not persisted -- purely a transient toast.
+  // `saving` gates which `error` messages count as save feedback -- errors
+  // are otherwise a generic, untagged message type shared with edit_cell/
+  // set_element_value/etc, so without this an unrelated error (e.g. a
+  // stale edit_cell for a since-renamed cell) would incorrectly surface as
+  // a save failure.
+  const [saveStatus, setSaveStatus] = useState<{ kind: 'saved' | 'error'; text: string } | null>(
+    null,
+  )
+  const [saving, setSaving] = useState(false)
   const [elementValues, setElementValues] = useState<Record<string, Record<string, unknown>>>({})
   // Local-only override for notes content while editing: set_ui_state
   // produces no server reply (ARCHITECTURE.md section 8 -- pure UI state,
@@ -61,6 +72,25 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
 
+  useEffect(() => {
+    if (!saving) return
+    const last = messages[messages.length - 1]
+    if (!last) return
+    if (last.type === 'deck_saved') {
+      setSaving(false)
+      setSaveStatus(
+        last.cells.length > 0
+          ? { kind: 'saved', text: `Saved: ${last.cells.join(', ')}` }
+          : { kind: 'saved', text: 'Nothing to save' },
+      )
+    } else if (last.type === 'error') {
+      setSaving(false)
+      setSaveStatus({ kind: 'error', text: last.message })
+    }
+    // only re-check when a new message arrives while a save is in flight
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages])
+
   function handleSetElementValue(cellId: string, elementId: string, value: unknown) {
     if (!sessionId) return
     setElementValues((prev) => ({
@@ -78,6 +108,13 @@ function App() {
   function handleRunAll() {
     if (!sessionId) return
     send({ type: 'run_all', session_id: sessionId })
+  }
+
+  function handleSaveDeck() {
+    if (!sessionId) return
+    setSaving(true)
+    setSaveStatus(null)
+    send({ type: 'save_deck', session_id: sessionId })
   }
 
   function handleChangeNotesSource(cellId: string, elementId: string, source: string) {
@@ -154,6 +191,14 @@ function App() {
           >
             Slides
           </button>
+          <button type="button" disabled={!sessionId || saving} onClick={handleSaveDeck}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+          {saveStatus && (
+            <span className={`cs-save-status cs-save-status-${saveStatus.kind}`}>
+              {saveStatus.text}
+            </span>
+          )}
         </div>
       )}
       {viewMode === 'cells' && (

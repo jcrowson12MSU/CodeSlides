@@ -67,7 +67,7 @@ def create_app(deck: Deck | None = None, deck_path: str | None = None) -> FastAP
 
     api = FastAPI(title="CodeSlides", lifespan=lifespan)
     api.state.deck = deck or Deck()
-    api.state.kernel = Kernel(api.state.deck)
+    api.state.kernel = Kernel(api.state.deck, deck_path=deck_path)
     api.state.registry = SessionRegistry(kernel=api.state.kernel)
     api.state.deck_path = deck_path
 
