@@ -281,6 +281,18 @@ class Kernel:
         self.deck = deck
         self.graph: DependencyGraph = build_graph(deck)
 
+    def reload_deck(self, deck: Deck) -> None:
+        """Replace the baseline Deck/graph wholesale -- used by the CLI's
+        file-watcher (TODO.md #10) when the deck's source file changes on
+        disk. Existing Sessions are untouched: their namespace, element
+        state, and any `instance="editable"` source_overrides survive a
+        reload exactly as they were, since none of that lives on the
+        Kernel. A Session only sees the new baseline the next time it
+        runs a cell that has no override for it (ARCHITECTURE.md section 3's
+        override-takes-precedence rule already handles this correctly)."""
+        self.deck = deck
+        self.graph = build_graph(deck)
+
     def run_all(self, session: Session) -> dict[str, ExecutionResult]:
         """Run every cell once, in topological order, against `session`."""
         graph = self._effective_graph(session)

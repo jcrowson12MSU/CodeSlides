@@ -1,41 +1,27 @@
 """Command-line entry point. See ARCHITECTURE.md and TODO.md #10.
 
-Loads the given deck file and serves it. Still missing from the full
-TODO.md #10 scope: file-watching for external edits, auto-opening the
-browser, and a distinct `present` mode (currently identical to `edit`).
+`codeslides edit <file>` and `codeslides present <file>` both load the
+deck and start the same server (ARCHITECTURE.md's "one tool, two modes"
+principle -- there's no separate present-mode server), differing only in
+which view the browser opens to: `edit` opens the flat Cells view,
+`present` opens directly into the Slides presentation view
+(`?mode=slides`, read by frontend/src/App.tsx's `initialViewMode`). Both
+watch the deck file for external changes and auto-open the browser by
+default.
 """
 
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import sys
-from pathlib import Path
+import webbrowser
 
 import uvicorn
 
-from codeslides.app import App
-from codeslides.deck import Deck
+from codeslides.loader import load_deck
 from codeslides.server import create_app
 
-
-def load_deck(path: str) -> Deck:
-    """Import a deck .py file as a module and return its App's Deck.
-    The file must define exactly one module-level `codeslides.App`
-    instance (conventionally named `app`, per ARCHITECTURE.md section 2)."""
-    module_path = Path(path)
-    spec = importlib.util.spec_from_file_location(module_path.stem, module_path)
-    if spec is None or spec.loader is None:
-        raise ValueError(f"could not load {path!r} as a Python module")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    apps = [v for v in vars(module).values() if isinstance(v, App)]
-    if not apps:
-        raise ValueError(f"{path!r} does not define a codeslides.App instance")
-    if len(apps) > 1:
-        raise ValueError(f"{path!r} defines multiple codeslides.App instances")
-    return apps[0].deck
+__all__ = ["load_deck", "main"]
 
 
 def main() -> None:
@@ -47,6 +33,13 @@ def main() -> None:
         sub.add_argument("path", help="Path to a deck .py file")
         sub.add_argument("--host", default="127.0.0.1")
         sub.add_argument("--port", type=int, default=8000)
+        sub.add_argument(
+            "--no-open-browser",
+            dest="open_browser",
+            action="store_false",
+            default=True,
+            help="Don't automatically open the deck in a browser tab",
+        )
 
     args = parser.parse_args()
 
@@ -56,9 +49,17 @@ def main() -> None:
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(1) from None
 
-    app = create_app(deck)
+    app = create_app(deck, deck_path=args.path)
+    url = f"http://{args.host}:{args.port}/"
+    if args.command == "present":
+        url += "?mode=slides"
+
     print(f"codeslides {args.command}: {args.path}")
-    print(f"Serving on http://{args.host}:{args.port}")
+    print(f"Serving on http://{args.host}:{args.port} (watching {args.path} for changes)")
+
+    if args.open_browser:
+        webbrowser.open(url)
+
     uvicorn.run(app, host=args.host, port=args.port)
 
 

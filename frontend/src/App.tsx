@@ -12,6 +12,15 @@ interface DeckSummary {
 
 type ViewMode = 'cells' | 'slides'
 
+function initialViewMode(): ViewMode {
+  // `codeslides present <file>` (cli.py) opens the browser at
+  // /?mode=slides so an instructor lands directly in the presentation
+  // view instead of having to click the toggle themselves; `edit` opens
+  // plain `/`, defaulting to the flat Cells view. Purely a starting
+  // point -- the toggle below still switches freely either way.
+  return new URLSearchParams(window.location.search).get('mode') === 'slides' ? 'slides' : 'cells'
+}
+
 // Two views over the same deck (ARCHITECTURE.md's "one tool, two modes"
 // principle, VISION.md): a flat "Cells" edit view (every cell, always
 // showing code -- TODO.md #6/#7) and a "Slides" presentation view
@@ -22,7 +31,7 @@ type ViewMode = 'cells' | 'slides'
 // and how.
 function App() {
   const [deck, setDeck] = useState<DeckSummary | null>(null)
-  const [viewMode, setViewMode] = useState<ViewMode>('cells')
+  const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode)
   const [elementValues, setElementValues] = useState<Record<string, Record<string, unknown>>>({})
   // Local-only override for notes content while editing: set_ui_state
   // produces no server reply (ARCHITECTURE.md section 8 -- pure UI state,

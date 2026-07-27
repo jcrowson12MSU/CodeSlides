@@ -4,11 +4,15 @@ websocket endpoint implementing ARCHITECTURE.md section 5.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from watchfiles import Change, awatch
 
 from codeslides.deck import Deck
 from codeslides.kernel import Kernel
@@ -18,11 +22,54 @@ from codeslides.ws_handler import SessionRegistry, handle_message
 FRONTEND_DIST = Path(__file__).parent / "static"
 
 
-def create_app(deck: Deck | None = None) -> FastAPI:
-    api = FastAPI(title="CodeSlides")
+async def _watch_deck_file(api: FastAPI, deck_path: str) -> None:
+    """Background task: re-parse `deck_path` and reload the Kernel's Deck
+    whenever it changes on disk. Import errors in the edited file (e.g. a
+    syntax error while mid-edit) are logged and skipped rather than
+    crashing the watcher -- the server keeps serving the last-good deck
+    until the file becomes loadable again."""
+    from codeslides.loader import load_deck
+
+    async for changes in awatch(deck_path):
+        if not any(change in (Change.modified, Change.added) for change, _ in changes):
+            continue
+        try:
+            new_deck = load_deck(deck_path)
+        except (OSError, ValueError, SyntaxError) as exc:
+            print(f"codeslides: error reloading {deck_path!r}: {exc}")
+            continue
+        api.state.deck = new_deck
+        api.state.kernel.reload_deck(new_deck)
+        print(f"codeslides: reloaded {deck_path!r}")
+
+
+def create_app(deck: Deck | None = None, deck_path: str | None = None) -> FastAPI:
+    """`deck_path`, if given, is watched for changes (TODO.md #10): on
+    save, the file is re-parsed and `Kernel.reload_deck` swaps in the new
+    baseline. This only affects new page loads/websocket connections
+    after the reload -- an already-open browser tab keeps running against
+    whatever deck it connected with until it reconnects (see
+    ARCHITECTURE.md's Session model and session.py's docstring for why
+    that's the honestly-scoped behavior, not a shortcut)."""
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        watch_task = None
+        if deck_path is not None:
+            watch_task = asyncio.create_task(_watch_deck_file(app, deck_path))
+        try:
+            yield
+        finally:
+            if watch_task is not None:
+                watch_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await watch_task
+
+    api = FastAPI(title="CodeSlides", lifespan=lifespan)
     api.state.deck = deck or Deck()
     api.state.kernel = Kernel(api.state.deck)
     api.state.registry = SessionRegistry(kernel=api.state.kernel)
+    api.state.deck_path = deck_path
 
     @api.get("/api/health")
     def health() -> dict:

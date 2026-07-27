@@ -254,3 +254,60 @@ def test_element_writes_isolated_across_cloned_sessions():
 
     assert session_a.instances["make_plot"].elements["plot"].content == "/tmp/figure.png"
     assert session_b.instances["make_plot"].elements["plot"].content == "/tmp/different.png"
+
+
+def test_reload_deck_affects_new_sessions():
+    """CLI file-watcher reload (TODO.md #10): a new Session created after
+    reload_deck() must run against the new deck's code, not the original."""
+    app = _build_deck()
+    kernel = Kernel(app.deck)
+
+    new_app = App()
+
+    @new_app.cell
+    def setup():
+        base = 100
+        return base
+
+    @new_app.cell(instance="editable", elements=[ui.slider("speed", min=1, max=10, default=3)])
+    def live_demo(speed):
+        result = base * speed  # noqa: F821
+        return result
+
+    kernel.reload_deck(new_app.deck)
+
+    session = Session(deck=new_app.deck)
+    kernel.run_all(session)
+
+    assert session.namespace["base"] == 100
+    assert session.namespace["result"] == 300
+
+
+def test_reload_deck_does_not_disturb_an_existing_sessions_namespace():
+    app = _build_deck()
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+    assert session.namespace["result"] == 15
+
+    new_app = App()
+
+    @new_app.cell
+    def setup():
+        base = 999
+        return base
+
+    @new_app.cell(instance="editable", elements=[ui.slider("speed", min=1, max=10, default=3)])
+    def live_demo(speed):
+        result = base * speed  # noqa: F821
+        return result
+
+    kernel.reload_deck(new_app.deck)
+
+    # the existing session's namespace is untouched until it next runs
+    assert session.namespace["result"] == 15
+
+    # but running it again now picks up the reloaded baseline
+    kernel.run_all(session)
+    assert session.namespace["base"] == 999
+    assert session.namespace["result"] == 2997

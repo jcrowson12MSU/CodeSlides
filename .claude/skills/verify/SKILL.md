@@ -146,3 +146,30 @@ Then drive the served app with a script (see the two written during the
   stdlib `json` module can't handle, not just strings/numbers -- matplotlib
   is installed as a dev extra now specifically so this is easy to
   re-check (`pytest.importorskip("matplotlib")` in test_output.py).
+- `create_app(deck, deck_path=...)` starts a background file-watcher
+  (`watchfiles.awatch`, TODO.md #10) that reloads the Deck when
+  `deck_path` changes on disk. `watchfiles` debounces changes by default
+  (~1.6s) before yielding them, so a test that writes the file and
+  immediately asserts on `/api/deck` will see the *old* deck -- sleep at
+  least 3s after the write (see `tests/test_server_watch.py`), don't
+  shorten this just because it feels slow.
+- Passing only `deck_path=` without also passing the already-loaded
+  `deck=` to `create_app` silently serves an empty `Deck()` until the
+  first file-change event -- this looks exactly like the deck failing to
+  load, but is just a call-site mistake. `cli.py` always does
+  `create_app(deck, deck_path=path)`, both together.
+- FastAPI's `@app.on_event("startup"/"shutdown")` is deprecated (confirmed
+  via `python3 -W error::DeprecationWarning`, not assumed) -- background
+  tasks like the file watcher must use the `lifespan` context-manager
+  parameter to `FastAPI(...)` instead. If you add another startup/shutdown
+  hook later, add it to the existing `lifespan` function in `server.py`
+  rather than reintroducing `on_event`.
+- A reload only affects *new* page loads/websocket connections; an
+  already-open browser tab keeps running against whatever Deck it
+  connected with (no broadcast-to-open-tabs mechanism exists -- this was
+  deliberately scoped out, see `session.py`'s docstring). Don't expect an
+  open tab to pick up an edit without a manual refresh.
+- `codeslides/loader.py` exists only to break a circular import
+  (`cli.py` imports `server.py`, and `server.py` needs `load_deck` too
+  for reloads) -- if `load_deck` ever needs to move again, keep it out of
+  both `cli.py` and `server.py` themselves.

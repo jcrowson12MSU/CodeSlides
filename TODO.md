@@ -267,11 +267,42 @@ reshape the plan below and are called out explicitly where they apply:
   plain-value and image-viewer cells continue rendering exactly as
   before.
 
-- [ ] **13. Implement CLI**
+- [x] **13. Implement CLI**
   Build a command-line entry point (e.g. `codeslides edit deck.py` and
   `codeslides present deck.py`) that starts the server, launches the
   kernel subprocess for the given file, opens the browser, and watches the
   file for external edits.
+
+  `edit`/`present` both start the same server (ARCHITECTURE.md's "one
+  tool, two modes" -- no separate present-mode server), differing only in
+  which URL the browser opens to: `present` appends `?mode=slides`, read
+  by `App.tsx`'s `initialViewMode()` to start directly in the Slides
+  presentation view instead of the default flat Cells view. Browser
+  auto-open via `webbrowser.open()`, `--no-open-browser` to suppress it.
+
+  File-watching uses `watchfiles.awatch` (already a transitive dependency
+  via `uvicorn[standard]`) in a background task started from a FastAPI
+  `lifespan` context manager (not the deprecated `@app.on_event`, checked
+  and fixed). On change, `Kernel.reload_deck()` swaps in the freshly
+  re-parsed Deck; a syntax error in a mid-edit file is logged and the
+  last-good deck keeps serving rather than crashing the watcher, verified
+  by intentionally writing invalid syntax and confirming the API still
+  returned the old deck, then confirming recovery once the file was
+  fixed.
+
+  Scoped deliberately: a reload affects new page loads/websocket
+  connections, not already-open browser tabs (broadcasting reruns into
+  live connections needs session-to-connection tracking that doesn't
+  exist yet and is real scope of its own -- confirmed this narrower scope
+  before implementing rather than assuming). `load_deck` moved out of
+  `cli.py` into a new `loader.py` so `server.py` can reuse it for reloads
+  without a circular import (`cli.py` already imports `server.py`).
+
+  Verified end-to-end in a real browser: a fresh page load with no query
+  param starts in Cells view, `?mode=slides` starts in Slides view;
+  editing the watched file externally (not through the browser) and then
+  loading a fresh page shows the new cell, confirming the whole
+  watch -> reload -> serve loop works, not just the isolated pieces.
 
 - [ ] **14. Add file save/load & `.py` format serialization**
   Implement saving the in-browser edited deck back to a clean,

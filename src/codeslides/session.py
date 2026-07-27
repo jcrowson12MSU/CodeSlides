@@ -50,7 +50,23 @@ class CellInstance:
 
 @dataclass
 class Session:
-    """One live runtime instance of a Deck."""
+    """One live runtime instance of a Deck.
+
+    `deck` is a snapshot from Session-creation time, not a live reference
+    to "whatever the Kernel's current deck is" -- a CLI file-watcher
+    reload (`Kernel.reload_deck`, TODO.md #10) swaps the Kernel's own
+    `deck`/`graph`, which correctly affects execution for every Session
+    (`_run_cells`/`_effective_graph` always read `self.deck` on the
+    Kernel, never `session.deck`), but a Session's own `.deck` attribute
+    stays pointed at the original snapshot. This only matters for the one
+    place that still reads `session.deck` directly
+    (`ws_handler._element_output_messages`'s notes-default lookup) -- a
+    long-lived session that survives a reload which changed a cell's
+    *elements* (not just its code) may use a stale element list there
+    until it reconnects. Accepted for now per the CLI reload's agreed
+    scope: a reload is guaranteed correct for new sessions/connections,
+    not guaranteed to propagate every detail into already-open ones.
+    """
 
     deck: Deck
     session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
