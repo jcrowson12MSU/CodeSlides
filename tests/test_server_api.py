@@ -23,7 +23,7 @@ def test_deck_endpoint_reports_cell_instance_source_and_elements():
         result = base * speed  # noqa: F821
         return result
 
-    @app.slide("Demo", cells=["live_demo"])
+    @app.slide("Demo", cells=["live_demo"], reveal_code=True)
     def slide_1():
         """Notes."""
 
@@ -31,7 +31,9 @@ def test_deck_endpoint_reports_cell_instance_source_and_elements():
     response = client.get("/api/deck")
     body = response.json()
 
-    assert body["slides"] == ["Demo"]
+    assert body["slides"] == [
+        {"title": "Demo", "cells": ["live_demo"], "reveal_code": True, "notes": "Notes."}
+    ]
     assert set(body["cells"].keys()) == {"setup", "live_demo"}
 
     assert body["cells"]["setup"]["instance"] == "static"

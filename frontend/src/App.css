@@ -240,3 +240,88 @@
 .cs-element-minimized .cs-minimize-toggle {
   color: #999;
 }
+
+.cs-view-toggle {
+  display: flex;
+  gap: 0.25rem;
+  margin: 0.75rem 0;
+}
+
+.cs-view-toggle button {
+  border: 1px solid #ccc;
+  background: white;
+  border-radius: 4px;
+  padding: 0.3rem 0.8rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.cs-view-toggle-active {
+  background: #f0e9ff !important;
+  border-color: #aa3bff !important;
+  color: #6b21c9;
+}
+
+.cs-slideshow-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin: 1rem 0;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #eee;
+}
+
+.cs-slideshow-toolbar button {
+  border: 1px solid #ccc;
+  background: white;
+  border-radius: 4px;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.cs-slideshow-toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.cs-slideshow-position {
+  font-size: 0.9rem;
+  color: #666;
+  font-variant-numeric: tabular-nums;
+}
+
+.cs-reveal-toggle {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: #555;
+  cursor: pointer;
+}
+
+/* Speaker-friendly: a slide's content renders noticeably larger than the
+   flat Cells edit view, matching ARCHITECTURE.md section 2's "built for
+   live teaching first" principle. */
+.cs-slide {
+  font-size: 1.15rem;
+}
+
+.cs-slide-title {
+  font-size: 2rem;
+  margin: 0 0 1rem;
+}
+
+.cs-slide .cs-cell {
+  padding: 1.25rem 1.5rem;
+}
+
+.cs-slide .cs-code-editor .cm-editor {
+  font-size: 16px;
+  max-height: 420px;
+}
+
+.cs-slide .cs-cell-output {
+  font-size: 1rem;
+}

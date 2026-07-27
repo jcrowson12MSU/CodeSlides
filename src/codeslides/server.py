@@ -42,7 +42,15 @@ def create_app(deck: Deck | None = None) -> FastAPI:
                 }
                 for name, cell in d.cells.items()
             },
-            "slides": [s.title for s in d.slides],
+            "slides": [
+                {
+                    "title": s.title,
+                    "cells": s.cell_names,
+                    "reveal_code": s.reveal_code,
+                    "notes": s.notes,
+                }
+                for s in d.slides
+            ],
         }
 
     @api.websocket("/ws")

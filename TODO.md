@@ -173,7 +173,7 @@ reshape the plan below and are called out explicitly where they apply:
   re-run; and two browser tabs (two Sessions) have fully independent
   collapse state, matching the isolation guarantee.
 
-- [ ] **10. Build slideshow/presentation mode with live code cells**
+- [x] **10. Build slideshow/presentation mode with live code cells**
   Group cells into slides (via markers or explicit slide boundaries in the
   source file). Implement a presentation view that shows one slide at a
   time, supports next/prev navigation (keyboard + on-screen), and a
@@ -184,6 +184,26 @@ reshape the plan below and are called out explicitly where they apply:
   a slide containing an embedded editor and confirm the two copies run and
   display fully independently. Include speaker-friendly large-font
   rendering of outputs/widgets.
+
+  Implemented as a client-side view mode ("Cells" vs. "Slides" toggle in
+  `App.tsx`) over the same cell state/handlers, per ARCHITECTURE.md's
+  "one tool, two modes" principle -- switching modes never reconnects or
+  re-runs anything. `SlideShow.tsx`: prev/next (on-screen + arrow keys/
+  Page Up/Down), a position indicator, and a per-slide "reveal code"
+  checkbox defaulting from the slide's `reveal_code` (extended `/api/deck`
+  to expose full slide data -- title/cells/reveal_code/notes, not just
+  titles). `Cell.tsx` gained a `hideCode` prop (distinct from `collapsed`:
+  hides only the editor, keeping elements/output visible) so a slide's
+  widgets/output show by default with code hidden until revealed.
+  Speaker-friendly larger fonts/padding scoped to `.cs-slide` in CSS.
+
+  Verified in a real browser: navigation (buttons + keyboard), reveal-code
+  defaults correctly differing per slide and the manual toggle working,
+  and boundary button-disabled states. Directly exercised the marimo-bug
+  regression this whole project exists to fix, specifically through the
+  slideshow UI: two browser tabs on the same slide, live-edited only one
+  tab's embedded code cell (multiply -> different formula entirely), and
+  confirmed the other tab's slide was completely unaffected.
 
 - [x] **11. Add Python Turtle support**
   Make `turtle`-based lessons work end-to-end in the browser, exposed as a

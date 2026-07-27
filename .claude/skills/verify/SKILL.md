@@ -123,3 +123,15 @@ Then drive the served app with a script (see the two written during the
   use `from codeslides import turtle` inside a
   `with turtle.execution_context():` block (see test_turtle.py for
   examples), not the stdlib module.
+- Playwright's `.click()` waits indefinitely for actionability, which
+  includes "not disabled" -- clicking a "Next"/"Prev" slideshow button
+  that's already disabled at a boundary will hang the whole script rather
+  than erroring immediately. Use `{ force: true }` when the test's point
+  *is* to check the boundary/disabled state, or check `.isDisabled()`
+  first.
+- The app has two view modes ("Cells" flat list, "Slides" presentation --
+  a `button:has-text("Cells")`/`button:has-text("Slides")` toggle above
+  the content) sharing one websocket session; switching modes doesn't
+  reconnect or re-run anything. When testing slideshow-specific behavior,
+  remember to click into Slides mode first -- the default view on load is
+  Cells.

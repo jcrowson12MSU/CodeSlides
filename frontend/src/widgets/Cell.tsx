@@ -17,6 +17,13 @@ export interface CellProps {
   elementValues: Record<string, unknown>
   collapsed: boolean
   minimizedElements: Record<string, boolean>
+  /** Hide just the code editor while still showing elements/output --
+   * distinct from `collapsed` (which hides everything). Used by slideshow
+   * mode's "reveal code" toggle (TODO.md #10): a slide's output/widgets
+   * are visible by default, with the underlying code hidden until the
+   * instructor chooses to reveal it. Defaults to false for the flat
+   * "Cells" edit view, which always shows code. */
+  hideCode?: boolean
   onRunCell: (source: string) => void
   onRunAll: (source: string) => void
   onSetElementValue: (elementId: string, value: unknown) => void
@@ -48,6 +55,7 @@ export function Cell({
   elementValues,
   collapsed,
   minimizedElements,
+  hideCode = false,
   onRunCell,
   onRunAll,
   onSetElementValue,
@@ -77,12 +85,14 @@ export function Cell({
 
       {!collapsed && (
         <>
-          <CodeEditor
-            source={meta.source}
-            onRunCell={onRunCell}
-            onRunAll={onRunAll}
-            readOnly={meta.instance === 'static'}
-          />
+          {!hideCode && (
+            <CodeEditor
+              source={meta.source}
+              onRunCell={onRunCell}
+              onRunAll={onRunAll}
+              readOnly={meta.instance === 'static'}
+            />
+          )}
 
           {inputElements.length > 0 && (
             <div className="cs-cell-elements">

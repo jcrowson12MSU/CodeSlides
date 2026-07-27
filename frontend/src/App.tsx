@@ -3,22 +3,26 @@ import './App.css'
 import { useDeckState } from './deckState'
 import { useCodeSlidesSocket } from './useCodeSlidesSocket'
 import { Cell, type CellMeta } from './widgets/Cell'
+import { SlideShow, type SlideMeta } from './widgets/SlideShow'
 
 interface DeckSummary {
   cells: Record<string, CellMeta>
-  slides: string[]
+  slides: SlideMeta[]
 }
 
-// Demo view proving the reactive loop closes end-to-end in the browser
-// (TODO.md #6/#7): fetch deck metadata, connect the websocket, run_all
-// once connected, then render each cell as an editor + attached input
-// elements + output (ARCHITECTURE.md section 1/3a). Editing a cell's
-// source (Shift+Enter to run just that cell, Mod+Shift+Enter to run the
-// whole deck) sends edit_cell/run_all and the kernel's re-run comes back
-// over the wire. There is no slideshow UI yet (TODO.md #10) -- this is
-// deliberately a flat list of cells, not slides.
+type ViewMode = 'cells' | 'slides'
+
+// Two views over the same deck (ARCHITECTURE.md's "one tool, two modes"
+// principle, VISION.md): a flat "Cells" edit view (every cell, always
+// showing code -- TODO.md #6/#7) and a "Slides" presentation view
+// (TODO.md #10) grouping cells by Slide, one at a time, with a
+// reveal-code toggle. Both share the same websocket connection, cell
+// state, and interaction handlers below -- switching modes never
+// reconnects or re-runs anything, it's purely which cells are visible
+// and how.
 function App() {
   const [deck, setDeck] = useState<DeckSummary | null>(null)
+  const [viewMode, setViewMode] = useState<ViewMode>('cells')
   const [elementValues, setElementValues] = useState<Record<string, Record<string, unknown>>>({})
   // Local-only override for notes content while editing: set_ui_state
   // produces no server reply (ARCHITECTURE.md section 8 -- pure UI state,
@@ -107,40 +111,81 @@ function App() {
     }
   }
 
+  // Merge notes overrides into cell state once, shared by both views.
+  const mergedCellState: Record<string, ReturnType<typeof useDeckState>[string] | undefined> = {}
+  if (deck) {
+    for (const cellId of Object.keys(deck.cells)) {
+      const overrides = notesOverrides[cellId]
+      const state = cellState[cellId]
+      mergedCellState[cellId] = overrides
+        ? { ...state, elementContent: { ...state?.elementContent, ...overrides } }
+        : state
+    }
+  }
+
   return (
     <main className="app">
       <h1>CodeSlides</h1>
       <p>
         Websocket: <strong>{connected ? `connected (${sessionId ?? '...'})` : 'connecting...'}</strong>
       </p>
-      <p className="cs-hint">Shift+Enter: run cell &middot; Mod+Shift+Enter: run all</p>
       {deck && (
+        <div className="cs-view-toggle">
+          <button
+            type="button"
+            className={viewMode === 'cells' ? 'cs-view-toggle-active' : ''}
+            onClick={() => setViewMode('cells')}
+          >
+            Cells
+          </button>
+          <button
+            type="button"
+            className={viewMode === 'slides' ? 'cs-view-toggle-active' : ''}
+            onClick={() => setViewMode('slides')}
+          >
+            Slides
+          </button>
+        </div>
+      )}
+      {viewMode === 'cells' && (
+        <p className="cs-hint">Shift+Enter: run cell &middot; Mod+Shift+Enter: run all</p>
+      )}
+      {deck && viewMode === 'cells' && (
         <section>
-          {Object.entries(deck.cells).map(([cellId, meta]) => {
-            const overrides = notesOverrides[cellId]
-            const state = cellState[cellId]
-            const mergedState = overrides
-              ? { ...state, elementContent: { ...state?.elementContent, ...overrides } }
-              : state
-            return (
-              <Cell
-                key={cellId}
-                cellId={cellId}
-                meta={meta}
-                state={mergedState}
-                elementValues={elementValues[cellId] ?? {}}
-                collapsed={collapsedCells[cellId] ?? false}
-                minimizedElements={minimizedElements[cellId] ?? {}}
-                onRunCell={(source) => handleRunCell(cellId, source)}
-                onRunAll={handleRunAll}
-                onSetElementValue={(elementId, value) => handleSetElementValue(cellId, elementId, value)}
-                onChangeNotesSource={(elementId, source) => handleChangeNotesSource(cellId, elementId, source)}
-                onToggleCollapse={() => handleToggleCollapse(cellId)}
-                onToggleMinimize={(elementId) => handleToggleMinimize(cellId, elementId)}
-              />
-            )
-          })}
+          {Object.entries(deck.cells).map(([cellId, meta]) => (
+            <Cell
+              key={cellId}
+              cellId={cellId}
+              meta={meta}
+              state={mergedCellState[cellId]}
+              elementValues={elementValues[cellId] ?? {}}
+              collapsed={collapsedCells[cellId] ?? false}
+              minimizedElements={minimizedElements[cellId] ?? {}}
+              onRunCell={(source) => handleRunCell(cellId, source)}
+              onRunAll={handleRunAll}
+              onSetElementValue={(elementId, value) => handleSetElementValue(cellId, elementId, value)}
+              onChangeNotesSource={(elementId, source) => handleChangeNotesSource(cellId, elementId, source)}
+              onToggleCollapse={() => handleToggleCollapse(cellId)}
+              onToggleMinimize={(elementId) => handleToggleMinimize(cellId, elementId)}
+            />
+          ))}
         </section>
+      )}
+      {deck && viewMode === 'slides' && (
+        <SlideShow
+          slides={deck.slides}
+          cellMeta={deck.cells}
+          cellState={mergedCellState}
+          elementValues={elementValues}
+          collapsedCells={collapsedCells}
+          minimizedElements={minimizedElements}
+          onRunCell={handleRunCell}
+          onRunAll={handleRunAll}
+          onSetElementValue={handleSetElementValue}
+          onChangeNotesSource={handleChangeNotesSource}
+          onToggleCollapse={handleToggleCollapse}
+          onToggleMinimize={handleToggleMinimize}
+        />
       )}
     </main>
   )

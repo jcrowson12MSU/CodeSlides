@@ -57,6 +57,16 @@ def live_demo(speed):
     return result
 
 
-@app.slide("Live Coding", cells=["live_demo"], reveal_code=True)
+@app.slide("Setup", cells=["setup"])
 def slide_1():
+    """Base value computed once, shared by later slides."""
+
+
+@app.slide("Image Preview", cells=["make_preview"])
+def slide_2():
+    """A cs.image() viewer, code hidden until revealed."""
+
+
+@app.slide("Live Coding", cells=["live_demo"], reveal_code=True)
+def slide_3():
     """Instructor edits `live_demo` live; slide reactively updates."""
