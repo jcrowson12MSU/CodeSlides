@@ -19,13 +19,22 @@ import type { ServerMessage } from './protocol'
 export interface CellState {
   status: 'idle' | 'queued' | 'running' | 'error'
   value: unknown
+  kind: 'text' | 'markdown' | 'image' | 'dataframe' | null
+  data: unknown
   error: string | null
   elementContent: Record<string, unknown>
 }
 
 export type DeckState = Record<string, CellState>
 
-const EMPTY_CELL: CellState = { status: 'idle', value: undefined, error: null, elementContent: {} }
+const EMPTY_CELL: CellState = {
+  status: 'idle',
+  value: undefined,
+  kind: null,
+  data: undefined,
+  error: null,
+  elementContent: {},
+}
 
 export function reduceDeckState(messages: ServerMessage[]): DeckState {
   const state: DeckState = {}
@@ -46,6 +55,8 @@ export function reduceDeckState(messages: ServerMessage[]): DeckState {
         state[message.cell_id] = {
           ...cellFor(message.cell_id),
           value: message.output.value,
+          kind: message.output.kind,
+          data: message.output.data,
           error: message.error,
         }
         break

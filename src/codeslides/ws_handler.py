@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from codeslides.kernel import ExecutionResult, Kernel
+from codeslides.output import resolve_output, wire_safe_value
 from codeslides.protocol import (
     CellOutput,
     CellStatus,
@@ -60,15 +61,25 @@ class SessionRegistry:
 
 def _results_to_messages(session_id: str, results: dict[str, ExecutionResult]) -> list[ServerMessage]:
     """Translate a Kernel run's per-cell ExecutionResults into the
-    cell_status/cell_output messages ARCHITECTURE.md section 5 defines."""
+    cell_status/cell_output messages ARCHITECTURE.md section 5 defines.
+    `output.kind`/`output.data` carry the tagged output union from section
+    6, resolved from the cell's raw returned value (skipped for a cell
+    that errored -- there's no meaningful value to classify)."""
     messages: list[ServerMessage] = []
     for cell_id, result in results.items():
         messages.append(CellStatus(session_id=session_id, cell_id=cell_id, status=result.status))
+        resolved = resolve_output(result.value) if result.status == "idle" else None
         messages.append(
             CellOutput(
                 session_id=session_id,
                 cell_id=cell_id,
-                output={"stdout": result.stdout, "stderr": result.stderr, "value": result.value},
+                output={
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "value": wire_safe_value(result.value),
+                    "kind": resolved.kind if resolved else None,
+                    "data": resolved.data if resolved else None,
+                },
                 error=result.error,
             )
         )

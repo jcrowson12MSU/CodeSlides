@@ -29,6 +29,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
+# Re-exported so `cs.md()` matches the architecture doc's naming (marimo's
+# `mo.md()`) -- the implementation lives in output.py alongside
+# resolve_output/Markdown, since md() wraps a cell's *return value* for
+# display rather than targeting a named element like image()/iframe()
+# below, so it never goes through _record()/execution_context().
+from codeslides.output import md
+
 
 @dataclass
 class ElementWrite:
@@ -80,3 +87,6 @@ def iframe(element_name: str, src: str) -> None:
     """Write a URL/srcdoc to the named `iframe` viewer element on the
     currently-executing cell."""
     _record(element_name, "iframe", src)
+
+
+__all__ = ["ElementWrite", "execution_context", "iframe", "image", "md"]

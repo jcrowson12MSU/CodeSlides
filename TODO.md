@@ -225,13 +225,47 @@ reshape the plan below and are called out explicitly where they apply:
   is deferred -- the command list is already ordered and doesn't need a
   wire-format change to support that later.
 
-- [ ] **12. Implement rich output rendering**
+- [x] **12. Implement rich output rendering**
   Support rendering common teaching-relevant output types: plain
   text/repr, matplotlib figures, pandas DataFrames as tables,
   markdown/HTML blocks for explanatory text between code cells, images,
-  and turtle canvas output (from item 11). Mirror marimo's approach of a
-  small `mo`-style helper module (e.g. `cs.md()`, `cs.image()`) for
-  authors to produce rich output.
+  and turtle canvas output (from item 11, already handled separately via
+  `element_output`/viewer elements). Mirror marimo's approach of a small
+  `mo`-style helper module (e.g. `cs.md()`, `cs.image()`) for authors to
+  produce rich output.
+
+  `output.py` (new): `resolve_output()` classifies a cell's returned value
+  into the tagged output union from ARCHITECTURE.md section 6 --
+  `text`/`markdown`/`image`/`dataframe` -- and `cs.md()` wraps a string for
+  markdown display (re-exported from `output.py` into `cs.py` since it's
+  the architecture doc's naming, matching marimo's `mo.md()`, even though
+  unlike `cs.image()`/`cs.iframe()` it wraps a *return value* rather than
+  targeting a named element). matplotlib/pandas are detected by class
+  name rather than imported at module load time, so the base package
+  gains no hard dependency on either -- added as `dev` extras instead,
+  since the test suite exercises both when present and skips gracefully
+  (`pytest.importorskip`) when not.
+
+  Found and fixed a real crash while wiring this in: sending a cell's raw
+  returned value (e.g. an actual matplotlib Figure object, not yet
+  resolved into `data`) straight over the websocket is not
+  JSON-serializable and crashed the entire connection with an uncaught
+  `TypeError` the moment such a cell ran -- confirmed by hand before the
+  fix. `wire_safe_value()` now guarantees the `value` field is always
+  JSON-safe (falling back to `repr()` for anything that isn't a
+  primitive/list/dict), independent of whatever `resolve_output` chose
+  for `kind`/`data`.
+
+  Frontend: `CellOutputView.tsx` dispatches on `kind` -- markdown (via the
+  same sanitized-`marked` pipeline as notes, extracted into a shared
+  `markdown.ts` helper), image (`<img>`), dataframe (an HTML table), and
+  text/unrecognized falls back to the previous `JSON.stringify(value)`
+  behavior so nothing regresses for existing cells.
+
+  Verified in a real browser: a `cs.md()` cell renders actual formatted
+  markdown (heading, bold, inline code) instead of a raw string, while
+  plain-value and image-viewer cells continue rendering exactly as
+  before.
 
 - [ ] **13. Implement CLI**
   Build a command-line entry point (e.g. `codeslides edit deck.py` and

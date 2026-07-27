@@ -15,6 +15,14 @@ def setup():
     return base
 
 
+@app.cell
+def explain():
+    # cs.md() marks a cell's return value as markdown (ARCHITECTURE.md
+    # section 6) -- rendered as formatted text instead of a plain repr.
+    doc = cs.md(f"## Reactive dependency graph\n`base` is currently **{base}**.")  # noqa: F821
+    return doc
+
+
 @app.cell(instance="editable", elements=[ui.image("preview")])
 def make_preview():
     # a small inline checkerboard PNG so this renders without depending on
@@ -57,9 +65,10 @@ def live_demo(speed):
     return result
 
 
-@app.slide("Setup", cells=["setup"])
+@app.slide("Setup", cells=["setup", "explain"])
 def slide_1():
-    """Base value computed once, shared by later slides."""
+    """Base value computed once, shared by later slides. `explain` shows
+    it back via cs.md() rich output."""
 
 
 @app.slide("Image Preview", cells=["make_preview"])

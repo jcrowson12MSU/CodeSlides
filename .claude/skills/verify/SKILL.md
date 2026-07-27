@@ -135,3 +135,14 @@ Then drive the served app with a script (see the two written during the
   reconnect or re-run anything. When testing slideshow-specific behavior,
   remember to click into Slides mode first -- the default view on load is
   Cells.
+- A cell's raw returned Python value is not guaranteed JSON-serializable
+  (e.g. an actual matplotlib Figure object) -- sending it straight over
+  `websocket.send_json` crashes the whole connection with an uncaught
+  TypeError, not a graceful per-cell error. This actually happened while
+  building rich output rendering (TODO.md #12), caught via a direct
+  `TestClient` websocket call, not Playwright. If you're touching
+  anything in the value -> wire path (kernel.py, ws_handler.py,
+  output.py's `wire_safe_value`), test with an object type Python's
+  stdlib `json` module can't handle, not just strings/numbers -- matplotlib
+  is installed as a dev extra now specifically so this is easy to
+  re-check (`pytest.importorskip("matplotlib")` in test_output.py).

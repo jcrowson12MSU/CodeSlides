@@ -1,6 +1,5 @@
-import DOMPurify from 'dompurify'
-import { marked } from 'marked'
 import { useState } from 'react'
+import { renderMarkdown } from './markdown'
 
 // Viewer-element widgets (ARCHITECTURE.md section 3a): image, iframe,
 // notes. Unlike the input elements in inputElements.tsx, these display
@@ -84,16 +83,7 @@ export function NotesViewer({ elementId, content, onChangeSource }: NotesViewerP
           onChange={(event) => onChangeSource(event.target.value)}
         />
       ) : (
-        <div
-          className="cs-notes-rendered"
-          // Sanitized: notes markdown can embed raw HTML, and this deck
-          // may eventually be viewed by students (slideshow mode,
-          // TODO.md #10), not just the authoring instructor -- never
-          // trust it as safe-by-default.
-          dangerouslySetInnerHTML={{
-            __html: DOMPurify.sanitize(marked.parse(source, { async: false })),
-          }}
-        />
+        <div className="cs-notes-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(source) }} />
       )}
     </div>
   )

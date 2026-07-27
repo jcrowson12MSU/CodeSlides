@@ -1,4 +1,5 @@
 import type { CellState } from '../deckState'
+import { CellOutputView } from './CellOutputView'
 import { CodeEditor } from './CodeEditor'
 import { ElementWidget } from './ElementWidget'
 import { ViewerElementWidget } from './ViewerElementWidget'
@@ -138,9 +139,12 @@ export function Cell({
             </div>
           )}
 
-          <pre className={`cs-cell-output ${state?.error ? 'cs-cell-output-error' : ''}`}>
-            {state?.error ? state.error : JSON.stringify(state?.value)}
-          </pre>
+          <CellOutputView
+            error={state?.error ?? null}
+            kind={state?.kind ?? null}
+            data={state?.data}
+            value={state?.value}
+          />
         </>
       )}
     </div>

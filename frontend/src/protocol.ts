@@ -68,6 +68,11 @@ export interface CellOutputPayload {
   stdout: string
   stderr: string
   value: unknown
+  // Tagged output union (ARCHITECTURE.md section 6), resolved server-side
+  // by codeslides.output.resolve_output from the cell's raw returned
+  // value. Both null when the cell errored (no value to classify).
+  kind: 'text' | 'markdown' | 'image' | 'dataframe' | null
+  data: unknown
 }
 
 export interface CellOutput {

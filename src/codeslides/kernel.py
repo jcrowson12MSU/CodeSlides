@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from codeslides import cs, turtle
 from codeslides.deck import Cell, Deck, Element
 from codeslides.graph import DependencyGraph, build_graph
+from codeslides.output import resolve_output, wire_safe_value
 from codeslides.session import Session
 
 _NESTED_SCOPE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
@@ -330,9 +331,10 @@ class Kernel:
 
     def _run_cells(self, names: list[str], session: Session) -> dict[str, ExecutionResult]:
         """Run `names` in order against `session`, updating each cell
-        instance's status/output/error in place. `instance.output` holds
-        the raw stdout/stderr/value for now; resolving it into the tagged
-        output union from ARCHITECTURE.md section 6 is TODO.md #12."""
+        instance's status/output/error in place. `instance.output` carries
+        the tagged output union from ARCHITECTURE.md section 6 (`kind` +
+        `data`, resolved by `codeslides.output.resolve_output` from the
+        cell's raw returned value), alongside stdout/stderr."""
         results: dict[str, ExecutionResult] = {}
         for name in names:
             source = session.source_overrides.get(name, self.deck.cells[name].source)
@@ -340,10 +342,13 @@ class Kernel:
             instance.status = "running"
             result = execute_cell(name, source, session, elements=self.deck.cells[name].elements)
             instance.status = result.status
+            resolved = resolve_output(result.value) if result.status == "idle" else None
             instance.output = {
                 "stdout": result.stdout,
                 "stderr": result.stderr,
-                "value": result.value,
+                "value": wire_safe_value(result.value),
+                "kind": resolved.kind if resolved else None,
+                "data": resolved.data if resolved else None,
             }
             instance.error = result.error
             results[name] = result

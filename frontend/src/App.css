@@ -121,6 +121,42 @@
   color: #c0392b;
 }
 
+.cs-cell-output-markdown,
+.cs-cell-output-image,
+.cs-cell-output-dataframe {
+  white-space: normal;
+}
+
+.cs-cell-output-markdown :first-child {
+  margin-top: 0;
+}
+
+.cs-cell-output-markdown :last-child {
+  margin-bottom: 0;
+}
+
+.cs-cell-output-image img {
+  max-width: 100%;
+  display: block;
+}
+
+.cs-cell-output-dataframe table {
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  width: 100%;
+}
+
+.cs-cell-output-dataframe th,
+.cs-cell-output-dataframe td {
+  border: 1px solid #ddd;
+  padding: 0.25rem 0.5rem;
+  text-align: left;
+}
+
+.cs-cell-output-dataframe th {
+  background: #eee;
+}
+
 .cs-element-viewer {
   flex-direction: column;
   align-items: stretch;
