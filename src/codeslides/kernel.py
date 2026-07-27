@@ -219,6 +219,15 @@ def execute_cell(
     if turtle_commands and turtle_element is not None:
         writes.append(cs.ElementWrite(element_name=turtle_element, kind="turtle", content=turtle_commands))
 
+    # The cell's own function is itself bound into the namespace under its
+    # own name -- graph.py's extract_reads_writes now treats a cell's name
+    # as an implicit write for exactly this reason, so another cell can
+    # call it directly (e.g. `drawSquares` calling `drawSquare(...)`),
+    # same as any two ordinary module-level functions could. Bound only
+    # after a successful call, matching the "never partially pollute the
+    # namespace on failure" rule the return-names binding below follows.
+    session.namespace[cell_name] = fn
+
     if len(return_names) == 1:
         session.namespace[return_names[0]] = result
     elif len(return_names) > 1:

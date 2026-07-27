@@ -349,3 +349,98 @@ def test_on_element_changed_tolerates_an_unrelated_cells_broken_override():
     results = kernel.on_element_changed("live_demo", "speed", 7, session)
 
     assert results["live_demo"].status == "error"
+
+
+def _build_cross_cell_call_deck():
+    """`drawSquares` calls `drawSquare` directly, same as any two plain
+    Python functions in one module -- the use case examples/live_demo1.py
+    hit when a user wanted one cell to call another's function.
+
+    `step` has a default so `drawSquare` can also still run standalone as
+    its own cell (e.g. bound to a slider via `run_all`), same as the real
+    example: a cell meant to be both directly runnable *and* callable from
+    another cell needs its parameters to work either way -- called with an
+    explicit argument, or falling back to its default when run alone.
+    """
+    app = App()
+
+    @app.cell
+    def drawSquare(step=1):
+        result = step * 2
+        return result
+
+    @app.cell
+    def drawSquares():
+        results = [drawSquare(step) for step in (1, 2, 3)]
+        return results
+
+    return app
+
+
+def test_a_cell_can_call_another_cells_function_directly():
+    app = _build_cross_cell_call_deck()
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+
+    kernel.run_all(session)
+
+    assert session.namespace["results"] == [2, 4, 6]
+    # the callee's own function object is bound into the namespace under
+    # its cell name, exactly like any other cell's return-named values
+    assert callable(session.namespace["drawSquare"])
+    assert session.instances["drawSquare"].status == "idle"
+    assert session.instances["drawSquares"].status == "idle"
+
+
+def test_a_cells_own_name_is_a_graph_write_creating_a_real_dependency_edge():
+    app = _build_cross_cell_call_deck()
+    kernel = Kernel(app.deck)
+
+    assert kernel.graph.topological_order() == ["drawSquare", "drawSquares"]
+    assert kernel.graph.affected_by("drawSquare") == ["drawSquare", "drawSquares"]
+    assert app.deck.cells["drawSquare"].writes == frozenset({"drawSquare", "result"})
+    assert "drawSquare" in app.deck.cells["drawSquares"].reads
+
+
+def test_editing_the_called_cell_reruns_the_caller_too():
+    app = _build_cross_cell_call_deck()
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+    assert session.namespace["results"] == [2, 4, 6]
+
+    results = kernel.on_cell_edited(
+        "drawSquare",
+        "def drawSquare(step=1):\n    result = step * 10\n    return result\n",
+        session,
+    )
+
+    assert set(results) == {"drawSquare", "drawSquares"}
+    assert session.namespace["results"] == [10, 20, 30]
+
+
+def test_a_callee_cells_failed_run_does_not_update_its_bound_callable():
+    """Same all-or-nothing guarantee that already applies to return-named
+    values (a failed cell never partially updates the namespace) must also
+    hold for the cell's own callable binding: if `drawSquare` fails to run
+    standalone (e.g. an edit removes the default its own slider/run_all
+    path needs), `session.namespace["drawSquare"]` must keep the last
+    *successful* version rather than being cleared or left half-updated --
+    otherwise a caller like `drawSquares` would see a stale-but-consistent
+    function, or worse, no function at all."""
+    app = _build_cross_cell_call_deck()
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+    original_fn = session.namespace["drawSquare"]
+
+    # remove the default -- drawSquare can no longer run standalone with
+    # no bound `step`, so its own cell run fails
+    results = kernel.on_cell_edited(
+        "drawSquare", "def drawSquare(step):\n    result = step * 10\n    return result\n", session
+    )
+
+    assert results["drawSquare"].status == "error"
+    # the stale-but-working callable is still there, untouched
+    assert session.namespace["drawSquare"] is original_fn
+    assert session.namespace["results"] == [2, 4, 6]

@@ -96,7 +96,11 @@ def test_build_graph_linear_dependency():
     assert graph.topological_order() == ["setup", "live_demo"]
     assert graph.affected_by("setup") == ["setup", "live_demo"]
     assert graph.affected_by("live_demo") == ["live_demo"]
-    assert app.deck.cells["setup"].writes == frozenset({"base"})
+    # "setup" is included alongside "base": a cell's own name is always an
+    # implicit write of itself (kernel.py binds the compiled function into
+    # the namespace under the cell's name, so other cells can call it
+    # directly -- see test_kernel.py's cross-cell-call tests).
+    assert app.deck.cells["setup"].writes == frozenset({"base", "setup"})
     assert app.deck.cells["live_demo"].reads == frozenset({"base"})
 
 

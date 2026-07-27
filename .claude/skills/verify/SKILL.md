@@ -216,3 +216,26 @@ Then drive the served app with a script (see the two written during the
   macOS (not `Control+A`) followed by `Delete`, and verify the editor's
   `.textContent` is actually `""` before typing -- don't assume the
   clear worked.
+- A cell's own function name is bound into `session.namespace` as a
+  callable after every successful run (`kernel.py`, `graph.py`'s
+  `parse_cell` treats `cell.name` -- not the AST's literal `def` name --
+  as an implicit write of itself), so another cell can call it directly
+  (`examples/live_demo1.py`'s `drawSquares` calling `drawSquare(3,
+  location)`). Two things to remember when touching or testing this: (1)
+  a cell meant to be *both* independently runnable (its own slide/slider)
+  *and* callable from another cell needs defaults for whichever
+  parameters aren't bound by its own input elements, or its standalone
+  `run_all` execution fails outright (`missing 1 required positional
+  argument`) -- and per the same all-or-nothing rule as return-named
+  values, a failed run leaves the *previous* successful callable sitting
+  in the namespace rather than clearing or updating it, so a caller
+  cell may keep running against a stale-but-working version of the
+  callee until the callee's own run succeeds again. (2)
+  `codeslides.turtle`'s target is a single shared contextvar, not
+  per-cell: when cell B calls cell A's function directly (not through
+  `execute_cell`, just a plain Python call), A's `turtle.forward(...)`
+  calls draw into *B's* currently-active canvas, not any
+  `ui.turtle_canvas` element A might separately declare for its own
+  standalone use -- verified by running both the standalone cell and the
+  caller cell and diffing their recorded command-list lengths, not just
+  eyeballing one screenshot.

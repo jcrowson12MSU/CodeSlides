@@ -133,6 +133,19 @@ def extract_reads_writes(source: str) -> tuple[frozenset[str], frozenset[str]]:
 def parse_cell(cell: Cell) -> Cell:
     """Return a copy of `cell` with `reads`/`writes` populated from its source."""
     reads, writes = extract_reads_writes(cell.source)
+    # A cell's own name is an implicit write of itself -- kernel.py binds
+    # the cell's compiled function into the namespace under `cell.name`
+    # (its Deck key, not whatever literal `def` name happens to appear in
+    # the source), so another cell can call it directly (e.g.
+    # `drawSquares` calling `drawSquare(...)`), same as any two top-level
+    # functions in one module. Deliberately `cell.name`, not the AST's
+    # function name: an `instance="editable"` cell's live source can
+    # rename its own `def` line while staying the same cell (same Deck
+    # key, same session.instances/source_overrides entry) -- the graph
+    # and namespace both need to track cell *identity*, not whatever text
+    # currently follows `def` in the editor.
+    writes = writes | {cell.name}
+    reads = reads - writes
     return Cell(
         name=cell.name,
         source=cell.source,

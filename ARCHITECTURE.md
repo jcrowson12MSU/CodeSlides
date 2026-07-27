@@ -176,6 +176,24 @@ Sessions. This is what makes "clone this slide, then edit each copy
 independently" (the exact scenario from the marimo bug report) a correct,
 first-class operation instead of an edge case.
 
+**A cell can call another cell's function directly.** A cell's own name is
+itself an implicit "write" — alongside whatever names its `return`
+statement exposes — so `kernel.py` binds the cell's compiled function
+object into the Session namespace under its own name after every
+successful run, exactly like any other top-level function in a module.
+This means one cell can do `other_cell(x, y)` in its body, same as plain
+Python, and the dependency graph gains a real edge for it (editing the
+callee re-runs the caller too, in the correct topological order). A cell
+meant to be both directly runnable (its own slide, parameters bound by
+its own input elements) *and* callable from another cell needs default
+values for any parameter that isn't bound by an element, so it can still
+execute standalone; the caller can then pass whatever explicit arguments
+it wants. `turtle` drawing calls made this way target whichever cell's
+turtle context is currently active (i.e. the caller's canvas, not a
+canvas the callee cell may separately declare for its own standalone use)
+— see `examples/live_demo1.py`'s `drawSquares`/`drawSquare` for a worked
+example.
+
 ## 3a. Element reactivity (R4)
 
 Elements attach to the dependency graph at the Cell level, not as separate
