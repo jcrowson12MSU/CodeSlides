@@ -76,10 +76,6 @@ export function Cell({
   onToggleCollapse,
   onToggleMinimize,
 }: CellProps) {
-  const inputElements = meta.elements.filter((e) => isInputElement(e.kind))
-  const viewerElements = meta.elements.filter((e) => isViewerElement(e.kind))
-  const testElements = meta.elements.filter((e) => isTestElement(e.kind))
-
   return (
     <div className={`cs-cell ${collapsed ? 'cs-cell-collapsed' : ''}`}>
       <div className="cs-cell-header">
@@ -111,47 +107,73 @@ export function Cell({
           )}
 
           <div className="cs-cell-side">
-            {inputElements.length > 0 && (
+            {meta.elements.length > 0 && (
               <div className="cs-cell-elements">
-                {inputElements.map((element) =>
-                  minimizedElements[element.name] ? (
-                    <MinimizedElement
-                      key={element.name}
-                      elementId={element.name}
-                      onToggleMinimize={() => onToggleMinimize(element.name)}
-                    />
-                  ) : (
-                    <ElementWidget
-                      key={element.name}
-                      element={element}
-                      value={elementValues[element.name]}
-                      onSetValue={onSetElementValue}
-                      onToggleMinimize={() => onToggleMinimize(element.name)}
-                    />
-                  ),
-                )}
-              </div>
-            )}
-
-            {viewerElements.length > 0 && (
-              <div className="cs-cell-elements">
-                {viewerElements.map((element) =>
-                  minimizedElements[element.name] ? (
-                    <MinimizedElement
-                      key={element.name}
-                      elementId={element.name}
-                      onToggleMinimize={() => onToggleMinimize(element.name)}
-                    />
-                  ) : (
-                    <ViewerElementWidget
-                      key={element.name}
-                      element={element}
-                      content={state?.elementContent[element.name]}
-                      onChangeNotesSource={onChangeNotesSource}
-                      onToggleMinimize={() => onToggleMinimize(element.name)}
-                    />
-                  ),
-                )}
+                {/* Rendered in the exact order they're declared in the
+                    cell's `elements=[...]` list, not grouped by kind --
+                    an author who writes `ui.notes(...)` before
+                    `ui.slider(...)` sees notes rendered first in the
+                    browser too. Previously input/viewer/test elements
+                    were each their own separately-ordered block, so a
+                    notes element declared first in the source could
+                    still render *after* a slider declared later. */}
+                {meta.elements.map((element) => {
+                  if (minimizedElements[element.name]) {
+                    return (
+                      <MinimizedElement
+                        key={element.name}
+                        elementId={element.name}
+                        onToggleMinimize={() => onToggleMinimize(element.name)}
+                      />
+                    )
+                  }
+                  if (isInputElement(element.kind)) {
+                    return (
+                      <ElementWidget
+                        key={element.name}
+                        element={element}
+                        value={elementValues[element.name]}
+                        onSetValue={onSetElementValue}
+                        onToggleMinimize={() => onToggleMinimize(element.name)}
+                      />
+                    )
+                  }
+                  if (isViewerElement(element.kind)) {
+                    return (
+                      <ViewerElementWidget
+                        key={element.name}
+                        element={element}
+                        content={state?.elementContent[element.name]}
+                        onChangeNotesSource={onChangeNotesSource}
+                        onToggleMinimize={() => onToggleMinimize(element.name)}
+                      />
+                    )
+                  }
+                  if (isTestElement(element.kind)) {
+                    const content = state?.elementContent[element.name]
+                    return (
+                      <div className="cs-element-wrapper" key={element.name}>
+                        <TestsElementWidget
+                          elementId={element.name}
+                          source={
+                            testSourceValues[element.name] ?? String(element.config.default ?? '')
+                          }
+                          result={isTestResult(content) ? content : null}
+                          onChangeSource={(source) => onChangeTestSource(element.name, source)}
+                        />
+                        <button
+                          type="button"
+                          className="cs-minimize-toggle"
+                          onClick={() => onToggleMinimize(element.name)}
+                          aria-label={`Minimize ${element.name}`}
+                        >
+                          {'▾'}
+                        </button>
+                      </div>
+                    )
+                  }
+                  return null
+                })}
               </div>
             )}
 
@@ -161,40 +183,6 @@ export function Cell({
               data={state?.data}
               value={state?.value}
             />
-
-            {testElements.length > 0 && (
-              <div className="cs-cell-elements">
-                {testElements.map((element) => {
-                  const content = state?.elementContent[element.name]
-                  return minimizedElements[element.name] ? (
-                    <MinimizedElement
-                      key={element.name}
-                      elementId={element.name}
-                      onToggleMinimize={() => onToggleMinimize(element.name)}
-                    />
-                  ) : (
-                    <div className="cs-element-wrapper" key={element.name}>
-                      <TestsElementWidget
-                        elementId={element.name}
-                        source={
-                          testSourceValues[element.name] ?? String(element.config.default ?? '')
-                        }
-                        result={isTestResult(content) ? content : null}
-                        onChangeSource={(source) => onChangeTestSource(element.name, source)}
-                      />
-                      <button
-                        type="button"
-                        className="cs-minimize-toggle"
-                        onClick={() => onToggleMinimize(element.name)}
-                        aria-label={`Minimize ${element.name}`}
-                      >
-                        {'▾'}
-                      </button>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
           </div>
         </div>
       )}

@@ -457,7 +457,71 @@ reshape the plan below and are called out explicitly where they apply:
   resend on a canvas+tests cell; no spurious resend on a plain cell
   with tests but no canvas), full suite green (148 passed), ruff clean.
 
-- [ ] **16. Write example decks for teaching scenarios**
+- [x] **16. Move the markdown editor/viewer to the top of the right side**
+  Reported as: a cell's `notes` element (the one with a markdown
+  edit/preview toggle) sometimes rendered *below* other elements in the
+  browser even when `ui.notes(...)` was declared first in the cell's
+  `elements=[...]` list -- e.g. `examples/live_demo1.py`'s `drawSquare`
+  cell lists notes before the slider, but the slider rendered on top.
+
+  Root cause: `Cell.tsx` partitioned a cell's elements into three
+  separately-rendered groups by kind (input elements, then viewer
+  elements, then test elements), each internally keeping the source
+  order *within* its own group but losing the original interleaved
+  order *across* groups. Confirmed with the user this was the real
+  complaint (not "always put notes above sliders specifically") before
+  fixing it: the actual requirement is that every element -- input,
+  viewer, or test -- renders in the same order it's declared in the
+  Python source, full stop.
+
+  Fixed by replacing the three grouped blocks with one ordered loop
+  over `meta.elements` that dispatches each element to the matching
+  widget (`ElementWidget`/`ViewerElementWidget`/`TestsElementWidget`)
+  inline, rather than filtering into separate arrays first. `deck.py`'s
+  `Cell.elements` was already a plain ordered list end to end (the
+  literal `elements=[...]` the author wrote, serialized in order by
+  `/api/deck` with no backend change needed) -- this was purely a
+  frontend rendering-order bug.
+
+  Verified in a real browser with `examples/live_demo1.py`'s
+  `drawSquare` cell (`elements=[ui.notes(...), ui.slider(...),
+  ui.turtle_canvas(...)]`) and `drawSquares` cell (`tests`, then
+  `turtle_canvas`, then `notes`): both now render in exactly that
+  declared order in both the Cells and Slides views. Frontend
+  build/oxlint clean; no backend changes.
+
+- [x] **17. Make the website content take up the full page width**
+  Root cause (same fix covers TODO item 18, "remove the grey vertical
+  lines"): `frontend/src/index.css`'s `#root` rule was unremoved
+  create-vite scaffolding -- `width: 1126px` fought against `.app`'s
+  own `max-width: 1200px` centering, and `border-inline: 1px solid
+  var(--border)` was the grey vertical lines on the left/right, visible
+  in the leftover margin space once content stopped at that fixed
+  width. `.app` also had `margin: 4rem auto` explicitly centering it
+  into a column instead of using the full viewport.
+
+  Fixed by removing `#root`'s fixed width/border (now just
+  `width: 100%` plus the flex-column/min-height it still needs) and
+  changing `.app` from `max-width: 1200px; margin: 4rem auto` to
+  `width: 100%; margin: 4rem 0`, with horizontal padding bumped from
+  `1.5rem` to `2.5rem` so full-width content still has reasonable
+  breathing room at the viewport edges rather than touching them.
+
+  Verified visually at both a wide (1920px) and a typical laptop
+  (1280px) viewport, in both the Cells and Slides views: content now
+  spans the full page width with no centered column and no grey border
+  lines, and nothing looks cramped or broken at the narrower width
+  either. Frontend build/oxlint clean; no backend changes.
+
+- [ ] **18. Remove the grey vertical lines on the left and right side**
+  Fixed as part of item 17 above (same root cause: `#root`'s leftover
+  `border-inline` from the create-vite template) -- verified gone in
+  the same screenshots. Left the checkbox here unchecked only because
+  it's a separately-numbered item; nothing further to do for it.
+
+- [ ] **19. Change the shortcut to go to the next/previous slide to cmd+control + left/right**
+
+- [ ] **20. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that
@@ -466,7 +530,7 @@ reshape the plan below and are called out explicitly where they apply:
   elements — to validate the tool end-to-end and serve as templates for
   instructors.
 
-- [ ] **17. Add tests for kernel & dependency graph**
+- [ ] **21. Add tests for kernel & dependency graph**
   Unit tests for `ast`-based variable extraction, dependency graph
   construction/cycle detection, minimal-rerun-set computation, and
   integration tests that run a sample deck through the kernel and assert
@@ -474,7 +538,7 @@ reshape the plan below and are called out explicitly where they apply:
   specifically clones a cell/editor instance and asserts the two instances'
   namespaces and outputs never cross-contaminate.
 
-- [ ] **18. Polish, README, and packaging**
+- [ ] **22. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
   `pip install` (editable) / eventual PyPI packaging.
