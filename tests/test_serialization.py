@@ -11,7 +11,9 @@ from codeslides.serialization import (
     new_cell_name,
     remove_element,
     rename_cell,
+    reorder_elements,
     save_edits,
+    set_element_config,
 )
 
 DECK_SOURCE = '''"""A tiny demo deck with a comment worth preserving."""
@@ -299,3 +301,54 @@ def test_add_element_imports_ui_if_the_deck_never_needed_it_before(tmp_path):
     assert "from codeslides import App, ui" in text
     deck = load_deck(str(path))  # must not NameError
     assert [e.name for e in deck.cells["setup"].elements] == ["multiplier"]
+
+
+def test_reorder_elements_changes_the_order_on_disk_and_reload(deck_file):
+    add_element(str(deck_file), "live_demo", ui.iframe("preview", src="https://example.com"))
+    add_element(str(deck_file), "live_demo", ui.button("go"))
+
+    reorder_elements(str(deck_file), "live_demo", ["go", "preview", "speed"])
+
+    deck = load_deck(str(deck_file))
+    assert [e.name for e in deck.cells["live_demo"].elements] == ["go", "preview", "speed"]
+    # the cell's own body is untouched by a pure reorder
+    assert "result = base * speed" in deck.cells["live_demo"].source
+
+
+def test_reorder_elements_raises_if_the_order_is_not_a_permutation(deck_file):
+    with pytest.raises(SaveConflictError):
+        reorder_elements(str(deck_file), "live_demo", ["speed", "does_not_exist"])
+
+
+def test_reorder_elements_raises_if_an_element_is_missing_from_the_order(deck_file):
+    add_element(str(deck_file), "live_demo", ui.button("go"))
+
+    with pytest.raises(SaveConflictError):
+        reorder_elements(str(deck_file), "live_demo", ["speed"])  # missing "go"
+
+
+def test_reorder_elements_raises_if_the_cell_does_not_exist(deck_file):
+    with pytest.raises(SaveConflictError):
+        reorder_elements(str(deck_file), "does_not_exist", ["speed"])
+
+
+def test_set_element_config_updates_an_iframes_src(deck_file):
+    add_element(str(deck_file), "live_demo", ui.iframe("preview", src="https://old.example.com"))
+
+    set_element_config(str(deck_file), "live_demo", "preview", {"src": "https://new.example.com"})
+
+    deck = load_deck(str(deck_file))
+    preview = next(e for e in deck.cells["live_demo"].elements if e.name == "preview")
+    assert preview.config == {"src": "https://new.example.com"}
+    # position and other elements are untouched
+    assert [e.name for e in deck.cells["live_demo"].elements] == ["speed", "preview"]
+
+
+def test_set_element_config_raises_if_the_element_does_not_exist(deck_file):
+    with pytest.raises(SaveConflictError):
+        set_element_config(str(deck_file), "live_demo", "does_not_exist", {"src": "x"})
+
+
+def test_set_element_config_raises_if_the_cell_does_not_exist(deck_file):
+    with pytest.raises(SaveConflictError):
+        set_element_config(str(deck_file), "does_not_exist", "speed", {})

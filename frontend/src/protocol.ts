@@ -90,6 +90,21 @@ export interface RemoveElement {
   element_name: string
 }
 
+export interface ReorderElements {
+  type: 'reorder_elements'
+  session_id: string
+  cell_id: string
+  element_order: string[]
+}
+
+export interface SetElementConfig {
+  type: 'set_element_config'
+  session_id: string
+  cell_id: string
+  element_id: string
+  config: Record<string, unknown>
+}
+
 export type ClientMessage =
   | EditCell
   | RunAll
@@ -103,6 +118,8 @@ export type ClientMessage =
   | RenameCell
   | AddElement
   | RemoveElement
+  | ReorderElements
+  | SetElementConfig
 
 // -- Server -> client messages -----------------------------------------------
 
@@ -200,6 +217,24 @@ export interface ElementRemoved {
   elements: ElementMeta[]
 }
 
+export interface ElementsReordered {
+  type: 'elements_reordered'
+  session_id: string
+  cell_id: string
+  instance: 'static' | 'editable'
+  source: string
+  elements: ElementMeta[]
+}
+
+export interface ElementConfigSet {
+  type: 'element_config_set'
+  session_id: string
+  cell_id: string
+  instance: 'static' | 'editable'
+  source: string
+  elements: ElementMeta[]
+}
+
 export interface ErrorMessage {
   type: 'error'
   message: string
@@ -219,4 +254,6 @@ export type ServerMessage =
   | CellRenamed
   | ElementAdded
   | ElementRemoved
+  | ElementsReordered
+  | ElementConfigSet
   | ErrorMessage

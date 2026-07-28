@@ -697,7 +697,64 @@ reshape the plan below and are called out explicitly where they apply:
   `test_ws_handler.py`), full suite green (195 passed, 2 skipped), ruff
   and oxlint clean, frontend bundle rebuilt and committed.
 
-- [ ] **23. Write example decks for teaching scenarios**
+- [x] **23. When editing a cell with an iframe, show a URL textbox; allow reordering a cell's elements.**
+  Two follow-ups to item 22's edit button, requested directly: an
+  `iframe` element's edit panel now shows a plain URL textbox (instead
+  of only add/remove), and every element in the panel gets ↑/↓ buttons
+  to reorder it within the cell -- both write to the deck's `.py` file
+  immediately, same precedent as item 22.
+
+  Refactored `add_element`/`remove_element`'s near-identical bodies
+  (locate the cell's source, parse its existing elements, determine
+  `instance`, rebuild the decorator, validate, write) into one shared
+  `_replace_elements()` helper parameterized by a `build_new_elements`
+  callback, then built `reorder_elements()` (validates `element_order`
+  is exactly a permutation of the cell's current elements) and
+  `set_element_config()` (replaces one named element's `config` dict
+  wholesale) on top of it. `Kernel.reorder_elements()` deliberately does
+  *not* re-run the cell -- a pure reorder never changes execution, so
+  the cell's own status/output/every element's live state is left
+  exactly as it was. `Kernel.set_element_config()` additionally pushes
+  an edited iframe's new `src` straight into the *requesting* session's
+  live `ElementInstance.content` (and `ws_handler.py` emits a matching
+  `element_output`) -- an iframe's rendered content otherwise only ever
+  changes via the owning cell's own `cs.iframe(...)` call during a run,
+  so without this the edited URL would silently never show up in the
+  browser unless the cell happened to re-run afterward. Confirmed this
+  scope (iframe-only textbox, not a general per-kind config editor;
+  up/down buttons, not drag-and-drop) with the user before building.
+
+  Found and fixed a real, pre-existing bug while testing `reorder_
+  elements` by hand: two `load_deck` calls on the same path within one
+  long-lived process (exactly what every add_cell/rename_cell/
+  add_element/remove_element/save_deck reload already does) could
+  silently return the *stale*, pre-edit `Deck` on the second call, with
+  no exception at all -- traced to `loader.py` going through
+  `importlib.util.spec_from_file_location`/`module_from_spec`/
+  `exec_module`, which consults/writes a `__pycache__/*.pyc` keyed by
+  the source path, and whose own staleness check didn't reliably fire
+  for rapid successive writes+reads to the same path in one process.
+  This had been silently affecting every reload path since item 21,
+  just never surfaced because no prior test happened to reload the
+  same path twice with genuinely different resulting content in one
+  process. Fixed by having `load_deck` `compile()`/`exec()` the source
+  directly, bypassing `importlib`'s file-based loader (and its
+  bytecode cache) entirely -- confirmed no `__pycache__` is created
+  and added `test_loader.py` (4 tests) specifically for this.
+
+  Verified end-to-end in a real browser via Playwright: added an
+  `iframe` element, set its URL via the new textbox, confirmed it
+  landed on disk *and* the `<iframe>` actually rendered with the new
+  `src` live (no reload needed); moved that element up one position via
+  the ↑ button and confirmed both the panel's displayed order and the
+  on-disk `elements=[...]` list order updated to match; confirmed the
+  ↑/↓ buttons correctly disable at the first/last position. 26 new
+  backend tests (7 in `test_serialization.py`, 8 in `test_kernel.py`, 7
+  in `test_ws_handler.py`, 4 in new `test_loader.py`), full suite green
+  (221 passed, 2 skipped), ruff and oxlint clean, frontend bundle
+  rebuilt and committed.
+
+- [ ] **24. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that
@@ -706,7 +763,7 @@ reshape the plan below and are called out explicitly where they apply:
   elements — to validate the tool end-to-end and serve as templates for
   instructors.
 
-- [ ] **23. Add tests for kernel & dependency graph**
+- [ ] **25. Add tests for kernel & dependency graph**
   Unit tests for `ast`-based variable extraction, dependency graph
   construction/cycle detection, minimal-rerun-set computation, and
   integration tests that run a sample deck through the kernel and assert
@@ -714,7 +771,7 @@ reshape the plan below and are called out explicitly where they apply:
   specifically clones a cell/editor instance and asserts the two instances'
   namespaces and outputs never cross-contaminate.
 
-- [ ] **24. Polish, README, and packaging**
+- [ ] **26. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
   `pip install` (editable) / eventual PyPI packaging.

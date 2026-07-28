@@ -648,6 +648,69 @@ class Kernel:
         results = self._run_cells([cell_name], session)
         return cell, results[cell_name]
 
+    def reorder_elements(self, session: Session, cell_name: str, element_order: list[str]) -> Cell:
+        """Reorder `cell_name`'s elements to match `element_order`, on
+        disk, immediately (TODO.md #23's up/down reorder buttons), then
+        reload this Kernel's baseline synchronously.
+
+        A pure reorder never changes execution -- no element's config,
+        value, or content changes, and the cell's own body is untouched
+        -- so unlike `add_element`/`remove_element` this doesn't re-run
+        the cell; the caller's existing `session.instances[cell_name]`
+        (status/output/every element's live state) stays exactly as it
+        was, keyed by name same as before."""
+        if self.deck_path is None:
+            raise ValueError("cannot reorder elements: this Kernel was not started from a deck file")
+        if cell_name not in self.deck.cells:
+            raise ValueError(f"cannot reorder elements for cell {cell_name!r}: it no longer exists")
+
+        from codeslides.serialization import reorder_elements as _reorder_elements_on_disk
+
+        _reorder_elements_on_disk(self.deck_path, cell_name, element_order)
+
+        from codeslides.loader import load_deck
+
+        self.reload_deck(load_deck(self.deck_path))
+        return self.deck.cells[cell_name]
+
+    def set_element_config(
+        self, session: Session, cell_name: str, element_name: str, config: dict[str, object]
+    ) -> Cell:
+        """Replace the element named `element_name`'s config wholesale
+        (TODO.md #23's iframe URL textbox), on disk, immediately, then
+        reload this Kernel's baseline synchronously.
+
+        For an `iframe` element specifically, also pushes the new `src`
+        straight into *this* session's own `ElementInstance.content` --
+        an iframe's rendered content otherwise only ever changes via the
+        owning cell's own `cs.iframe(...)` call during a run
+        (ARCHITECTURE.md section 3a), so without this, editing the URL
+        here would correctly update the Deck's static default but never
+        actually show up in the browser unless the cell happened to
+        re-run afterward. Other element kinds' `content` is left alone
+        -- their config isn't rendered directly, only interpreted the
+        next time the owning cell runs."""
+        if self.deck_path is None:
+            raise ValueError("cannot set element config: this Kernel was not started from a deck file")
+        if cell_name not in self.deck.cells:
+            raise ValueError(f"cannot set config for an element in cell {cell_name!r}: it no longer exists")
+
+        from codeslides.serialization import set_element_config as _set_element_config_on_disk
+
+        _set_element_config_on_disk(self.deck_path, cell_name, element_name, config)
+
+        from codeslides.loader import load_deck
+
+        self.reload_deck(load_deck(self.deck_path))
+
+        cell = self.deck.cells[cell_name]
+        element = next((e for e in cell.elements if e.name == element_name), None)
+        if element is not None and element.kind == "iframe" and cell_name in session.instances:
+            instance = session.instances[cell_name].elements.get(element_name)
+            if instance is not None:
+                instance.content = config.get("src", "")
+        return cell
+
     def _effective_graph(self, session: Session) -> DependencyGraph:
         """The dependency graph as this Session currently sees it: the
         Deck's cells, with any of this Session's source overrides applied.

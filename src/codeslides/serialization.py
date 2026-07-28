@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import ast
 import textwrap
+from collections.abc import Callable
 from pathlib import Path
 
-from codeslides.deck import Element
+from codeslides.deck import Cell, Element
 
 
 class SaveConflictError(ValueError):
@@ -332,6 +333,63 @@ def rename_cell(deck_path: str, old_name: str, new_name: str) -> None:
     path.write_text(updated)
 
 
+def _replace_elements(
+    deck_path: str,
+    cell_name: str,
+    build_new_elements: Callable[[list[Element]], list[Element]],
+    error_context: str,
+) -> Cell:
+    """Shared plumbing for every `elements=[...]`-rewriting operation
+    (`add_element`/`remove_element`/`reorder_elements`/
+    `set_element_config`): locate `cell_name`'s current source, parse its
+    existing elements, hand them to `build_new_elements` to produce the
+    new ordered list, regenerate the cell's decorator via
+    `rebuild_cell_source` (body untouched), validate, and write --
+    identical shape across all four operations, so this is the one place
+    that shape needs to be right. `error_context` is a short phrase (e.g.
+    "add an element to") used only in the not-found error message.
+    """
+    path = Path(deck_path)
+    original = path.read_text()
+    spans = _cell_line_spans(original)
+    if cell_name not in spans:
+        raise SaveConflictError(f"cannot {error_context} {cell_name!r}: it no longer exists")
+
+    start, end = spans[cell_name]
+    lines = original.splitlines(keepends=True)
+    cell_source = "".join(lines[start - 1 : end])
+
+    tree = ast.parse(cell_source)
+    func = next(n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef))
+    existing = _existing_elements(func)
+    is_editable = any(
+        isinstance(dec, ast.Call)
+        and any(kw.arg == "instance" and ast.literal_eval(kw.value) == "editable" for kw in dec.keywords)
+        for dec in func.decorator_list
+    )
+
+    new_elements = build_new_elements(existing)
+
+    new_cell_source = rebuild_cell_source(
+        cell_name, "editable" if is_editable else "static", new_elements, cell_source
+    )
+    updated_lines = list(lines)
+    updated_lines[start - 1 : end] = [new_cell_source]
+    updated = "".join(updated_lines)
+    updated = _ensure_ui_imported(updated)
+
+    try:
+        ast.parse(updated)
+    except SyntaxError as exc:
+        raise InvalidSourceError(
+            f"editing cell {cell_name!r}'s elements would leave {deck_path!r} with invalid "
+            f"Python syntax, not saved: {exc}"
+        ) from exc
+
+    path.write_text(updated)
+    return Cell(name=cell_name, source=new_cell_source, instance="editable" if is_editable else "static", elements=new_elements)
+
+
 def add_element(deck_path: str, cell_name: str, element: Element) -> None:
     """Add `element` to `cell_name`'s `elements=[...]` list, on disk,
     immediately (TODO.md #22 -- same "write immediately, don't stage
@@ -344,44 +402,13 @@ def add_element(deck_path: str, cell_name: str, element: Element) -> None:
     has an element named `element.name`, or `InvalidSourceError` if the
     result doesn't parse.
     """
-    path = Path(deck_path)
-    original = path.read_text()
-    spans = _cell_line_spans(original)
-    if cell_name not in spans:
-        raise SaveConflictError(f"cannot add an element to {cell_name!r}: it no longer exists")
 
-    start, end = spans[cell_name]
-    lines = original.splitlines(keepends=True)
-    cell_source = "".join(lines[start - 1 : end])
+    def build(existing: list[Element]) -> list[Element]:
+        if any(e.name == element.name for e in existing):
+            raise SaveConflictError(f"cell {cell_name!r} already has an element named {element.name!r}")
+        return [*existing, element]
 
-    tree = ast.parse(cell_source)
-    func = next(n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef))
-    existing = _existing_elements(func)
-    if any(e.name == element.name for e in existing):
-        raise SaveConflictError(f"cell {cell_name!r} already has an element named {element.name!r}")
-    is_editable = any(
-        isinstance(dec, ast.Call)
-        and any(kw.arg == "instance" and ast.literal_eval(kw.value) == "editable" for kw in dec.keywords)
-        for dec in func.decorator_list
-    )
-
-    new_cell_source = rebuild_cell_source(
-        cell_name, "editable" if is_editable else "static", [*existing, element], cell_source
-    )
-    updated_lines = list(lines)
-    updated_lines[start - 1 : end] = [new_cell_source]
-    updated = "".join(updated_lines)
-    updated = _ensure_ui_imported(updated)
-
-    try:
-        ast.parse(updated)
-    except SyntaxError as exc:
-        raise InvalidSourceError(
-            f"adding element {element.name!r} to cell {cell_name!r} would leave {deck_path!r} "
-            f"with invalid Python syntax, not saved: {exc}"
-        ) from exc
-
-    path.write_text(updated)
+    _replace_elements(deck_path, cell_name, build, "add an element to")
 
 
 def _ensure_ui_imported(source: str) -> str:
@@ -417,44 +444,61 @@ def remove_element(deck_path: str, cell_name: str, element_name: str) -> None:
     Raises `SaveConflictError` if `cell_name` or `element_name` doesn't
     exist, or `InvalidSourceError` if the result doesn't parse.
     """
-    path = Path(deck_path)
-    original = path.read_text()
-    spans = _cell_line_spans(original)
-    if cell_name not in spans:
-        raise SaveConflictError(f"cannot remove an element from {cell_name!r}: it no longer exists")
 
-    start, end = spans[cell_name]
-    lines = original.splitlines(keepends=True)
-    cell_source = "".join(lines[start - 1 : end])
+    def build(existing: list[Element]) -> list[Element]:
+        if not any(e.name == element_name for e in existing):
+            raise SaveConflictError(f"cell {cell_name!r} has no element named {element_name!r}")
+        return [e for e in existing if e.name != element_name]
 
-    tree = ast.parse(cell_source)
-    func = next(n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef))
-    existing = _existing_elements(func)
-    if not any(e.name == element_name for e in existing):
-        raise SaveConflictError(f"cell {cell_name!r} has no element named {element_name!r}")
-    is_editable = any(
-        isinstance(dec, ast.Call)
-        and any(kw.arg == "instance" and ast.literal_eval(kw.value) == "editable" for kw in dec.keywords)
-        for dec in func.decorator_list
-    )
+    _replace_elements(deck_path, cell_name, build, "remove an element from")
 
-    remaining = [e for e in existing if e.name != element_name]
-    new_cell_source = rebuild_cell_source(
-        cell_name, "editable" if is_editable else "static", remaining, cell_source
-    )
-    updated_lines = list(lines)
-    updated_lines[start - 1 : end] = [new_cell_source]
-    updated = "".join(updated_lines)
 
-    try:
-        ast.parse(updated)
-    except SyntaxError as exc:
-        raise InvalidSourceError(
-            f"removing element {element_name!r} from cell {cell_name!r} would leave {deck_path!r} "
-            f"with invalid Python syntax, not saved: {exc}"
-        ) from exc
+def reorder_elements(deck_path: str, cell_name: str, element_order: list[str]) -> None:
+    """Reorder `cell_name`'s `elements=[...]` list to match
+    `element_order` exactly, on disk, immediately (TODO.md #23's
+    reorder-elements picker). `element_order` must be a permutation of
+    the cell's current element names -- every element must appear
+    exactly once, matching the frontend's up/down-arrow reorder, which
+    only ever swaps two adjacent entries of the list it was already
+    given.
 
-    path.write_text(updated)
+    Raises `SaveConflictError` if `cell_name` doesn't exist or
+    `element_order` isn't exactly a permutation of its current elements
+    (a stale reorder request racing a since-changed element set), or
+    `InvalidSourceError` if the result doesn't parse.
+    """
+
+    def build(existing: list[Element]) -> list[Element]:
+        existing_by_name = {e.name: e for e in existing}
+        if sorted(element_order) != sorted(existing_by_name):
+            raise SaveConflictError(
+                f"cannot reorder cell {cell_name!r}'s elements: {element_order!r} is not a "
+                f"permutation of its current elements {sorted(existing_by_name)!r}"
+            )
+        return [existing_by_name[name] for name in element_order]
+
+    _replace_elements(deck_path, cell_name, build, "reorder elements for")
+
+
+def set_element_config(deck_path: str, cell_name: str, element_name: str, config: dict[str, object]) -> None:
+    """Replace the element named `element_name`'s `config` dict wholesale
+    (TODO.md #23's iframe URL textbox), on disk, immediately -- same
+    write-immediately precedent as `add_element`. The element's position
+    in the list, and every other element, is untouched.
+
+    Raises `SaveConflictError` if `cell_name` or `element_name` doesn't
+    exist, or `InvalidSourceError` if the result doesn't parse.
+    """
+
+    def build(existing: list[Element]) -> list[Element]:
+        if not any(e.name == element_name for e in existing):
+            raise SaveConflictError(f"cell {cell_name!r} has no element named {element_name!r}")
+        return [
+            Element(name=e.name, kind=e.kind, config=config) if e.name == element_name else e
+            for e in existing
+        ]
+
+    _replace_elements(deck_path, cell_name, build, "set element config for")
 
 
 def _existing_elements(func: ast.FunctionDef) -> list[Element]:

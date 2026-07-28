@@ -105,13 +105,14 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages])
 
-  // `cell_added`/`cell_renamed`/`element_added`/`element_removed` are
-  // never guaranteed to be the *last* message in a batch -- the server
-  // also sends the affected cell's own cell_status/cell_output (and
-  // element_output, if it has viewer elements) right after it, all as
-  // separate websocket frames that land in `messages` before this
-  // effect's next run. So this scans every message added since the last
-  // run, not just messages[messages.length - 1].
+  // `cell_added`/`cell_renamed`/`element_added`/`element_removed`/
+  // `elements_reordered`/`element_config_set` are never guaranteed to be
+  // the *last* message in a batch -- the server also sends the affected
+  // cell's own cell_status/cell_output (and element_output, if it has
+  // viewer elements) right after it, all as separate websocket frames
+  // that land in `messages` before this effect's next run. So this scans
+  // every message added since the last run, not just
+  // messages[messages.length - 1].
   const processedMessageCount = useRef(0)
   useEffect(() => {
     const newMessages = messages.slice(processedMessageCount.current)
@@ -123,7 +124,13 @@ function App() {
       let cells = prev.cells
       let changed = false
       for (const msg of newMessages) {
-        if (msg.type === 'cell_added' || msg.type === 'element_added' || msg.type === 'element_removed') {
+        if (
+          msg.type === 'cell_added' ||
+          msg.type === 'element_added' ||
+          msg.type === 'element_removed' ||
+          msg.type === 'elements_reordered' ||
+          msg.type === 'element_config_set'
+        ) {
           if (!changed) cells = { ...cells }
           changed = true
           cells[msg.cell_id] = { instance: msg.instance, source: msg.source, elements: msg.elements }
@@ -217,6 +224,18 @@ function App() {
     if (!sessionId) return
     clearEditError(cellId)
     send({ type: 'remove_element', session_id: sessionId, cell_id: cellId, element_name: elementName })
+  }
+
+  function handleReorderElements(cellId: string, elementOrder: string[]) {
+    if (!sessionId) return
+    clearEditError(cellId)
+    send({ type: 'reorder_elements', session_id: sessionId, cell_id: cellId, element_order: elementOrder })
+  }
+
+  function handleSetElementConfig(cellId: string, elementId: string, config: Record<string, unknown>) {
+    if (!sessionId) return
+    clearEditError(cellId)
+    send({ type: 'set_element_config', session_id: sessionId, cell_id: cellId, element_id: elementId, config })
   }
 
   function handleChangeNotesSource(cellId: string, elementId: string, source: string) {
@@ -346,6 +365,8 @@ function App() {
               onRenameCell={(newName) => handleRenameCell(cellId, newName)}
               onAddElement={(name, kind, config) => handleAddElement(cellId, name, kind, config)}
               onRemoveElement={(elementName) => handleRemoveElement(cellId, elementName)}
+              onReorderElements={(elementOrder) => handleReorderElements(cellId, elementOrder)}
+              onSetElementConfig={(elementId, config) => handleSetElementConfig(cellId, elementId, config)}
               editError={editErrors[cellId]}
             />
           ))}
@@ -370,6 +391,8 @@ function App() {
           onRenameCell={handleRenameCell}
           onAddElement={handleAddElement}
           onRemoveElement={handleRemoveElement}
+          onReorderElements={handleReorderElements}
+          onSetElementConfig={handleSetElementConfig}
           editErrors={editErrors}
         />
       )}

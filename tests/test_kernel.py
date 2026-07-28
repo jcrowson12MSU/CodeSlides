@@ -695,3 +695,131 @@ def test_remove_element_raises_if_the_element_does_not_exist(tmp_path):
 
     with pytest.raises(ValueError, match="does_not_exist"):
         kernel.remove_element(session, "live_demo", "does_not_exist")
+
+
+def test_reorder_elements_updates_disk_and_kernel_baseline(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+    kernel.add_element(session, "live_demo", ui.button("go"))
+
+    cell = kernel.reorder_elements(session, "live_demo", ["go", "speed"])
+
+    assert [e.name for e in cell.elements] == ["go", "speed"]
+    assert [e.name for e in kernel.deck.cells["live_demo"].elements] == ["go", "speed"]
+
+
+def test_reorder_elements_does_not_rerun_the_cell(tmp_path):
+    """A pure reorder never changes execution -- confirm the cell's own
+    status/output are left exactly as they were, since nothing was
+    re-run."""
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+    kernel.add_element(session, "live_demo", ui.button("go"))
+    status_before = session.instances["live_demo"].status
+    output_before = session.instances["live_demo"].output
+
+    kernel.reorder_elements(session, "live_demo", ["go", "speed"])
+
+    assert session.instances["live_demo"].status == status_before
+    assert session.instances["live_demo"].output == output_before
+
+
+def test_reorder_elements_raises_on_a_non_permutation(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    with pytest.raises(ValueError, match="permutation"):
+        kernel.reorder_elements(session, "live_demo", ["speed", "does_not_exist"])
+
+
+def test_reorder_elements_without_a_deck_path_raises():
+    app = _build_deck()
+    kernel = Kernel(app.deck)  # no deck_path
+    session = Session(deck=app.deck)
+
+    with pytest.raises(ValueError, match="deck file"):
+        kernel.reorder_elements(session, "live_demo", ["speed"])
+
+
+def test_set_element_config_updates_disk_and_kernel_baseline(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+    kernel.add_element(session, "live_demo", ui.iframe("preview", src="https://old.example.com"))
+
+    cell = kernel.set_element_config(session, "live_demo", "preview", {"src": "https://new.example.com"})
+
+    preview = next(e for e in cell.elements if e.name == "preview")
+    assert preview.config == {"src": "https://new.example.com"}
+    assert kernel.deck.cells["live_demo"].elements[-1].config == {"src": "https://new.example.com"}
+
+
+def test_set_element_config_pushes_an_iframes_new_src_into_the_sessions_content(tmp_path):
+    """An iframe's rendered content otherwise only ever changes via the
+    owning cell's own cs.iframe() call during a run -- confirm editing
+    the config here also updates the *live* content directly, since
+    otherwise the browser would never see the new URL until the cell
+    happened to re-run."""
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+    kernel.add_element(session, "live_demo", ui.iframe("preview", src="https://old.example.com"))
+    assert session.instances["live_demo"].elements["preview"].content is None
+
+    kernel.set_element_config(session, "live_demo", "preview", {"src": "https://new.example.com"})
+
+    assert session.instances["live_demo"].elements["preview"].content == "https://new.example.com"
+
+
+def test_set_element_config_does_not_touch_a_non_iframe_elements_content(tmp_path):
+    """The content-push is deliberately iframe-only -- a slider's config
+    change (e.g. min/max) has no analogous "content" to push, and must
+    not clobber whatever `value` it's currently holding."""
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+    session.instances["live_demo"].elements["speed"].value = 7
+
+    kernel.set_element_config(session, "live_demo", "speed", {"min": 1, "max": 20, "default": 3})
+
+    assert session.instances["live_demo"].elements["speed"].value == 7
+
+
+def test_set_element_config_raises_if_the_element_does_not_exist(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    with pytest.raises(ValueError, match="does_not_exist"):
+        kernel.set_element_config(session, "live_demo", "does_not_exist", {})

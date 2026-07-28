@@ -586,11 +586,19 @@ body.cs-resizing {
 }
 
 .cs-edit-cell-elements li {
+  padding: 0.2rem 0;
+  font-family: ui-monospace, monospace;
+}
+
+.cs-edit-cell-element-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.2rem 0;
-  font-family: ui-monospace, monospace;
+  gap: 0.5rem;
+}
+
+.cs-edit-cell-element-row > span {
+  flex: 1;
 }
 
 .cs-edit-cell-elements li em {
@@ -598,7 +606,7 @@ body.cs-resizing {
   font-style: normal;
 }
 
-.cs-edit-cell-elements li button {
+.cs-edit-cell-element-row > button {
   border: none;
   background: none;
   color: #c0392b;
@@ -606,6 +614,46 @@ body.cs-resizing {
   font-size: 1rem;
   line-height: 1;
   padding: 0 0.3rem;
+}
+
+.cs-edit-cell-reorder {
+  display: flex;
+  gap: 0.15rem;
+}
+
+.cs-edit-cell-reorder button {
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  background: none;
+  cursor: pointer;
+  font-size: 0.75rem;
+  line-height: 1;
+  padding: 0.1rem 0.3rem;
+  color: #555;
+}
+
+.cs-edit-cell-reorder button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.cs-edit-cell-iframe-src {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.25rem 0 0.4rem 1.6rem;
+  font-family: system-ui, sans-serif;
+  font-size: 0.8rem;
+}
+
+.cs-edit-cell-iframe-src label {
+  color: #666;
+}
+
+.cs-edit-cell-iframe-src input {
+  flex: 1;
+  font-family: ui-monospace, monospace;
+  padding: 0.1rem 0.35rem;
 }
 
 .cs-edit-cell-add-element {

@@ -181,6 +181,31 @@ class RemoveElement:
     element_name: str
 
 
+@dataclass
+class ReorderElements:
+    """Reorder a cell's elements to match `element_order` exactly
+    (TODO.md #23's up/down reorder buttons), on disk, immediately.
+    `element_order` must be a permutation of the cell's current element
+    names."""
+
+    type: ClassVar[str] = "reorder_elements"
+    session_id: str
+    cell_id: str
+    element_order: list[str]
+
+
+@dataclass
+class SetElementConfig:
+    """Replace an element's `config` dict wholesale (TODO.md #23's
+    iframe URL textbox), on disk, immediately."""
+
+    type: ClassVar[str] = "set_element_config"
+    session_id: str
+    cell_id: str
+    element_id: str
+    config: dict[str, Any]
+
+
 # -- Server -> client messages -----------------------------------------------
 
 
@@ -314,6 +339,34 @@ class ElementRemoved:
 
 
 @dataclass
+class ElementsReordered:
+    """Acknowledges a successful `reorder_elements` -- same shape as
+    `ElementAdded`, the owning cell's full updated metadata (elements
+    now in the new order)."""
+
+    type: ClassVar[str] = "elements_reordered"
+    session_id: str
+    cell_id: str
+    instance: str
+    source: str
+    elements: list[dict[str, Any]]
+
+
+@dataclass
+class ElementConfigSet:
+    """Acknowledges a successful `set_element_config` -- same shape as
+    `ElementAdded`, the owning cell's full updated metadata (the target
+    element's `config` now replaced)."""
+
+    type: ClassVar[str] = "element_config_set"
+    session_id: str
+    cell_id: str
+    instance: str
+    source: str
+    elements: list[dict[str, Any]]
+
+
+@dataclass
 class SessionCreated:
     """Sent once, immediately after a websocket connection is accepted:
     tells the client the session_id implicitly created for that connection
@@ -349,6 +402,8 @@ ClientMessage = (
     | RenameCell
     | AddElement
     | RemoveElement
+    | ReorderElements
+    | SetElementConfig
 )
 ServerMessage = (
     CellStatus
@@ -362,6 +417,8 @@ ServerMessage = (
     | CellRenamed
     | ElementAdded
     | ElementRemoved
+    | ElementsReordered
+    | ElementConfigSet
     | ErrorMessage
 )
 
@@ -380,6 +437,8 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
         RenameCell,
         AddElement,
         RemoveElement,
+        ReorderElements,
+        SetElementConfig,
     )
 }
 

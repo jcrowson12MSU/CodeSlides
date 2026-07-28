@@ -26,16 +26,20 @@ from codeslides.protocol import (
     DeckSaved,
     EditCell,
     ElementAdded,
+    ElementConfigSet,
     ElementOutput,
     ElementRemoved,
+    ElementsReordered,
     ErrorMessage,
     NavigateSlide,
     RemoveElement,
     RenameCell,
+    ReorderElements,
     RunAll,
     SaveDeck,
     ServerMessage,
     SessionCloned,
+    SetElementConfig,
     SetElementValue,
     SetTestSource,
     SetUiState,
@@ -466,5 +470,66 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
             *_results_to_messages(message.session_id, results),
             *_element_output_messages(session, results),
         ]
+
+    if isinstance(message, ReorderElements):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        try:
+            cell = registry.kernel.reorder_elements(session, message.cell_id, message.element_order)
+        except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
+            return [ErrorMessage(message=str(exc), session_id=message.session_id, cell_id=message.cell_id)]
+        return [
+            ElementsReordered(
+                session_id=message.session_id,
+                cell_id=cell.name,
+                instance=cell.instance,
+                source=cell.source,
+                elements=[
+                    {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
+                ],
+            )
+        ]
+
+    if isinstance(message, SetElementConfig):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        try:
+            cell = registry.kernel.set_element_config(
+                session, message.cell_id, message.element_id, message.config
+            )
+        except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
+            return [ErrorMessage(message=str(exc), session_id=message.session_id, cell_id=message.cell_id)]
+        replies: list[ServerMessage] = [
+            ElementConfigSet(
+                session_id=message.session_id,
+                cell_id=cell.name,
+                instance=cell.instance,
+                source=cell.source,
+                elements=[
+                    {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
+                ],
+            )
+        ]
+        # Kernel.set_element_config already pushed an iframe's new src
+        # straight into session.instances[...].content -- surface that
+        # to the browser the same way a cell's own cs.iframe() write
+        # would, so the change actually renders without needing the
+        # cell to separately re-run.
+        instance = session.instances.get(cell.name)
+        element = next((e for e in cell.elements if e.name == message.element_id), None)
+        if instance is not None and element is not None and element.kind == "iframe":
+            element_instance = instance.elements.get(message.element_id)
+            if element_instance is not None:
+                replies.append(
+                    ElementOutput(
+                        session_id=message.session_id,
+                        cell_id=cell.name,
+                        element_id=message.element_id,
+                        content=element_instance.content,
+                    )
+                )
+        return replies
 
     return [ErrorMessage(message=f"unhandled message type: {type(message).__name__}")]

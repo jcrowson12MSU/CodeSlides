@@ -12,15 +12,19 @@ from codeslides.protocol import (
     DeckSaved,
     EditCell,
     ElementAdded,
+    ElementConfigSet,
     ElementOutput,
     ElementRemoved,
+    ElementsReordered,
     ErrorMessage,
     NavigateSlide,
     RemoveElement,
     RenameCell,
+    ReorderElements,
     RunAll,
     SaveDeck,
     SessionCloned,
+    SetElementConfig,
     SetElementValue,
     SetTestSource,
     SetUiState,
@@ -783,6 +787,135 @@ def test_remove_element_unknown_element_produces_error_not_crash(tmp_path):
 
     messages = handle_message(
         registry, RemoveElement(session_id=session.session_id, cell_id="live_demo", element_name="does_not_exist")
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+    assert path.read_text() == before
+
+
+def test_reorder_elements_emits_elements_reordered_and_writes_to_disk(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    handle_message(
+        registry,
+        AddElement(session_id=session.session_id, cell_id="live_demo", element_name="go", kind="button", config={}),
+    )
+
+    messages = handle_message(
+        registry,
+        ReorderElements(session_id=session.session_id, cell_id="live_demo", element_order=["go", "speed"]),
+    )
+
+    assert isinstance(messages[0], ElementsReordered)
+    reordered = messages[0]
+    assert [e["name"] for e in reordered.elements] == ["go", "speed"]
+    text = path.read_text()
+    assert text.index("ui.button('go'") < text.index("ui.slider('speed'")
+
+
+def test_reorder_elements_unknown_session_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+
+    messages = handle_message(
+        registry, ReorderElements(session_id="does-not-exist", cell_id="live_demo", element_order=["speed"])
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_reorder_elements_non_permutation_produces_error_not_crash(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    before = path.read_text()
+
+    messages = handle_message(
+        registry,
+        ReorderElements(session_id=session.session_id, cell_id="live_demo", element_order=["does_not_exist"]),
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+    assert path.read_text() == before
+
+
+def test_set_element_config_emits_element_config_set_and_writes_to_disk(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    handle_message(
+        registry,
+        AddElement(
+            session_id=session.session_id,
+            cell_id="live_demo",
+            element_name="preview",
+            kind="iframe",
+            config={"src": "https://old.example.com"},
+        ),
+    )
+
+    messages = handle_message(
+        registry,
+        SetElementConfig(
+            session_id=session.session_id,
+            cell_id="live_demo",
+            element_id="preview",
+            config={"src": "https://new.example.com"},
+        ),
+    )
+
+    kinds = [type(m) for m in messages]
+    assert ElementConfigSet in kinds
+    assert ElementOutput in kinds
+    config_set = next(m for m in messages if isinstance(m, ElementConfigSet))
+    preview = next(e for e in config_set.elements if e["name"] == "preview")
+    assert preview["config"] == {"src": "https://new.example.com"}
+    output = next(m for m in messages if isinstance(m, ElementOutput))
+    assert output.element_id == "preview"
+    assert output.content == "https://new.example.com"
+    assert "https://new.example.com" in path.read_text()
+
+
+def test_set_element_config_on_a_non_iframe_emits_no_element_output(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(
+        registry,
+        SetElementConfig(
+            session_id=session.session_id,
+            cell_id="live_demo",
+            element_id="speed",
+            config={"min": 1, "max": 20, "default": 3},
+        ),
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ElementConfigSet)
+
+
+def test_set_element_config_unknown_session_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+
+    messages = handle_message(
+        registry,
+        SetElementConfig(session_id="does-not-exist", cell_id="live_demo", element_id="speed", config={}),
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_set_element_config_unknown_element_produces_error_not_crash(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    before = path.read_text()
+
+    messages = handle_message(
+        registry,
+        SetElementConfig(
+            session_id=session.session_id, cell_id="live_demo", element_id="does_not_exist", config={}
+        ),
     )
 
     assert len(messages) == 1

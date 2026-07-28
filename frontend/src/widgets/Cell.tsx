@@ -57,6 +57,12 @@ export interface CellProps {
   onRenameCell: (newName: string) => void
   onAddElement: (name: string, kind: string, config: Record<string, unknown>) => void
   onRemoveElement: (elementName: string) => void
+  /** TODO.md #23: reorder this cell's elements (up/down arrows in the
+   * edit panel) and edit an iframe element's src (a plain textbox). Both
+   * write to the deck's .py file immediately, same precedent as
+   * rename/add/remove above. */
+  onReorderElements: (elementOrder: string[]) => void
+  onSetElementConfig: (elementId: string, config: Record<string, unknown>) => void
   /** Set when the last rename/add-element/remove-element for this cell
    * was rejected (e.g. renaming a cell another cell calls directly by
    * name) -- shown inline in the edit panel. */
@@ -98,6 +104,8 @@ export function Cell({
   onRenameCell,
   onAddElement,
   onRemoveElement,
+  onReorderElements,
+  onSetElementConfig,
   editError,
 }: CellProps) {
   const [editing, setEditing] = useState(false)
@@ -181,6 +189,8 @@ export function Cell({
           onRename={onRenameCell}
           onAddElement={onAddElement}
           onRemoveElement={onRemoveElement}
+          onReorderElements={onReorderElements}
+          onSetElementConfig={onSetElementConfig}
           error={editError}
         />
       )}

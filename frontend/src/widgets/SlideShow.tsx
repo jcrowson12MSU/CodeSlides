@@ -27,6 +27,8 @@ export interface SlideShowProps {
   onRenameCell: (cellId: string, newName: string) => void
   onAddElement: (cellId: string, name: string, kind: string, config: Record<string, unknown>) => void
   onRemoveElement: (cellId: string, elementName: string) => void
+  onReorderElements: (cellId: string, elementOrder: string[]) => void
+  onSetElementConfig: (cellId: string, elementId: string, config: Record<string, unknown>) => void
   editErrors: Record<string, string>
 }
 
@@ -56,6 +58,8 @@ export function SlideShow({
   onRenameCell,
   onAddElement,
   onRemoveElement,
+  onReorderElements,
+  onSetElementConfig,
   editErrors,
 }: SlideShowProps) {
   const [index, setIndex] = useState(0)
@@ -147,6 +151,8 @@ export function SlideShow({
               onRenameCell={(newName) => onRenameCell(cellId, newName)}
               onAddElement={(name, kind, config) => onAddElement(cellId, name, kind, config)}
               onRemoveElement={(elementName) => onRemoveElement(cellId, elementName)}
+              onReorderElements={(elementOrder) => onReorderElements(cellId, elementOrder)}
+              onSetElementConfig={(elementId, config) => onSetElementConfig(cellId, elementId, config)}
               editError={editErrors[cellId]}
             />
           )
