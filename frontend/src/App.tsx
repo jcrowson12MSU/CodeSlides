@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import { useDeckState } from './deckState'
 import { useCodeSlidesSocket } from './useCodeSlidesSocket'
@@ -99,27 +99,31 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages])
 
+  // `cell_added` is never guaranteed to be the *last* message in a batch --
+  // the server also sends the new cell's own cell_status/cell_output (and
+  // element_output, if it has viewer elements) right after it, all as
+  // separate websocket frames that land in `messages` before this effect's
+  // next run. So this scans every message added since the last run, not
+  // just messages[messages.length - 1].
+  const processedMessageCount = useRef(0)
   useEffect(() => {
-    const last = messages[messages.length - 1]
-    if (last?.type !== 'cell_added') return
+    const newMessages = messages.slice(processedMessageCount.current)
+    processedMessageCount.current = messages.length
+    const added = newMessages.filter((m) => m.type === 'cell_added')
+    if (added.length === 0) return
     // The new cell is written to disk immediately (TODO.md #21) -- merge it
     // into the local deck.cells so it renders without a page reload/refetch
     // of /api/deck. Scoped like the CLI file-watcher's reload: this only
     // updates *this* browser tab's view; other already-open tabs pick it up
     // on their own next refresh/reconnect.
-    setDeck((prev) =>
-      prev
-        ? {
-            ...prev,
-            cells: {
-              ...prev.cells,
-              [last.cell_id]: { instance: last.instance, source: last.source, elements: last.elements },
-            },
-          }
-        : prev,
-    )
-    // only re-check when a new message arrives
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setDeck((prev) => {
+      if (!prev) return prev
+      const cells = { ...prev.cells }
+      for (const msg of added) {
+        cells[msg.cell_id] = { instance: msg.instance, source: msg.source, elements: msg.elements }
+      }
+      return { ...prev, cells }
+    })
   }, [messages])
 
   function handleSetElementValue(cellId: string, elementId: string, value: unknown) {
