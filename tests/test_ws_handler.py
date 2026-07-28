@@ -2,6 +2,8 @@ from codeslides import App, cs, turtle, ui
 from codeslides.kernel import Kernel
 from codeslides.loader import load_deck
 from codeslides.protocol import (
+    AddCell,
+    CellAdded,
     CellOutput,
     CellStatus,
     CloneSession,
@@ -571,3 +573,68 @@ def test_save_deck_only_affects_the_saving_sessions_overrides(tmp_path):
     assert session_a.source_overrides == {}
     # session_b's own override is untouched by session_a's save
     assert session_b.source_overrides["live_demo"] == source_b
+
+
+def test_add_cell_emits_cell_added_and_writes_to_disk(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(registry, AddCell(session_id=session.session_id))
+
+    assert isinstance(messages[0], CellAdded)
+    added = messages[0]
+    assert added.session_id == session.session_id
+    assert added.instance == "editable"
+    assert "def cell_1():" in added.source
+    assert added.elements == []
+    # written to disk immediately -- no separate save_deck needed
+    assert "def cell_1():" in path.read_text()
+    # and the Kernel's own baseline picked it up synchronously
+    assert added.cell_id in registry.kernel.deck.cells
+    # the requesting session's own instances were backfilled so a
+    # subsequent run_all/edit_cell for this cell won't KeyError
+    assert added.cell_id in session.instances
+
+
+def test_add_cell_without_a_deck_path_errors_cleanly():
+    registry = SessionRegistry(kernel=Kernel(_build_deck().deck))  # no deck_path
+    session = registry.create()
+
+    messages = handle_message(registry, AddCell(session_id=session.session_id))
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_add_cell_unknown_session_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+
+    messages = handle_message(registry, AddCell(session_id="does-not-exist"))
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_add_cell_twice_picks_different_names(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    first = handle_message(registry, AddCell(session_id=session.session_id))[0]
+    second = handle_message(registry, AddCell(session_id=session.session_id))[0]
+
+    assert first.cell_id != second.cell_id
+
+
+def test_add_cell_does_not_affect_a_different_sessions_instances(tmp_path):
+    """A new cell must be scoped like the CLI file-watcher's reload
+    (ARCHITECTURE.md, TODO.md #13): guaranteed correct for the requesting
+    session and any new connection after this, but not broadcast live into
+    other already-open sessions."""
+    registry, _ = _build_file_backed_registry(tmp_path)
+    session_a = registry.create()
+    session_b = registry.create()
+
+    added = handle_message(registry, AddCell(session_id=session_a.session_id))[0]
+
+    assert added.cell_id in session_a.instances
+    assert added.cell_id not in session_b.instances

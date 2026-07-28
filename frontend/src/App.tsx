@@ -99,6 +99,29 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages])
 
+  useEffect(() => {
+    const last = messages[messages.length - 1]
+    if (last?.type !== 'cell_added') return
+    // The new cell is written to disk immediately (TODO.md #21) -- merge it
+    // into the local deck.cells so it renders without a page reload/refetch
+    // of /api/deck. Scoped like the CLI file-watcher's reload: this only
+    // updates *this* browser tab's view; other already-open tabs pick it up
+    // on their own next refresh/reconnect.
+    setDeck((prev) =>
+      prev
+        ? {
+            ...prev,
+            cells: {
+              ...prev.cells,
+              [last.cell_id]: { instance: last.instance, source: last.source, elements: last.elements },
+            },
+          }
+        : prev,
+    )
+    // only re-check when a new message arrives
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages])
+
   function handleSetElementValue(cellId: string, elementId: string, value: unknown) {
     if (!sessionId) return
     setElementValues((prev) => ({
@@ -123,6 +146,11 @@ function App() {
     setSaving(true)
     setSaveStatus(null)
     send({ type: 'save_deck', session_id: sessionId })
+  }
+
+  function handleAddCell() {
+    if (!sessionId) return
+    send({ type: 'add_cell', session_id: sessionId })
   }
 
   function handleChangeNotesSource(cellId: string, elementId: string, source: string) {
@@ -216,6 +244,9 @@ function App() {
           </button>
           <button type="button" disabled={!sessionId || saving} onClick={handleSaveDeck}>
             {saving ? 'Saving…' : 'Save'}
+          </button>
+          <button type="button" disabled={!sessionId} onClick={handleAddCell}>
+            + Add cell
           </button>
           {saveStatus && (
             <span className={`cs-save-status cs-save-status-${saveStatus.kind}`}>

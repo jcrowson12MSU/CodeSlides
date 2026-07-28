@@ -123,6 +123,21 @@ class SaveDeck:
     session_id: str
 
 
+@dataclass
+class AddCell:
+    """Add a brand-new, blank `instance="editable"` cell (TODO.md #21).
+    Unlike `save_deck`, this writes to the deck's .py file *immediately*
+    (see `kernel.Kernel.add_cell`'s docstring for why) -- there is no
+    staged/unsaved state for a newly-added cell the way there is for an
+    edit to an existing cell. Scoped the same as the CLI file-watcher's
+    reload (ARCHITECTURE.md, TODO.md #13): guaranteed correct for
+    `session_id` and for any new connection after this, but not
+    broadcast live into other already-open Sessions."""
+
+    type: ClassVar[str] = "add_cell"
+    session_id: str
+
+
 # -- Server -> client messages -----------------------------------------------
 
 
@@ -196,6 +211,21 @@ class DeckSaved:
 
 
 @dataclass
+class CellAdded:
+    """Acknowledges a successful `add_cell`: the new cell's static
+    metadata (mirroring `/api/deck`'s per-cell shape -- `instance`,
+    `source`, `elements`), so the client can add it to its local deck
+    state without needing a full page reload/`/api/deck` refetch."""
+
+    type: ClassVar[str] = "cell_added"
+    session_id: str
+    cell_id: str
+    instance: str
+    source: str
+    elements: list[dict[str, Any]]
+
+
+@dataclass
 class SessionCreated:
     """Sent once, immediately after a websocket connection is accepted:
     tells the client the session_id implicitly created for that connection
@@ -227,6 +257,7 @@ ClientMessage = (
     | CloneSession
     | NavigateSlide
     | SaveDeck
+    | AddCell
 )
 ServerMessage = (
     CellStatus
@@ -236,6 +267,7 @@ ServerMessage = (
     | SessionCloned
     | SessionCreated
     | DeckSaved
+    | CellAdded
     | ErrorMessage
 )
 
@@ -250,6 +282,7 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
         CloneSession,
         NavigateSlide,
         SaveDeck,
+        AddCell,
     )
 }
 

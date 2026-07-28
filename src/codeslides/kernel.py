@@ -487,6 +487,50 @@ class Kernel:
         result = _run_and_apply_test(instance, element_name, session.namespace, elements)
         return {"status": result["status"], "message": result["message"]}
 
+    def add_cell(self, session: Session) -> tuple[Cell, ExecutionResult]:
+        """Add a brand-new, blank `instance="editable"` cell (TODO.md
+        #21) -- appended to the deck's `.py` file on disk immediately
+        (not staged behind the Save button, unlike an edit to an
+        *existing* cell's source: a newly-added cell must never be
+        silently lost if the author forgets to click Save), then
+        reloaded into this Kernel's own baseline synchronously (same
+        `load_deck` + swap-in pattern `save_deck`/the CLI file-watcher
+        already use, so `/api/deck` and every *new* Session/connection
+        see it immediately -- but see the module-level note on scope:
+        already-open Sessions other than this one only pick it up on
+        their next reconnect, matching `reload_deck`'s existing,
+        deliberately narrow scope).
+
+        Requires `self.deck_path` (raises `ValueError` without one --
+        there's nowhere to append to for an in-memory-only Deck, e.g.
+        most of this test suite).
+
+        Backfills `session`'s own `instances` for the new cell via
+        `Session.seed_cell_instance` -- without this, the very next
+        `run_all`/`on_cell_edited` in *this* session would `KeyError`
+        on `session.instances[new_name]`, since every such lookup
+        assumes every cell in the graph already has an instance. Then
+        runs the new cell once (its body is just `pass`, so this mostly
+        exists for consistency -- every other cell is running-state by
+        the time an author sees it, a blank cell shouldn't look
+        conspicuously different)."""
+        if self.deck_path is None:
+            raise ValueError("cannot add a cell: this Kernel was not started from a deck file")
+
+        from codeslides.serialization import append_cell, new_cell_name
+
+        name = new_cell_name(frozenset(self.deck.cells))
+        append_cell(self.deck_path, name)
+
+        from codeslides.loader import load_deck
+
+        self.reload_deck(load_deck(self.deck_path))
+
+        cell = self.deck.cells[name]
+        session.seed_cell_instance(name, cell)
+        results = self._run_cells([name], session)
+        return cell, results[name]
+
     def _effective_graph(self, session: Session) -> DependencyGraph:
         """The dependency graph as this Session currently sees it: the
         Deck's cells, with any of this Session's source overrides applied.

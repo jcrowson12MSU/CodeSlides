@@ -1,3 +1,4 @@
+import pytest
 
 from codeslides import App, cs, ui
 from codeslides.kernel import Kernel
@@ -444,3 +445,96 @@ def test_a_callee_cells_failed_run_does_not_update_its_bound_callable():
     # the stale-but-working callable is still there, untouched
     assert session.namespace["drawSquare"] is original_fn
     assert session.namespace["results"] == [2, 4, 6]
+
+
+def _write_deck_file(tmp_path, source):
+    path = tmp_path / "deck.py"
+    path.write_text(source)
+    return path
+
+
+_ADD_CELL_DECK_SOURCE = (
+    "from codeslides import App\n\napp = App()\n\n@app.cell\ndef setup():\n    base = 5\n    return base\n"
+)
+
+
+def test_add_cell_appends_a_blank_editable_cell_to_disk(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _ADD_CELL_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    cell, result = kernel.add_cell(session)
+
+    assert cell.name == "cell_1"
+    assert cell.instance == "editable"
+    assert result.status == "idle"
+    assert "def cell_1():" in path.read_text()
+    # the Kernel's own baseline picked up the new cell too, not just the file
+    assert "cell_1" in kernel.deck.cells
+
+
+def test_add_cell_backfills_the_requesting_sessions_instances(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _ADD_CELL_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    cell, _ = kernel.add_cell(session)
+
+    # without backfilling, the very next run_all would KeyError on
+    # session.instances["cell_1"] -- confirm it doesn't
+    assert cell.name in session.instances
+    kernel.run_all(session)  # must not raise
+
+
+def test_add_cell_twice_picks_different_names(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _ADD_CELL_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    cell1, _ = kernel.add_cell(session)
+    cell2, _ = kernel.add_cell(session)
+
+    assert cell1.name != cell2.name
+    assert {cell1.name, cell2.name} == {"cell_1", "cell_2"}
+
+
+def test_add_cell_without_a_deck_path_raises():
+    app = _build_deck()
+    kernel = Kernel(app.deck)  # no deck_path
+    session = Session(deck=app.deck)
+
+    with pytest.raises(ValueError, match="deck file"):
+        kernel.add_cell(session)
+
+
+def test_add_cell_does_not_affect_a_different_sessions_instances(tmp_path):
+    """Confirms the agreed scope: adding a cell only guarantees correctness
+    for the requesting Session (and any new connection after this) -- an
+    unrelated, already-open Session is untouched, matching reload_deck's
+    existing, deliberately narrow scope."""
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _ADD_CELL_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session_a = Session(deck=deck)
+    session_b = Session(deck=deck)
+    kernel.run_all(session_a)
+    kernel.run_all(session_b)
+
+    cell, _ = kernel.add_cell(session_a)
+
+    assert cell.name in session_a.instances
+    assert cell.name not in session_b.instances

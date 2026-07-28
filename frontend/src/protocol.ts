@@ -4,6 +4,8 @@
 // so client and kernel always agree on which Session's which Cell/Element
 // a message concerns.
 
+import type { ElementMeta } from './widgets/elementMeta'
+
 // -- Client -> server messages ----------------------------------------------
 
 export interface EditCell {
@@ -60,6 +62,11 @@ export interface SetTestSource {
   source: string
 }
 
+export interface AddCell {
+  type: 'add_cell'
+  session_id: string
+}
+
 export type ClientMessage =
   | EditCell
   | RunAll
@@ -69,6 +76,7 @@ export type ClientMessage =
   | CloneSession
   | NavigateSlide
   | SaveDeck
+  | AddCell
 
 // -- Server -> client messages -----------------------------------------------
 
@@ -129,6 +137,15 @@ export interface DeckSaved {
   cells: string[]
 }
 
+export interface CellAdded {
+  type: 'cell_added'
+  session_id: string
+  cell_id: string
+  instance: 'static' | 'editable'
+  source: string
+  elements: ElementMeta[]
+}
+
 export interface ErrorMessage {
   type: 'error'
   message: string
@@ -144,4 +161,5 @@ export type ServerMessage =
   | SessionCloned
   | SessionCreated
   | DeckSaved
+  | CellAdded
   | ErrorMessage

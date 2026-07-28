@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from codeslides.kernel import ExecutionResult, Kernel
 from codeslides.output import resolve_output, wire_safe_value
 from codeslides.protocol import (
+    AddCell,
+    CellAdded,
     CellOutput,
     CellStatus,
     ClientMessage,
@@ -358,5 +360,35 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 )
             ]
         return [DeckSaved(session_id=message.session_id, cells=saved)]
+
+    if isinstance(message, AddCell):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if registry.kernel.deck_path is None:
+            return [
+                ErrorMessage(
+                    message="no deck file to add a cell to (not started from a file)",
+                    session_id=message.session_id,
+                )
+            ]
+        try:
+            cell, result = registry.kernel.add_cell(session)
+        except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
+            return [ErrorMessage(message=str(exc), session_id=message.session_id)]
+        results = {cell.name: result}
+        return [
+            CellAdded(
+                session_id=message.session_id,
+                cell_id=cell.name,
+                instance=cell.instance,
+                source=cell.source,
+                elements=[
+                    {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
+                ],
+            ),
+            *_results_to_messages(message.session_id, results),
+            *_element_output_messages(session, results),
+        ]
 
     return [ErrorMessage(message=f"unhandled message type: {type(message).__name__}")]

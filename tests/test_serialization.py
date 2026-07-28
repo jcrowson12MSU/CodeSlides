@@ -1,7 +1,14 @@
 import pytest
 
 from codeslides.loader import load_deck
-from codeslides.serialization import InvalidSourceError, SaveConflictError, save_edits
+from codeslides.serialization import (
+    InvalidSourceError,
+    SaveConflictError,
+    append_cell,
+    blank_cell_source,
+    new_cell_name,
+    save_edits,
+)
 
 DECK_SOURCE = '''"""A tiny demo deck with a comment worth preserving."""
 
@@ -125,3 +132,65 @@ def test_save_edits_multiple_cells_bottom_to_top_stays_correct(deck_file):
     assert deck.cells["setup"].source.count("base = 999") == 1
     assert "a much" in deck.cells["live_demo"].source
     assert '@app.slide("Live Coding"' in deck_file.read_text()
+
+
+def test_new_cell_name_picks_the_smallest_unused_suffix():
+    assert new_cell_name(frozenset()) == "cell_1"
+    assert new_cell_name(frozenset({"cell_1"})) == "cell_2"
+    assert new_cell_name(frozenset({"cell_1", "cell_2"})) == "cell_3"
+    # a gap doesn't get filled -- always the smallest N not already taken
+    assert new_cell_name(frozenset({"cell_2"})) == "cell_1"
+
+
+def test_blank_cell_source_is_editable_and_parses_standalone():
+    import ast
+
+    source = blank_cell_source("cell_1")
+    assert 'instance="editable"' in source
+    assert "def cell_1():" in source
+    ast.parse(source)  # must be valid Python on its own
+
+
+def test_append_cell_writes_a_new_blank_cell_to_disk(deck_file):
+    before = deck_file.read_text()
+
+    returned_source = append_cell(str(deck_file), "cell_1")
+
+    after = deck_file.read_text()
+    assert after.startswith(before)  # existing content is untouched, only appended to
+    assert "def cell_1():" in after
+    assert returned_source in after
+
+    deck = load_deck(str(deck_file))
+    assert "cell_1" in deck.cells
+    assert deck.cells["cell_1"].instance == "editable"
+
+
+def test_append_cell_uses_two_blank_lines_like_every_other_top_level_def(deck_file):
+    """Regression guard: this codebase's own convention (every deck in
+    examples/) is two blank lines between top-level defs -- a single
+    blank line made an appended cell look visually glued to whatever
+    preceded it."""
+    append_cell(str(deck_file), "cell_1")
+
+    after = deck_file.read_text()
+    assert "\n\n\n@app.cell(instance=\"editable\")\ndef cell_1():" in after
+
+
+def test_append_cell_raises_if_the_name_already_exists(deck_file):
+    before = deck_file.read_text()
+
+    with pytest.raises(SaveConflictError):
+        append_cell(str(deck_file), "setup")  # "setup" is already a cell in DECK_SOURCE
+
+    # nothing was written
+    assert deck_file.read_text() == before
+
+
+def test_append_cell_twice_does_not_collide(deck_file):
+    append_cell(str(deck_file), "cell_1")
+    append_cell(str(deck_file), "cell_2")
+
+    deck = load_deck(str(deck_file))
+    assert "cell_1" in deck.cells
+    assert "cell_2" in deck.cells

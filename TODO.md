@@ -562,8 +562,67 @@ reshape the plan below and are called out explicitly where they apply:
   correctly disappears with no leftover width override at a narrow
   (700px) viewport. Frontend build/oxlint clean; no backend changes.
 
-- [ ] ** 21. Add a new cell button**
+- [x] **21. Add a new cell button**
   add the option to add new cells from the browser that could then be inserted into the source file. A cell should be able to have all veiwer element added to it.
+  When inserting a new cell, insert a blank cell into the deck's source file.
+
+  Three scope decisions confirmed with the user before implementing: the
+  new cell starts genuinely empty -- no pre-populated elements, since
+  picking which viewer/input elements a cell gets is item 22's "edit
+  button" scope, not this one; unlike an *edit* to an existing
+  `instance="editable"` cell (staged in `session.source_overrides` until
+  Save is clicked), a brand-new cell is written to the deck's `.py` file
+  **immediately** on creation, so it can never be silently lost if the
+  author forgets to click Save; and a new cell is *not* broadcast live
+  into other already-open browser tabs -- guaranteed correct only for the
+  Session that added it and for any new connection after that, exactly
+  matching the CLI file-watcher's reload scoping (item 13).
+
+  Backend: `serialization.py` gained `new_cell_name()` (smallest unused
+  `cell_N` suffix), `blank_cell_source()` (an `instance="editable"`
+  stub with a `pass` body), and `append_cell()` (appends it to the file,
+  validates the whole result still `ast.parse`s, raises `SaveConflictError`
+  on a name collision -- reusing `save_edits`'s existing exception types
+  rather than adding new ones). `Kernel.add_cell(session)` picks a name,
+  appends it to disk, reloads the Kernel's own baseline synchronously
+  (same `load_deck`/`reload_deck` pattern as `save_deck`), and backfills
+  *only the requesting session's* `instances` dict for the new cell --
+  every existing kernel code path assumes `session.instances[cell_name]`
+  always exists, so without this the very next `run_all`/`edit_cell` for
+  that session would `KeyError`. Extracted `Session.__post_init__`'s
+  per-cell seeding logic into a reusable `seed_cell_instance()` method to
+  do this without duplicating it. New `add_cell`/`cell_added` websocket
+  messages (`protocol.py`), dispatched in `ws_handler.py` following the
+  established convention of `Kernel` raising and `ws_handler` translating
+  exceptions into `ErrorMessage`.
+
+  Frontend: a "+ Add cell" button next to Save in `App.tsx`'s toolbar,
+  sending `add_cell` over the websocket; the `cell_added` reply is merged
+  directly into local `deck.cells` state so the new cell renders
+  immediately with no page reload or `/api/deck` refetch. TypeScript
+  `AddCell`/`CellAdded` types added to `protocol.ts` mirroring the Python
+  dataclasses exactly, per that file's existing hand-sync convention.
+
+  Found and fixed a real bug via browser verification: `append_cell`
+  originally inserted only one blank line before the new cell's
+  decorator (glued visually to whatever preceded it), inconsistent with
+  every other top-level def in every example deck, which use two blank
+  lines (PEP 8). Fixed to always insert `\n\n\n` regardless of the
+  original file's trailing-newline count; added a regression test
+  (`test_append_cell_uses_two_blank_lines_like_every_other_top_level_def`).
+
+  Verified end-to-end in a real browser via Playwright: clicking "+ Add
+  cell" appended a new blank `cell_1` to the deck's `.py` file on disk
+  immediately (before any Save click) with correct two-blank-line
+  spacing, and the new cell rendered live in that tab with no reload; a
+  second, already-open browser tab did **not** see the new cell until it
+  was reloaded, confirming the scoping decision; typing real code into
+  the new cell's editor and pressing Shift+Enter ran it and displayed
+  correct output, confirming it behaves exactly like any other
+  `instance="editable"` cell. 16 new backend tests (6 in
+  `test_serialization.py`, 5 in `test_kernel.py`, 5 in
+  `test_ws_handler.py`), full suite green (164 passed, 2 skipped), ruff
+  and oxlint clean, frontend bundle rebuilt and committed.
 
 - [ ] **22. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming

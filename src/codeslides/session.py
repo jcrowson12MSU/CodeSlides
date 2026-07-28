@@ -18,7 +18,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from codeslides.deck import Deck
+from codeslides.deck import Cell, Deck
 
 
 @dataclass
@@ -86,21 +86,34 @@ class Session:
 
     def __post_init__(self) -> None:
         for name, cell in self.deck.cells.items():
-            instance = self.instances.setdefault(name, CellInstance())
-            for element in cell.elements:
-                default = element.config.get("default")
-                instance.elements.setdefault(
-                    element.name,
-                    # `notes` elements are authored content, not computed
-                    # from cell execution -- seed `content`, not `value`,
-                    # so the notes viewer has something to render before
-                    # any cs.* write or edit happens (ARCHITECTURE.md
-                    # section 3a). `tests` elements seed `value` (their
-                    # default source, same as every other non-notes kind
-                    # already does) -- `content` (the pass/fail result)
-                    # starts empty since no run has happened yet.
-                    ElementInstance(value=default, content=default if element.kind == "notes" else None),
-                )
+            self.seed_cell_instance(name, cell)
+
+    def seed_cell_instance(self, name: str, cell: Cell) -> CellInstance:
+        """Ensure `name` has a `CellInstance` (with every element's
+        default `ElementInstance`) in this Session, creating one if
+        missing. Extracted from `__post_init__` so `Kernel.add_cell`
+        (TODO.md #21) can backfill a brand-new cell into an
+        already-running Session the same way construction seeds every
+        cell up front -- a new cell added mid-session is otherwise
+        missing from `self.instances` entirely, which every kernel.py
+        code path that indexes `session.instances[name]` assumes never
+        happens."""
+        instance = self.instances.setdefault(name, CellInstance())
+        for element in cell.elements:
+            default = element.config.get("default")
+            instance.elements.setdefault(
+                element.name,
+                # `notes` elements are authored content, not computed
+                # from cell execution -- seed `content`, not `value`,
+                # so the notes viewer has something to render before
+                # any cs.* write or edit happens (ARCHITECTURE.md
+                # section 3a). `tests` elements seed `value` (their
+                # default source, same as every other non-notes kind
+                # already does) -- `content` (the pass/fail result)
+                # starts empty since no run has happened yet.
+                ElementInstance(value=default, content=default if element.kind == "notes" else None),
+            )
+        return instance
 
     def clone(self) -> Session:
         """Create a new, fully independent Session from the same Deck.

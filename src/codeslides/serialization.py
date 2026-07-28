@@ -66,6 +66,71 @@ def _apply_overrides(original: str, spans: dict[str, tuple[int, int]], source_ov
     return "".join(lines)
 
 
+def new_cell_name(existing_names: frozenset[str] | set[str]) -> str:
+    """Pick an unused `cell_N` identifier for a brand-new blank cell
+    (TODO.md #21) -- `N` is the smallest positive integer not already
+    taken, so repeatedly adding and removing cells doesn't accumulate
+    ever-larger suffixes."""
+    n = 1
+    while f"cell_{n}" in existing_names:
+        n += 1
+    return f"cell_{n}"
+
+
+def blank_cell_source(name: str) -> str:
+    """The literal source text for a brand-new blank cell: a decorator
+    line plus a `pass`-bodied function, matching exactly what
+    `inspect.getsource` would produce for a hand-authored cell (the same
+    shape `Cell.source` always holds elsewhere) -- `instance="editable"`
+    so it's immediately live-editable in the browser without a second
+    step, per TODO.md #21's "author picks elements/edits afterward"
+    scope."""
+    return f'@app.cell(instance="editable")\ndef {name}():\n    pass\n'
+
+
+def append_cell(deck_path: str, name: str) -> str:
+    """Append a new blank cell (see `blank_cell_source`) to the end of
+    `deck_path`'s cell definitions, immediately, on disk -- TODO.md #21
+    chose "write to disk right away" over "staged until Save is
+    clicked" specifically so a newly-added cell can never be silently
+    lost if the author forgets to click Save afterward, unlike an
+    edited *existing* cell's `source_override` (which the Save button
+    already governs). Returns the appended source text (identical to
+    `blank_cell_source(name)`) so the caller can hand it straight to
+    `Cell`/`ElementInstance` construction without re-deriving it.
+
+    Raises `SaveConflictError` if `name` already names a cell in the
+    file (can happen if the file changed on disk since the caller last
+    loaded it, e.g. two instructors editing the same deck) -- the
+    caller is expected to have picked `name` via `new_cell_name` against
+    its own last-known cell set, but that set can be stale by the time
+    this actually writes.
+    """
+    path = Path(deck_path)
+    original = path.read_text()
+    spans = _cell_line_spans(original)
+    if name in spans:
+        raise SaveConflictError(f"cannot add cell {name!r}: a cell with that name already exists")
+
+    new_source = blank_cell_source(name)
+    # PEP 8 / this codebase's own convention: two blank lines between
+    # top-level defs (every existing deck in examples/ follows this) --
+    # match it so the appended cell doesn't look visually out of place
+    # next to cells the author wrote by hand.
+    stripped = original.rstrip("\n")
+    updated = stripped + "\n\n\n" + new_source
+
+    try:
+        ast.parse(updated)
+    except SyntaxError as exc:
+        raise InvalidSourceError(
+            f"appending cell {name!r} would leave {deck_path!r} with invalid Python syntax: {exc}"
+        ) from exc
+
+    path.write_text(updated)
+    return new_source
+
+
 def save_edits(deck_path: str, source_overrides: dict[str, str]) -> None:
     """Rewrite `deck_path` on disk, replacing each named cell's source
     text with its override. `source_overrides` maps cell name -> full
