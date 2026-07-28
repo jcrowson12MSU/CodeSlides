@@ -59,10 +59,21 @@ export function SlideShow({
   const revealed = revealOverrides[index] ?? slide?.reveal_code ?? false
 
   useEffect(() => {
+    // Cmd+Control+Left/Right only (TODO.md #19) -- deliberately *not*
+    // plain arrows/PageUp/PageDown anymore. Those collided with normal
+    // text-editing keys inside the code editor: moving the cursor left/
+    // right at the start/end of a line, or paging up/down through a long
+    // cell, would accidentally jump to a different slide instead. The
+    // modifier combo is never used for either of those inside CodeMirror,
+    // so it can be a global window-level listener with no risk of
+    // stealing a keystroke the editor needs.
     function handleKey(event: KeyboardEvent) {
-      if (event.key === 'ArrowRight' || event.key === 'PageDown') {
+      if (!event.metaKey || !event.ctrlKey) return
+      if (event.key === 'ArrowRight') {
+        event.preventDefault()
         setIndex((i) => Math.min(i + 1, slides.length - 1))
-      } else if (event.key === 'ArrowLeft' || event.key === 'PageUp') {
+      } else if (event.key === 'ArrowLeft') {
+        event.preventDefault()
         setIndex((i) => Math.max(i - 1, 0))
       }
     }
