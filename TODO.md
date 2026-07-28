@@ -369,7 +369,58 @@ reshape the plan below and are called out explicitly where they apply:
   2 regression tests in `test_kernel.py` for the graceful-syntax-error
   fix) plus the full existing suite, all green; ruff and oxlint clean.
 
-- [ ] **15. Write example decks for teaching scenarios**
+- [x] **15. Add a per-cell test editor (`ui.tests(...)`)**
+  Every cell can attach one `ui.tests("name", default=...)` element: a
+  second, unittest-like code editor whose only job is to check the
+  owning cell's result via plain `assert` statements. Not on the
+  original 17-item plan -- an ad-hoc feature request, added here so
+  it's tracked the same way as everything else.
+
+  Confirmed the scope rule with the user before building: the test
+  code's visible namespace is **dependency-based, not positional**
+  ("all cells above this one" was the user's first framing, but cell
+  file/UI order doesn't have to match dependency order -- slides
+  already reference cells out of file order -- so a positional rule
+  would sometimes show irrelevant cells and sometimes hide a real one).
+  Turned out to need no new graph traversal at all: since `_run_cells`
+  already executes cells in topological order into one shared
+  `session.namespace`, "what this cell's tests can see" is just that
+  namespace read immediately after the cell's own execution finishes
+  (see ARCHITECTURE.md section 3b).
+
+  `graph.py`/`kernel.py` are untouched by this (a `tests` element
+  contributes no reads/writes and creates no graph edges -- it only
+  observes, never produces). New: `deck.py`'s `TEST_KINDS`/`is_test`,
+  `ui.tests(...)`, `kernel.run_tests()` (plain `exec` against a *copy*
+  of the namespace -- test code must never mutate the cell's actual
+  results), `Kernel.on_tests_edited()` (re-runs just the test against
+  the current namespace, never the owning cell), a new `set_test_source`
+  websocket message (distinct from `set_ui_state` because it has a real
+  execution side effect, unlike notes editing), and auto-run wired into
+  `_run_cells` right after each cell's own execution -- skipped
+  entirely if the cell itself errored, reporting `{"status": "error",
+  "message": "cell did not run successfully"}` rather than leaving a
+  stale pass/fail badge from before a since-broken edit.
+
+  Frontend: a new `TestsElementWidget` (reuses the same CodeMirror-based
+  `CodeEditor` as the cell's own source) plus a pass/fail/error badge,
+  rendered as a third element category in `Cell.tsx` (neither input nor
+  viewer) alongside the existing two-column layout.
+
+  Verified end-to-end in a real browser: initial load shows a green
+  PASS badge; moving the `speed` slider (an upstream change, not a
+  direct edit to the test) auto-reruns the test and flips it to a red
+  FAIL badge with the assertion failure shown inline, *without* any
+  click on the test editor; editing the test source itself back to the
+  new expected value flips it back to PASS while confirming the owning
+  cell's own output never re-ran (proving `set_test_source` truly
+  doesn't touch the cell). Also checked the same deck in the Slides
+  view. 25 new backend tests (14 in a new `test_cell_tests_element.py`,
+  6 in `test_ws_handler.py`, 1 roundtrip case in `test_protocol.py`),
+  full suite green, ruff/oxlint clean, frontend bundle rebuilt and
+  committed.
+
+- [ ] **16. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that
@@ -378,7 +429,7 @@ reshape the plan below and are called out explicitly where they apply:
   elements — to validate the tool end-to-end and serve as templates for
   instructors.
 
-- [ ] **16. Add tests for kernel & dependency graph**
+- [ ] **17. Add tests for kernel & dependency graph**
   Unit tests for `ast`-based variable extraction, dependency graph
   construction/cycle detection, minimal-rerun-set computation, and
   integration tests that run a sample deck through the kernel and assert
@@ -386,7 +437,7 @@ reshape the plan below and are called out explicitly where they apply:
   specifically clones a cell/editor instance and asserts the two instances'
   namespaces and outputs never cross-contaminate.
 
-- [ ] **17. Polish, README, and packaging**
+- [ ] **18. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
   `pip install` (editable) / eventual PyPI packaging.

@@ -224,6 +224,63 @@ while still letting elements drive and reflect it:
   it get two independently-movable sliders, not one slider driving two
   displays.
 
+## 3b. Test elements: `ui.tests(...)`
+
+A cell can attach one `tests` element (`ui.tests(name, default=...)`): a
+second, unittest-like code editor whose only purpose is to check the
+cell's own result via plain `assert` statements (not a `unittest.TestCase`
+subclass — the goal is the lightest possible ceremony for a student
+writing a quick check, not a full test framework).
+
+**Scope is dependency-based, not positional.** The test code runs against
+the same effective namespace the owning cell's own body would see at the
+moment its execution finishes — its own return-named values plus
+everything its upstream dependencies wrote. Concretely, this is just
+`session.namespace` read immediately after the cell's own
+`execute_cell()` call returns, since `_run_cells` already executes cells
+in topological order and every cell writes its results into that same
+shared dict — no separate graph traversal is needed to compute "what this
+cell can see." This was a deliberate choice over a positional rule ("every
+cell above this one in the file"): cell order in the file/UI list doesn't
+have to match dependency order (slides can already reference cells out of
+file order), so a positional rule would sometimes show irrelevant cells
+and sometimes hide a real dependency. Dependency-based scope also means
+the test's visibility rule is identical to the rule that already
+determines everything else about a cell's execution — no new concept for
+an author to learn.
+
+**Never a graph node of its own.** Unlike an input element, a `tests`
+element's source has no `reads`/`writes` computed for it and creates no
+new dependency edges — it only *observes* the namespace, it never
+contributes to it. Editing test source (`set_test_source`, §5) re-runs
+just the test, immediately, against the namespace as it currently stands;
+it never re-runs the owning cell or recomputes the dependency graph,
+matching how `notes` editing is pure UI state with no re-run — except
+`set_test_source` *does* have a real side effect (a fresh pass/fail
+result), which is why it's its own message type rather than reusing
+`set_ui_state`.
+
+**Auto-run, not on-demand.** Every time the owning cell itself re-runs
+(an edit, a bound slider changing, `run_all`, an upstream dependency
+changing) its attached test automatically re-runs too, immediately after,
+against that run's fresh result — a live, always-on check as the
+instructor edits, not a separate "run tests" action to remember to click.
+If the cell's own execution fails, the test is not run at all (there is
+no valid fresh result to test against) and instead reports `"status":
+"error", "message": "cell did not run successfully"` — a stale "pass"
+left over from before a since-broken edit would be actively misleading.
+
+**Result shape**: `{"status": "pass" | "fail" | "error", "message": str}`.
+`"fail"` means an `AssertionError` (the code under test is wrong, or the
+test correctly caught something); `"error"` means anything else (a
+`NameError` referencing something the cell never defined, a `SyntaxError`
+from a still-in-progress test edit) — kept distinct from `"fail"` so an
+author can tell "my code is broken" apart from "my test doesn't even run."
+Runs in a **copy** of the namespace, never the namespace itself, so test
+code can never mutate a cell's actual results out from under it — the
+same isolation principle (§1) that already governs every other execution
+path in the kernel.
+
 ## 4. Process & concurrency model
 
 - One **kernel subprocess per Deck-serving server process**, not per

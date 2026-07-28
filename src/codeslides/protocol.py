@@ -94,6 +94,23 @@ class NavigateSlide:
 
 
 @dataclass
+class SetTestSource:
+    """A `tests` element's source was edited (ARCHITECTURE.md section 3b).
+    Unlike `notes_source` (pure UI state, no re-run at all) this *does*
+    trigger a run -- but only of the test code itself, against the owning
+    cell's current namespace, never a re-run of the cell or any graph
+    recomputation. Distinct from `set_ui_state` because it has real
+    execution side effects (a pass/fail result), which `set_ui_state`
+    explicitly never has."""
+
+    type: ClassVar[str] = "set_test_source"
+    session_id: str
+    cell_id: str
+    element_id: str
+    source: str
+
+
+@dataclass
 class SaveDeck:
     """Persist `session_id`'s current `instance="editable"` source
     overrides back into the deck's .py file on disk (ARCHITECTURE.md
@@ -202,7 +219,14 @@ class ErrorMessage:
 
 
 ClientMessage = (
-    EditCell | RunAll | SetElementValue | SetUiState | CloneSession | NavigateSlide | SaveDeck
+    EditCell
+    | RunAll
+    | SetElementValue
+    | SetUiState
+    | SetTestSource
+    | CloneSession
+    | NavigateSlide
+    | SaveDeck
 )
 ServerMessage = (
     CellStatus
@@ -222,6 +246,7 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
         RunAll,
         SetElementValue,
         SetUiState,
+        SetTestSource,
         CloneSession,
         NavigateSlide,
         SaveDeck,

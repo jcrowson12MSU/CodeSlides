@@ -269,6 +269,48 @@ def execute_cell(
     )
 
 
+def _find_tests_element(elements: list[Element]) -> str | None:
+    """Return the name of the cell's one `tests` element, if it has
+    exactly one -- same "ambiguous means none" rule as
+    `_find_turtle_canvas`, since a cell's test result has nowhere
+    well-defined to go if more than one `tests` element is attached."""
+    test_elements = [e.name for e in elements if e.kind == "tests"]
+    return test_elements[0] if len(test_elements) == 1 else None
+
+
+def run_tests(source: str, namespace: dict[str, object]) -> dict[str, str]:
+    """Run a `tests` element's source (ARCHITECTURE.md section 3b) as
+    plain Python statements -- ordinary `assert`s, not a
+    `unittest.TestCase` -- against `namespace` (the cell's own effective
+    namespace: its return-named values plus everything its upstream
+    dependencies wrote, i.e. `session.namespace` at the moment right
+    after the cell's own execution finishes). Returns a wire-ready
+    `{"status": "pass" | "fail" | "error", "message": str}` dict:
+
+    - "pass": every statement ran with no exception.
+    - "fail": an `AssertionError` was raised (a failed assertion).
+    - "error": anything else (a `NameError` referencing something the
+      cell never defined, a `SyntaxError` from an in-progress edit, etc)
+      -- distinguished from "fail" so an author can tell "the code under
+      test is wrong" apart from "the test itself doesn't even run."
+
+    Runs in a *copy* of `namespace`, never the namespace itself -- test
+    code must never be able to mutate a cell's actual results out from
+    under it (ARCHITECTURE.md section 1's isolation principle applies
+    just as much to a test run as to any other execution)."""
+    if not source.strip():
+        return {"status": "pass", "message": ""}
+    stdout, stderr = io.StringIO(), io.StringIO()
+    try:
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            exec(compile(source, filename="<test>", mode="exec"), {**namespace})  # noqa: S102 - trusted lesson code
+    except AssertionError as exc:
+        return {"status": "fail", "message": str(exc) or "assertion failed"}
+    except Exception:  # noqa: BLE001 - any other exception is a test-runner-level error, not a pass/fail
+        return {"status": "error", "message": traceback.format_exc()}
+    return {"status": "pass", "message": ""}
+
+
 class Kernel:
     """Owns a Deck's baseline dependency graph and runs edits against
     Sessions.
@@ -361,6 +403,26 @@ class Kernel:
         affected = graph.affected_by(cell_name)
         return self._run_cells(affected, session)
 
+    def on_tests_edited(
+        self, cell_name: str, element_name: str, source: str, session: Session
+    ) -> dict[str, str]:
+        """Handle an edit to a `tests` element's source (ARCHITECTURE.md
+        section 3b): store the new source and re-run it immediately
+        against the namespace as it currently stands -- i.e. against
+        whatever the owning cell's *last successful run* already put
+        there, not a fresh re-run of the cell itself. Unlike
+        `on_cell_edited`/`on_element_changed`, this never touches the
+        dependency graph or re-runs any cell: test source has no
+        reads/writes of its own to the graph, it only observes the
+        results other cells already produced. Returns the new
+        `{"status", "message"}` result dict directly (there's no
+        ExecutionResult here -- nothing was "executed" as a cell)."""
+        instance = session.instances[cell_name].elements[element_name]
+        instance.value = source
+        result = run_tests(source, session.namespace)
+        instance.content = result
+        return result
+
     def _effective_graph(self, session: Session) -> DependencyGraph:
         """The dependency graph as this Session currently sees it: the
         Deck's cells, with any of this Session's source overrides applied.
@@ -392,7 +454,8 @@ class Kernel:
             source = session.source_overrides.get(name, self.deck.cells[name].source)
             instance = session.instances[name]
             instance.status = "running"
-            result = execute_cell(name, source, session, elements=self.deck.cells[name].elements)
+            elements = self.deck.cells[name].elements
+            result = execute_cell(name, source, session, elements=elements)
             instance.status = result.status
             resolved = resolve_output(result.value) if result.status == "idle" else None
             instance.output = {
@@ -404,4 +467,19 @@ class Kernel:
             }
             instance.error = result.error
             results[name] = result
+
+            # Auto-run this cell's attached tests element (ARCHITECTURE.md
+            # section 3b), if it has one, against the namespace as it
+            # stands right after this cell's own run -- exactly what the
+            # cell's own body would have seen. Skipped on the cell's own
+            # error: there's no valid new result to test against, and
+            # running tests against a stale/partial namespace would just
+            # be misleading, not informative.
+            tests_element = _find_tests_element(elements)
+            if tests_element is not None:
+                test_instance = instance.elements[tests_element]
+                if result.status == "idle":
+                    test_instance.content = run_tests(test_instance.value or "", session.namespace)
+                else:
+                    test_instance.content = {"status": "error", "message": "cell did not run successfully"}
         return results

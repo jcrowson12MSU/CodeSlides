@@ -14,12 +14,14 @@ export interface SlideShowProps {
   cellMeta: Record<string, CellMeta>
   cellState: Record<string, CellState | undefined>
   elementValues: Record<string, Record<string, unknown>>
+  testSourceValues: Record<string, Record<string, string>>
   collapsedCells: Record<string, boolean>
   minimizedElements: Record<string, Record<string, boolean>>
   onRunCell: (cellId: string, source: string) => void
   onRunAll: () => void
   onSetElementValue: (cellId: string, elementId: string, value: unknown) => void
   onChangeNotesSource: (cellId: string, elementId: string, source: string) => void
+  onChangeTestSource: (cellId: string, elementId: string, source: string) => void
   onToggleCollapse: (cellId: string) => void
   onToggleMinimize: (cellId: string, elementId: string) => void
 }
@@ -37,12 +39,14 @@ export function SlideShow({
   cellMeta,
   cellState,
   elementValues,
+  testSourceValues,
   collapsedCells,
   minimizedElements,
   onRunCell,
   onRunAll,
   onSetElementValue,
   onChangeNotesSource,
+  onChangeTestSource,
   onToggleCollapse,
   onToggleMinimize,
 }: SlideShowProps) {
@@ -110,6 +114,7 @@ export function SlideShow({
               meta={meta}
               state={cellState[cellId]}
               elementValues={elementValues[cellId] ?? {}}
+              testSourceValues={testSourceValues[cellId] ?? {}}
               collapsed={collapsedCells[cellId] ?? false}
               minimizedElements={minimizedElements[cellId] ?? {}}
               hideCode={!revealed}
@@ -117,6 +122,7 @@ export function SlideShow({
               onRunAll={onRunAll}
               onSetElementValue={(elementId, value) => onSetElementValue(cellId, elementId, value)}
               onChangeNotesSource={(elementId, source) => onChangeNotesSource(cellId, elementId, source)}
+              onChangeTestSource={(elementId, source) => onChangeTestSource(cellId, elementId, source)}
               onToggleCollapse={() => onToggleCollapse(cellId)}
               onToggleMinimize={(elementId) => onToggleMinimize(cellId, elementId)}
             />

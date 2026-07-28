@@ -29,6 +29,7 @@ from codeslides.protocol import (
     ServerMessage,
     SessionCloned,
     SetElementValue,
+    SetTestSource,
     SetUiState,
 )
 from codeslides.serialization import InvalidSourceError, SaveConflictError, save_edits
@@ -98,12 +99,16 @@ def _element_output_messages(session: Session, results: dict[str, ExecutionResul
     this replaces, and it was wrong for any cell with more than one viewer
     element).
 
-    `notes` elements are handled separately: they're authored content
-    (`ui.notes(default=...)`), not computed from execution, so a
-    freshly-run cell with a `notes` element that received no explicit
-    write still gets its authored default surfaced -- otherwise the
-    frontend would have nothing to render until the author called a cs.*
-    helper that doesn't exist for notes."""
+    `notes` and `tests` elements are handled separately: neither is
+    written to via a `cs.*` call, so both need a fallback that surfaces
+    their current `content` directly. `notes` is authored content
+    (`ui.notes(default=...)`) that's never "computed" at all; `tests`
+    (ARCHITECTURE.md section 3b) *is* computed, but by `_run_cells`
+    calling `kernel.run_tests` directly and storing the result straight
+    onto `ElementInstance.content` -- not through the `cs.execution_context`
+    write-collection path every other viewer output goes through -- so
+    without this fallback a freshly-run cell's test result would never
+    reach the browser at all."""
     messages: list[ServerMessage] = []
     for cell_id, result in results.items():
         for write in result.element_writes:
@@ -121,7 +126,7 @@ def _element_output_messages(session: Session, results: dict[str, ExecutionResul
             continue
         written_names = {w.element_name for w in result.element_writes}
         for element in cell.elements:
-            if element.kind == "notes" and element.name not in written_names:
+            if element.kind in ("notes", "tests") and element.name not in written_names:
                 messages.append(
                     ElementOutput(
                         session_id=session.session_id,
@@ -217,6 +222,37 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
             if message.notes_source is not None:
                 instance.elements[message.element_id].content = message.notes_source
         return []
+
+    if isinstance(message, SetTestSource):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if message.cell_id not in session.instances:
+            return [
+                ErrorMessage(
+                    message="unknown cell", session_id=message.session_id, cell_id=message.cell_id
+                )
+            ]
+        instance = session.instances[message.cell_id]
+        if message.element_id not in instance.elements:
+            return [
+                ErrorMessage(
+                    message="unknown element",
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                )
+            ]
+        result = registry.kernel.on_tests_edited(
+            message.cell_id, message.element_id, message.source, session
+        )
+        return [
+            ElementOutput(
+                session_id=message.session_id,
+                cell_id=message.cell_id,
+                element_id=message.element_id,
+                content=result,
+            )
+        ]
 
     if isinstance(message, CloneSession):
         clone = registry.clone(message.source_session_id)

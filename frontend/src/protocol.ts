@@ -52,11 +52,20 @@ export interface SaveDeck {
   session_id: string
 }
 
+export interface SetTestSource {
+  type: 'set_test_source'
+  session_id: string
+  cell_id: string
+  element_id: string
+  source: string
+}
+
 export type ClientMessage =
   | EditCell
   | RunAll
   | SetElementValue
   | SetUiState
+  | SetTestSource
   | CloneSession
   | NavigateSlide
   | SaveDeck

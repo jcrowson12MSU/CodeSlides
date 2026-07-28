@@ -14,6 +14,7 @@ from codeslides.protocol import (
     SaveDeck,
     SessionCloned,
     SetElementValue,
+    SetTestSource,
     SetUiState,
 )
 from codeslides.ws_handler import SessionRegistry, handle_message
@@ -126,6 +127,111 @@ def test_set_ui_state_notes_source_updates_content_without_rerun():
     assert messages == []
     assert session.instances["cell_with_notes"].elements["n"].content == "edited"
     assert session.namespace == namespace_before
+
+
+def test_set_test_source_runs_the_test_and_emits_element_output():
+    app = App()
+
+    @app.cell(elements=[ui.tests("unit", default="assert x == 1")])
+    def cell_with_tests():
+        x = 1
+        return x
+
+    registry = SessionRegistry(kernel=Kernel(app.deck))
+    session = registry.create()
+    handle_message(registry, RunAll(session_id=session.session_id))
+    assert session.instances["cell_with_tests"].elements["unit"].content == {
+        "status": "pass",
+        "message": "",
+    }
+
+    messages = handle_message(
+        registry,
+        SetTestSource(
+            session_id=session.session_id,
+            cell_id="cell_with_tests",
+            element_id="unit",
+            source="assert x == 999, 'nope'",
+        ),
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ElementOutput)
+    assert messages[0].content == {"status": "fail", "message": "nope"}
+    assert session.instances["cell_with_tests"].elements["unit"].content == {
+        "status": "fail",
+        "message": "nope",
+    }
+    assert session.instances["cell_with_tests"].elements["unit"].value == "assert x == 999, 'nope'"
+
+
+def test_set_test_source_does_not_rerun_the_cell():
+    app = App()
+
+    @app.cell(elements=[ui.tests("unit", default="assert x == 1")])
+    def cell_with_tests():
+        x = 1
+        return x
+
+    registry = SessionRegistry(kernel=Kernel(app.deck))
+    session = registry.create()
+    handle_message(registry, RunAll(session_id=session.session_id))
+    namespace_before = dict(session.namespace)
+
+    handle_message(
+        registry,
+        SetTestSource(
+            session_id=session.session_id,
+            cell_id="cell_with_tests",
+            element_id="unit",
+            source="assert x == 1",
+        ),
+    )
+
+    assert session.namespace == namespace_before
+
+
+def test_set_test_source_unknown_element_produces_error_not_crash():
+    app = App()
+
+    @app.cell
+    def plain():
+        x = 1
+        return x
+
+    registry = SessionRegistry(kernel=Kernel(app.deck))
+    session = registry.create()
+
+    messages = handle_message(
+        registry,
+        SetTestSource(
+            session_id=session.session_id, cell_id="plain", element_id="does-not-exist", source="assert True"
+        ),
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_run_all_surfaces_a_fresh_cells_test_result_without_any_edit():
+    """A tests element's result must reach the browser on the very first
+    run_all too, not just after a later edit -- same fallback shape as
+    notes' authored-default surfacing."""
+    app = App()
+
+    @app.cell(elements=[ui.tests("unit", default="assert x == 1")])
+    def cell_with_tests():
+        x = 1
+        return x
+
+    registry = SessionRegistry(kernel=Kernel(app.deck))
+    session = registry.create()
+
+    messages = handle_message(registry, RunAll(session_id=session.session_id))
+
+    element_outputs = [m for m in messages if isinstance(m, ElementOutput) and m.element_id == "unit"]
+    assert len(element_outputs) == 1
+    assert element_outputs[0].content == {"status": "pass", "message": ""}
 
 
 def test_set_element_value_triggers_minimal_rerun():

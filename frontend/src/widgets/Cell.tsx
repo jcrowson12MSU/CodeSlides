@@ -2,8 +2,9 @@ import type { CellState } from '../deckState'
 import { CellOutputView } from './CellOutputView'
 import { CodeEditor } from './CodeEditor'
 import { ElementWidget } from './ElementWidget'
+import { TestsElementWidget } from './TestsElementWidget'
 import { ViewerElementWidget } from './ViewerElementWidget'
-import { isInputElement, isViewerElement, type ElementMeta } from './elementMeta'
+import { isInputElement, isTestElement, isTestResult, isViewerElement, type ElementMeta } from './elementMeta'
 
 export interface CellMeta {
   instance: 'static' | 'editable'
@@ -16,6 +17,14 @@ export interface CellProps {
   meta: CellMeta
   state: CellState | undefined
   elementValues: Record<string, unknown>
+  /** A `tests` element's current editable source, keyed by element name
+   * (ARCHITECTURE.md section 3b) -- separate from elementValues since a
+   * test's source is edited like notes' content (a local echo the parent
+   * maintains), not set via set_element_value. Falls back to the
+   * element's static `config.default` (from GET /api/deck) until the
+   * user's first edit, same as ElementWidget already does for sliders/
+   * text inputs. */
+  testSourceValues: Record<string, string>
   collapsed: boolean
   minimizedElements: Record<string, boolean>
   /** Hide just the code editor while still showing elements/output --
@@ -29,6 +38,7 @@ export interface CellProps {
   onRunAll: (source: string) => void
   onSetElementValue: (elementId: string, value: unknown) => void
   onChangeNotesSource: (elementId: string, source: string) => void
+  onChangeTestSource: (elementId: string, source: string) => void
   onToggleCollapse: () => void
   onToggleMinimize: (elementId: string) => void
 }
@@ -54,6 +64,7 @@ export function Cell({
   meta,
   state,
   elementValues,
+  testSourceValues,
   collapsed,
   minimizedElements,
   hideCode = false,
@@ -61,11 +72,13 @@ export function Cell({
   onRunAll,
   onSetElementValue,
   onChangeNotesSource,
+  onChangeTestSource,
   onToggleCollapse,
   onToggleMinimize,
 }: CellProps) {
   const inputElements = meta.elements.filter((e) => isInputElement(e.kind))
   const viewerElements = meta.elements.filter((e) => isViewerElement(e.kind))
+  const testElements = meta.elements.filter((e) => isTestElement(e.kind))
 
   return (
     <div className={`cs-cell ${collapsed ? 'cs-cell-collapsed' : ''}`}>
@@ -148,6 +161,40 @@ export function Cell({
               data={state?.data}
               value={state?.value}
             />
+
+            {testElements.length > 0 && (
+              <div className="cs-cell-elements">
+                {testElements.map((element) => {
+                  const content = state?.elementContent[element.name]
+                  return minimizedElements[element.name] ? (
+                    <MinimizedElement
+                      key={element.name}
+                      elementId={element.name}
+                      onToggleMinimize={() => onToggleMinimize(element.name)}
+                    />
+                  ) : (
+                    <div className="cs-element-wrapper" key={element.name}>
+                      <TestsElementWidget
+                        elementId={element.name}
+                        source={
+                          testSourceValues[element.name] ?? String(element.config.default ?? '')
+                        }
+                        result={isTestResult(content) ? content : null}
+                        onChangeSource={(source) => onChangeTestSource(element.name, source)}
+                      />
+                      <button
+                        type="button"
+                        className="cs-minimize-toggle"
+                        onClick={() => onToggleMinimize(element.name)}
+                        aria-label={`Minimize ${element.name}`}
+                      >
+                        {'▾'}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}

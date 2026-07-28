@@ -39,12 +39,24 @@ def notes(name: str, *, default: str = "") -> Element:
     return Element(name=name, kind="notes", config={"default": default})
 
 
+def tests(name: str, *, default: str = "") -> Element:
+    """Attach a second, unittest-like code editor to a cell (ARCHITECTURE.md
+    section 3b). `default` is plain Python -- ordinary `assert` statements,
+    not a `unittest.TestCase` subclass -- run automatically every time the
+    cell itself re-runs, against that run's own effective namespace (the
+    cell's return-named values plus everything its own upstream
+    dependencies wrote), exactly like the cell's own body would see them.
+    """
+    return Element(name=name, kind="tests", config={"default": default})
+
+
 __all__ = [
     "button",
     "iframe",
     "image",
     "notes",
     "slider",
+    "tests",
     "text_input",
     "turtle_canvas",
 ]

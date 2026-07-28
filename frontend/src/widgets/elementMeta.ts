@@ -10,6 +10,10 @@ export interface ElementMeta {
 
 const INPUT_KINDS = new Set(['slider', 'button', 'text_input'])
 const VIEWER_KINDS = new Set(['image', 'iframe', 'notes', 'turtle_canvas'])
+// `tests` (ARCHITECTURE.md section 3b) is neither: its source is edited
+// like notes, but it's actually executed and reports pass/fail rather
+// than receiving arbitrary output a cell chooses to write.
+const TEST_KINDS = new Set(['tests'])
 
 export function isInputElement(kind: string): boolean {
   return INPUT_KINDS.has(kind)
@@ -17,4 +21,24 @@ export function isInputElement(kind: string): boolean {
 
 export function isViewerElement(kind: string): boolean {
   return VIEWER_KINDS.has(kind)
+}
+
+export function isTestElement(kind: string): boolean {
+  return TEST_KINDS.has(kind)
+}
+
+// A `tests` element's result (ARCHITECTURE.md section 3b), mirroring
+// codeslides.kernel.run_tests's wire shape exactly.
+export interface TestResult {
+  status: 'pass' | 'fail' | 'error'
+  message: string
+}
+
+export function isTestResult(content: unknown): content is TestResult {
+  return (
+    typeof content === 'object' &&
+    content !== null &&
+    'status' in content &&
+    typeof (content as { status: unknown }).status === 'string'
+  )
 }

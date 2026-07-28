@@ -16,6 +16,12 @@ from typing import Any
 # output the cell produces (ARCHITECTURE.md section 3a).
 INPUT_KINDS = frozenset({"slider", "button", "text_input"})
 VIEWER_KINDS = frozenset({"turtle_canvas", "image", "iframe", "notes"})
+# `tests` is neither: its source is authored/edited like `notes`, but
+# unlike any viewer it's actually executed -- against the cell's own
+# result -- and reports pass/fail rather than receiving arbitrary output
+# a cell chooses to write. See ARCHITECTURE.md section 3b and
+# kernel.py's `run_tests`.
+TEST_KINDS = frozenset({"tests"})
 
 
 @dataclass
@@ -29,7 +35,7 @@ class Element:
     config: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.kind not in INPUT_KINDS | VIEWER_KINDS:
+        if self.kind not in INPUT_KINDS | VIEWER_KINDS | TEST_KINDS:
             raise ValueError(f"unknown element kind: {self.kind!r}")
 
     @property
@@ -39,6 +45,10 @@ class Element:
     @property
     def is_viewer(self) -> bool:
         return self.kind in VIEWER_KINDS
+
+    @property
+    def is_test(self) -> bool:
+        return self.kind in TEST_KINDS
 
 
 @dataclass

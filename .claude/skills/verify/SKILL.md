@@ -239,3 +239,28 @@ Then drive the served app with a script (see the two written during the
   standalone use -- verified by running both the standalone cell and the
   caller cell and diffing their recorded command-list lengths, not just
   eyeballing one screenshot.
+- `ui.tests(...)` elements (ARCHITECTURE.md section 3b) auto-run right
+  after the owning cell's own execution, wired directly into
+  `Kernel._run_cells` -- if you're testing a change anywhere near cell
+  execution, remember a cell with a `tests` element now does *two*
+  things per run, not one, and both need checking. The test's result
+  reaches the browser via the same `_element_output_messages` fallback
+  path as `notes` (surfacing `content` even though nothing went through
+  `cs.execution_context`'s write-collection list) -- if you add a new
+  element kind that's populated outside a `cs.*` call, check whether it
+  also needs adding to that fallback's kind check, or its content will
+  silently never reach the frontend on a fresh run.
+- Editing a `tests` element's source (`set_test_source`) must NOT
+  re-run the owning cell -- verified this holds in a real browser by
+  editing the test back to a passing assertion and confirming the
+  cell's own `cell_output`/status never changed, not just checking the
+  badge flipped to pass. It's an easy regression to introduce if
+  `on_tests_edited` ever gets refactored to go through
+  `_effective_graph`/`_run_cells` "for consistency" -- it deliberately
+  doesn't, since test source has no reads/writes and creates no graph
+  edges.
+- A `tests` element's *editable source* and its *pass/fail result* are
+  two different fields (`ElementInstance.value` and `.content`
+  respectively, the reverse of how much of the rest of the codebase
+  treats "value" vs. "content") -- don't assume `content` holds
+  everything about a `tests` element just because it does for `notes`.

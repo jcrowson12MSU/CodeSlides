@@ -49,6 +49,14 @@ function App() {
   // never a re-run), so without this the textarea would show stale
   // content until some unrelated cell_output happened to refresh it.
   const [notesOverrides, setNotesOverrides] = useState<Record<string, Record<string, string>>>({})
+  // Same shape as notesOverrides, for a `tests` element's editable source
+  // (ARCHITECTURE.md section 3b) -- set_test_source does get a server
+  // reply (a fresh pass/fail result via element_output), but that reply
+  // only carries the *result*, not an echo of the source itself, so the
+  // editor still needs its own local echo the same way notes does.
+  const [testSourceOverrides, setTestSourceOverrides] = useState<Record<string, Record<string, string>>>(
+    {},
+  )
   // Collapse/minimize (ARCHITECTURE.md section 8): pure UI state, kept
   // client-side same as notesOverrides above, since set_ui_state produces
   // no server reply to sync from either.
@@ -129,6 +137,21 @@ function App() {
       cell_id: cellId,
       element_id: elementId,
       notes_source: source,
+    })
+  }
+
+  function handleChangeTestSource(cellId: string, elementId: string, source: string) {
+    if (!sessionId) return
+    setTestSourceOverrides((prev) => ({
+      ...prev,
+      [cellId]: { ...prev[cellId], [elementId]: source },
+    }))
+    send({
+      type: 'set_test_source',
+      session_id: sessionId,
+      cell_id: cellId,
+      element_id: elementId,
+      source,
     })
   }
 
@@ -213,12 +236,14 @@ function App() {
               meta={meta}
               state={mergedCellState[cellId]}
               elementValues={elementValues[cellId] ?? {}}
+              testSourceValues={testSourceOverrides[cellId] ?? {}}
               collapsed={collapsedCells[cellId] ?? false}
               minimizedElements={minimizedElements[cellId] ?? {}}
               onRunCell={(source) => handleRunCell(cellId, source)}
               onRunAll={handleRunAll}
               onSetElementValue={(elementId, value) => handleSetElementValue(cellId, elementId, value)}
               onChangeNotesSource={(elementId, source) => handleChangeNotesSource(cellId, elementId, source)}
+              onChangeTestSource={(elementId, source) => handleChangeTestSource(cellId, elementId, source)}
               onToggleCollapse={() => handleToggleCollapse(cellId)}
               onToggleMinimize={(elementId) => handleToggleMinimize(cellId, elementId)}
             />
@@ -231,12 +256,14 @@ function App() {
           cellMeta={deck.cells}
           cellState={mergedCellState}
           elementValues={elementValues}
+          testSourceValues={testSourceOverrides}
           collapsedCells={collapsedCells}
           minimizedElements={minimizedElements}
           onRunCell={handleRunCell}
           onRunAll={handleRunAll}
           onSetElementValue={handleSetElementValue}
           onChangeNotesSource={handleChangeNotesSource}
+          onChangeTestSource={handleChangeTestSource}
           onToggleCollapse={handleToggleCollapse}
           onToggleMinimize={handleToggleMinimize}
         />

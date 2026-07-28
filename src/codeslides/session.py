@@ -28,8 +28,16 @@ class ElementInstance:
     `value` holds an input element's current value (slider position,
     button pressed-count, text input contents); `content` holds a viewer
     element's last-rendered output (image bytes/path, iframe src, turtle
-    frames, notes markdown). `minimized` is pure UI state (ARCHITECTURE.md
-    section 8) and never participates in reactivity.
+    frames, notes markdown). A `tests` element (ARCHITECTURE.md section
+    3b) uses both, but for different things than an input element does:
+    `value` holds its editable test *source* (mirroring how `value` means
+    "the thing the user is currently controlling"), while `content` holds
+    the last run's `{"status": "pass"|"fail"|"error", "message": str}`
+    result (mirroring how `content` means "server-computed output"),
+    keeping source and result as clearly distinct fields rather than
+    overloading one the way `notes` overloads `content` for both its
+    source and its "rendered" state. `minimized` is pure UI state
+    (ARCHITECTURE.md section 8) and never participates in reactivity.
     """
 
     value: Any = None
@@ -87,7 +95,10 @@ class Session:
                     # from cell execution -- seed `content`, not `value`,
                     # so the notes viewer has something to render before
                     # any cs.* write or edit happens (ARCHITECTURE.md
-                    # section 3a).
+                    # section 3a). `tests` elements seed `value` (their
+                    # default source, same as every other non-notes kind
+                    # already does) -- `content` (the pass/fail result)
+                    # starts empty since no run has happened yet.
                     ElementInstance(value=default, content=default if element.kind == "notes" else None),
                 )
 

@@ -277,6 +277,65 @@
   margin-bottom: 0;
 }
 
+.cs-tests-viewer {
+  border: 1px solid #eee;
+  border-radius: 4px;
+  padding: 0.5rem;
+}
+
+.cs-tests-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.cs-tests-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 3px;
+  padding: 0.1rem 0.5rem;
+  text-transform: uppercase;
+}
+
+.cs-tests-badge-pass {
+  background: #e6f4ea;
+  color: #2a8f4d;
+}
+
+.cs-tests-badge-fail {
+  background: #fdecea;
+  color: #c0392b;
+}
+
+.cs-tests-badge-error {
+  background: #fdf3e3;
+  color: #b8860b;
+}
+
+.cs-tests-editor .cm-editor {
+  max-height: 200px;
+}
+
+.cs-tests-message {
+  margin: 0.35rem 0 0;
+  padding: 0.5rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.cs-tests-message-fail {
+  background: #fdecea;
+  color: #c0392b;
+}
+
+.cs-tests-message-error {
+  background: #fdf3e3;
+  color: #8a6100;
+}
+
 .cs-element-wrapper {
   display: flex;
   align-items: flex-start;
