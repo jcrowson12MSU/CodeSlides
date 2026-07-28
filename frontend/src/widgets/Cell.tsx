@@ -175,9 +175,24 @@ export function Cell({
             />
           )}
 
+          {/* `.cs-cell-code`/`.cs-cell-side` both use `flex: 0 0 auto`
+              (App.css) so the drag-driven inline `flex-basis` is the
+              actual rendered width, not just a starting point flexbox is
+              free to redistribute -- but that means `.cs-cell-side`
+              *must* always get an explicit basis, including when
+              `hideCode` hides the other column entirely. Leaving it
+              `undefined` here previously left the basis at its CSS
+              default of `auto`, which sizes a 0-grow flex item to its
+              *content's* intrinsic width -- normally harmless, but a
+              cs.image() data URI or any other long unbroken string in
+              CellOutputView has no wrap points, so the container
+              expanded to fit it and blew the whole page out to
+              thousands of pixels wide (reported bug: slide 2 "Image
+              Preview" with code hidden). `100%` here means "the only
+              column, fill the row." */}
           <div
             className="cs-cell-side"
-            style={!hideCode ? { flexBasis: `${(1 - codeFraction) * 100}%` } : undefined}
+            style={{ flexBasis: hideCode ? '100%' : `${(1 - codeFraction) * 100}%` }}
           >
             {meta.elements.length > 0 && (
               <div className="cs-cell-elements">
