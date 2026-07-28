@@ -455,7 +455,7 @@ body.cs-resizing {
   color: #c92a2a;
 }
 
-.cs-view-toggle button {
+.cs-view-toggle > button {
   border: 1px solid #ccc;
   background: white;
   border-radius: 4px;
@@ -464,10 +464,48 @@ body.cs-resizing {
   cursor: pointer;
 }
 
-.cs-view-toggle-active {
-  background: #f0e9ff !important;
-  border-color: #aa3bff !important;
+/* TODO.md #25: a single toggle switching between Cells/Slides, replacing
+   the previous two independent buttons -- one control, one click,
+   always flips to the other mode (never "already active, does
+   nothing"). A pill-shaped switch with both labels always visible and a
+   sliding thumb behind whichever one is active, so the current mode is
+   still obvious at a glance, same as the old active-button highlight
+   was. */
+.cs-view-mode-switch {
+  position: relative;
+  display: inline-flex;
+  border: 1px solid #ccc;
+  border-radius: 999px;
+  padding: 2px;
+  background: #f2f2f2;
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.cs-view-mode-option {
+  position: relative;
+  z-index: 1;
+  padding: 0.3rem 0.9rem;
+  color: #666;
+  transition: color 0.15s ease;
+}
+
+.cs-view-mode-option-active {
   color: #6b21c9;
+  font-weight: 600;
+}
+
+.cs-view-mode-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  bottom: 2px;
+  width: calc(50% - 2px);
+  border-radius: 999px;
+  background: #f0e9ff;
+  border: 1px solid #aa3bff;
+  transition: transform 0.15s ease;
 }
 
 .cs-slideshow-toolbar {

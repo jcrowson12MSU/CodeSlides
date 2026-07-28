@@ -779,7 +779,33 @@ reshape the plan below and are called out explicitly where they apply:
   state unchanged) and clean scrolling behavior underneath the pinned
   title. No backend changes; frontend build/oxlint clean.
 
-- [ ] **25. Write example decks for teaching scenarios**
+- [x] **25. Structure2.**
+  Change the buttons for slides and cells to a single toggle in both
+  views that toggles between the two modes.
+
+  Replaced the two independent "Cells"/"Slides" buttons (each its own
+  `<button>`, one highlighted via a CSS class matching `viewMode`) with
+  one `role="switch"` button that always flips to the other mode on
+  click -- both labels stay visible inside it, with a sliding thumb
+  behind whichever is currently active, so the current mode is still
+  obvious at a glance without two separately-clickable targets. No
+  change to the underlying `viewMode` state model (`'cells' | 'slides'`)
+  or to Save/+Add cell, which stay as their own separate buttons next to
+  the switch -- moving *those* to the top-right is explicitly item 27's
+  scope, not this one.
+
+  Verified in a real browser via Playwright: confirmed there's exactly
+  one `.cs-view-mode-switch` element (not two separate buttons anymore);
+  clicking it toggles `aria-checked` and the rendered view (cell count
+  vs. slide count) correctly both directions; confirmed keyboard access
+  via native button semantics (Enter and Space both toggle it, no extra
+  wiring needed); confirmed a rapid double-click nets out to the
+  original state (no double-toggle race). Screenshots confirm the pill-
+  shaped switch renders correctly in both the highlighted-Cells and
+  highlighted-Slides states. No backend changes; frontend build/oxlint
+  clean.
+
+- [ ] **26. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that

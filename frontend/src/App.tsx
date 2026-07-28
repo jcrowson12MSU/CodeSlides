@@ -315,17 +315,22 @@ function App() {
         <div className="cs-view-toggle">
           <button
             type="button"
-            className={viewMode === 'cells' ? 'cs-view-toggle-active' : ''}
-            onClick={() => setViewMode('cells')}
+            className="cs-view-mode-switch"
+            role="switch"
+            aria-checked={viewMode === 'slides'}
+            aria-label={`Switch to ${viewMode === 'cells' ? 'Slides' : 'Cells'} view`}
+            onClick={() => setViewMode(viewMode === 'cells' ? 'slides' : 'cells')}
           >
-            Cells
-          </button>
-          <button
-            type="button"
-            className={viewMode === 'slides' ? 'cs-view-toggle-active' : ''}
-            onClick={() => setViewMode('slides')}
-          >
-            Slides
+            <span className={`cs-view-mode-option ${viewMode === 'cells' ? 'cs-view-mode-option-active' : ''}`}>
+              Cells
+            </span>
+            <span className={`cs-view-mode-option ${viewMode === 'slides' ? 'cs-view-mode-option-active' : ''}`}>
+              Slides
+            </span>
+            <span
+              className="cs-view-mode-thumb"
+              style={{ transform: viewMode === 'slides' ? 'translateX(100%)' : 'translateX(0)' }}
+            />
           </button>
           <button type="button" disabled={!sessionId || saving} onClick={handleSaveDeck}>
             {saving ? 'Saving…' : 'Save'}
