@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react'
 import type { CellState } from '../deckState'
 import { CellOutputView } from './CellOutputView'
 import { CodeEditor } from './CodeEditor'
+import { EditCellPanel } from './EditCellPanel'
 import { ElementWidget } from './ElementWidget'
 import { TestsElementWidget } from './TestsElementWidget'
 import { ViewerElementWidget } from './ViewerElementWidget'
@@ -49,6 +50,17 @@ export interface CellProps {
   onChangeTestSource: (elementId: string, source: string) => void
   onToggleCollapse: () => void
   onToggleMinimize: (elementId: string) => void
+  /** TODO.md #22's edit button: rename the cell's own identity and add/
+   * remove attached elements. Both write to the deck's .py file
+   * immediately -- see EditCellPanel's own docstring for why there's no
+   * separate Save step, matching the add-cell button's precedent. */
+  onRenameCell: (newName: string) => void
+  onAddElement: (name: string, kind: string, config: Record<string, unknown>) => void
+  onRemoveElement: (elementName: string) => void
+  /** Set when the last rename/add-element/remove-element for this cell
+   * was rejected (e.g. renaming a cell another cell calls directly by
+   * name) -- shown inline in the edit panel. */
+  editError?: string
 }
 
 function firstLine(source: string): string {
@@ -83,7 +95,12 @@ export function Cell({
   onChangeTestSource,
   onToggleCollapse,
   onToggleMinimize,
+  onRenameCell,
+  onAddElement,
+  onRemoveElement,
+  editError,
 }: CellProps) {
+  const [editing, setEditing] = useState(false)
   // The code/elements split is per-cell, kept as local component state
   // (not lifted to App.tsx) -- it's pure display layout with no server
   // round-trip and no effect on execution/output, so it doesn't need the
@@ -145,7 +162,28 @@ export function Cell({
         {state && <span className={`cs-status cs-status-${state.status}`}>{state.status}</span>}
         {meta.instance === 'static' && <span className="cs-badge-static">read-only</span>}
         {collapsed && <span className="cs-collapsed-preview">{firstLine(meta.source)}</span>}
+        {!collapsed && (
+          <button
+            type="button"
+            className="cs-edit-cell-toggle"
+            onClick={() => setEditing((prev) => !prev)}
+            aria-label={editing ? `Close ${cellId}'s edit panel` : `Edit ${cellId}`}
+          >
+            {editing ? 'Close' : 'Edit'}
+          </button>
+        )}
       </div>
+
+      {!collapsed && editing && (
+        <EditCellPanel
+          cellId={cellId}
+          elements={meta.elements}
+          onRename={onRenameCell}
+          onAddElement={onAddElement}
+          onRemoveElement={onRemoveElement}
+          error={editError}
+        />
+      )}
 
       {!collapsed && (
         <div className="cs-cell-body" ref={bodyRef}>

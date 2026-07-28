@@ -62,6 +62,12 @@ function App() {
   // no server reply to sync from either.
   const [collapsedCells, setCollapsedCells] = useState<Record<string, boolean>>({})
   const [minimizedElements, setMinimizedElements] = useState<Record<string, Record<string, boolean>>>({})
+  // Feedback for a rejected rename_cell/add_element/remove_element (TODO.md
+  // #22) -- e.g. renaming a cell another cell calls directly by name.
+  // Keyed by cell_id since ErrorMessage carries one, so each cell's edit
+  // panel only shows the error that's actually about it. Cleared on the
+  // next edit-panel action for that cell.
+  const [editErrors, setEditErrors] = useState<Record<string, string>>({})
   const { sessionId, connected, messages, send } = useCodeSlidesSocket()
   const cellState = useDeckState(messages)
 
@@ -99,31 +105,53 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages])
 
-  // `cell_added` is never guaranteed to be the *last* message in a batch --
-  // the server also sends the new cell's own cell_status/cell_output (and
+  // `cell_added`/`cell_renamed`/`element_added`/`element_removed` are
+  // never guaranteed to be the *last* message in a batch -- the server
+  // also sends the affected cell's own cell_status/cell_output (and
   // element_output, if it has viewer elements) right after it, all as
-  // separate websocket frames that land in `messages` before this effect's
-  // next run. So this scans every message added since the last run, not
-  // just messages[messages.length - 1].
+  // separate websocket frames that land in `messages` before this
+  // effect's next run. So this scans every message added since the last
+  // run, not just messages[messages.length - 1].
   const processedMessageCount = useRef(0)
   useEffect(() => {
     const newMessages = messages.slice(processedMessageCount.current)
     processedMessageCount.current = messages.length
-    const added = newMessages.filter((m) => m.type === 'cell_added')
-    if (added.length === 0) return
-    // The new cell is written to disk immediately (TODO.md #21) -- merge it
-    // into the local deck.cells so it renders without a page reload/refetch
-    // of /api/deck. Scoped like the CLI file-watcher's reload: this only
-    // updates *this* browser tab's view; other already-open tabs pick it up
-    // on their own next refresh/reconnect.
+    if (newMessages.length === 0) return
+
     setDeck((prev) => {
       if (!prev) return prev
-      const cells = { ...prev.cells }
-      for (const msg of added) {
-        cells[msg.cell_id] = { instance: msg.instance, source: msg.source, elements: msg.elements }
+      let cells = prev.cells
+      let changed = false
+      for (const msg of newMessages) {
+        if (msg.type === 'cell_added' || msg.type === 'element_added' || msg.type === 'element_removed') {
+          if (!changed) cells = { ...cells }
+          changed = true
+          cells[msg.cell_id] = { instance: msg.instance, source: msg.source, elements: msg.elements }
+        } else if (msg.type === 'cell_renamed') {
+          if (!changed) cells = { ...cells }
+          changed = true
+          delete cells[msg.old_cell_id]
+          cells[msg.cell_id] = { instance: msg.instance, source: msg.source, elements: msg.elements }
+        }
       }
-      return { ...prev, cells }
+      return changed ? { ...prev, cells } : prev
     })
+
+    const newErrors: Array<{ cell_id: string; message: string }> = []
+    for (const m of newMessages) {
+      if (m.type === 'error' && m.cell_id) {
+        newErrors.push({ cell_id: m.cell_id, message: m.message })
+      }
+    }
+    if (newErrors.length > 0) {
+      setEditErrors((prev) => {
+        const next = { ...prev }
+        for (const err of newErrors) {
+          next[err.cell_id] = err.message
+        }
+        return next
+      })
+    }
   }, [messages])
 
   function handleSetElementValue(cellId: string, elementId: string, value: unknown) {
@@ -155,6 +183,40 @@ function App() {
   function handleAddCell() {
     if (!sessionId) return
     send({ type: 'add_cell', session_id: sessionId })
+  }
+
+  function clearEditError(cellId: string) {
+    setEditErrors((prev) => {
+      if (!(cellId in prev)) return prev
+      const next = { ...prev }
+      delete next[cellId]
+      return next
+    })
+  }
+
+  function handleRenameCell(cellId: string, newName: string) {
+    if (!sessionId) return
+    clearEditError(cellId)
+    send({ type: 'rename_cell', session_id: sessionId, cell_id: cellId, new_name: newName })
+  }
+
+  function handleAddElement(cellId: string, name: string, kind: string, config: Record<string, unknown>) {
+    if (!sessionId) return
+    clearEditError(cellId)
+    send({
+      type: 'add_element',
+      session_id: sessionId,
+      cell_id: cellId,
+      element_name: name,
+      kind,
+      config,
+    })
+  }
+
+  function handleRemoveElement(cellId: string, elementName: string) {
+    if (!sessionId) return
+    clearEditError(cellId)
+    send({ type: 'remove_element', session_id: sessionId, cell_id: cellId, element_name: elementName })
   }
 
   function handleChangeNotesSource(cellId: string, elementId: string, source: string) {
@@ -281,6 +343,10 @@ function App() {
               onChangeTestSource={(elementId, source) => handleChangeTestSource(cellId, elementId, source)}
               onToggleCollapse={() => handleToggleCollapse(cellId)}
               onToggleMinimize={(elementId) => handleToggleMinimize(cellId, elementId)}
+              onRenameCell={(newName) => handleRenameCell(cellId, newName)}
+              onAddElement={(name, kind, config) => handleAddElement(cellId, name, kind, config)}
+              onRemoveElement={(elementName) => handleRemoveElement(cellId, elementName)}
+              editError={editErrors[cellId]}
             />
           ))}
         </section>
@@ -301,6 +367,10 @@ function App() {
           onChangeTestSource={handleChangeTestSource}
           onToggleCollapse={handleToggleCollapse}
           onToggleMinimize={handleToggleMinimize}
+          onRenameCell={handleRenameCell}
+          onAddElement={handleAddElement}
+          onRemoveElement={handleRemoveElement}
+          editErrors={editErrors}
         />
       )}
     </main>

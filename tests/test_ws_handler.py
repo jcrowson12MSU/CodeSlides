@@ -3,15 +3,21 @@ from codeslides.kernel import Kernel
 from codeslides.loader import load_deck
 from codeslides.protocol import (
     AddCell,
+    AddElement,
     CellAdded,
     CellOutput,
+    CellRenamed,
     CellStatus,
     CloneSession,
     DeckSaved,
     EditCell,
+    ElementAdded,
     ElementOutput,
+    ElementRemoved,
     ErrorMessage,
     NavigateSlide,
+    RemoveElement,
+    RenameCell,
     RunAll,
     SaveDeck,
     SessionCloned,
@@ -638,3 +644,147 @@ def test_add_cell_does_not_affect_a_different_sessions_instances(tmp_path):
 
     assert added.cell_id in session_a.instances
     assert added.cell_id not in session_b.instances
+
+
+def test_rename_cell_emits_cell_renamed_and_writes_to_disk(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(
+        registry, RenameCell(session_id=session.session_id, cell_id="live_demo", new_name="coding_demo")
+    )
+
+    assert isinstance(messages[0], CellRenamed)
+    renamed = messages[0]
+    assert renamed.old_cell_id == "live_demo"
+    assert renamed.cell_id == "coding_demo"
+    assert "def coding_demo(speed):" in path.read_text()
+    assert "coding_demo" in registry.kernel.deck.cells
+    assert "coding_demo" in session.instances
+    assert "live_demo" not in session.instances
+
+
+def test_rename_cell_unknown_session_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+
+    messages = handle_message(
+        registry, RenameCell(session_id="does-not-exist", cell_id="live_demo", new_name="coding_demo")
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_rename_cell_blocked_when_referenced_produces_error_not_crash(tmp_path):
+    path = tmp_path / "deck.py"
+    path.write_text(
+        "from codeslides import App\n\napp = App()\n\n"
+        "@app.cell\ndef drawSquare():\n    x = 1\n    return x\n\n"
+        "@app.cell\ndef drawSquares():\n    result = drawSquare() + 1\n    return result\n"
+    )
+    deck = load_deck(str(path))
+    registry = SessionRegistry(kernel=Kernel(deck, deck_path=str(path)))
+    session = registry.create()
+
+    messages = handle_message(
+        registry, RenameCell(session_id=session.session_id, cell_id="drawSquare", new_name="draw_one_square")
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+    assert "def drawSquare()" in path.read_text()
+
+
+def test_add_element_emits_element_added_and_writes_to_disk(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(
+        registry,
+        AddElement(
+            session_id=session.session_id,
+            cell_id="setup",
+            element_name="multiplier",
+            kind="slider",
+            config={"min": 1, "max": 5, "default": 2},
+        ),
+    )
+
+    assert isinstance(messages[0], ElementAdded)
+    added = messages[0]
+    assert added.cell_id == "setup"
+    assert [e["name"] for e in added.elements] == ["multiplier"]
+    assert "ui.slider('multiplier'" in path.read_text()
+    assert "multiplier" in session.instances["setup"].elements
+
+
+def test_add_element_unknown_session_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+
+    messages = handle_message(
+        registry,
+        AddElement(
+            session_id="does-not-exist", cell_id="setup", element_name="multiplier", kind="slider", config={"min": 1, "max": 5}
+        ),
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_add_element_duplicate_name_produces_error_not_crash(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    before = path.read_text()
+
+    messages = handle_message(
+        registry,
+        AddElement(
+            session_id=session.session_id, cell_id="live_demo", element_name="speed", kind="button", config={}
+        ),
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+    assert path.read_text() == before
+
+
+def test_remove_element_emits_element_removed_and_writes_to_disk(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(
+        registry, RemoveElement(session_id=session.session_id, cell_id="live_demo", element_name="speed")
+    )
+
+    assert isinstance(messages[0], ElementRemoved)
+    removed = messages[0]
+    assert removed.cell_id == "live_demo"
+    assert removed.elements == []
+    assert "ui.slider" not in path.read_text()
+    assert "speed" not in session.instances["live_demo"].elements
+
+
+def test_remove_element_unknown_session_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+
+    messages = handle_message(
+        registry, RemoveElement(session_id="does-not-exist", cell_id="live_demo", element_name="speed")
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_remove_element_unknown_element_produces_error_not_crash(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    before = path.read_text()
+
+    messages = handle_message(
+        registry, RemoveElement(session_id=session.session_id, cell_id="live_demo", element_name="does_not_exist")
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+    assert path.read_text() == before

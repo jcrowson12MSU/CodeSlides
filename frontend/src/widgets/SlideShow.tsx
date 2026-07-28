@@ -24,6 +24,10 @@ export interface SlideShowProps {
   onChangeTestSource: (cellId: string, elementId: string, source: string) => void
   onToggleCollapse: (cellId: string) => void
   onToggleMinimize: (cellId: string, elementId: string) => void
+  onRenameCell: (cellId: string, newName: string) => void
+  onAddElement: (cellId: string, name: string, kind: string, config: Record<string, unknown>) => void
+  onRemoveElement: (cellId: string, elementName: string) => void
+  editErrors: Record<string, string>
 }
 
 // Slideshow/presentation mode (TODO.md #10, ARCHITECTURE.md's "one tool,
@@ -49,6 +53,10 @@ export function SlideShow({
   onChangeTestSource,
   onToggleCollapse,
   onToggleMinimize,
+  onRenameCell,
+  onAddElement,
+  onRemoveElement,
+  editErrors,
 }: SlideShowProps) {
   const [index, setIndex] = useState(0)
   const [revealOverrides, setRevealOverrides] = useState<Record<number, boolean>>({})
@@ -136,6 +144,10 @@ export function SlideShow({
               onChangeTestSource={(elementId, source) => onChangeTestSource(cellId, elementId, source)}
               onToggleCollapse={() => onToggleCollapse(cellId)}
               onToggleMinimize={(elementId) => onToggleMinimize(cellId, elementId)}
+              onRenameCell={(newName) => onRenameCell(cellId, newName)}
+              onAddElement={(name, kind, config) => onAddElement(cellId, name, kind, config)}
+              onRemoveElement={(elementName) => onRemoveElement(cellId, elementName)}
+              editError={editErrors[cellId]}
             />
           )
         })}

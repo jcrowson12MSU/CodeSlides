@@ -67,6 +67,29 @@ export interface AddCell {
   session_id: string
 }
 
+export interface RenameCell {
+  type: 'rename_cell'
+  session_id: string
+  cell_id: string
+  new_name: string
+}
+
+export interface AddElement {
+  type: 'add_element'
+  session_id: string
+  cell_id: string
+  element_name: string
+  kind: string
+  config: Record<string, unknown>
+}
+
+export interface RemoveElement {
+  type: 'remove_element'
+  session_id: string
+  cell_id: string
+  element_name: string
+}
+
 export type ClientMessage =
   | EditCell
   | RunAll
@@ -77,6 +100,9 @@ export type ClientMessage =
   | NavigateSlide
   | SaveDeck
   | AddCell
+  | RenameCell
+  | AddElement
+  | RemoveElement
 
 // -- Server -> client messages -----------------------------------------------
 
@@ -146,6 +172,34 @@ export interface CellAdded {
   elements: ElementMeta[]
 }
 
+export interface CellRenamed {
+  type: 'cell_renamed'
+  session_id: string
+  old_cell_id: string
+  cell_id: string
+  instance: 'static' | 'editable'
+  source: string
+  elements: ElementMeta[]
+}
+
+export interface ElementAdded {
+  type: 'element_added'
+  session_id: string
+  cell_id: string
+  instance: 'static' | 'editable'
+  source: string
+  elements: ElementMeta[]
+}
+
+export interface ElementRemoved {
+  type: 'element_removed'
+  session_id: string
+  cell_id: string
+  instance: 'static' | 'editable'
+  source: string
+  elements: ElementMeta[]
+}
+
 export interface ErrorMessage {
   type: 'error'
   message: string
@@ -162,4 +216,7 @@ export type ServerMessage =
   | SessionCreated
   | DeckSaved
   | CellAdded
+  | CellRenamed
+  | ElementAdded
+  | ElementRemoved
   | ErrorMessage

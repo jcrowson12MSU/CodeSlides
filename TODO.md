@@ -624,7 +624,80 @@ reshape the plan below and are called out explicitly where they apply:
   `test_ws_handler.py`), full suite green (164 passed, 2 skipped), ruff
   and oxlint clean, frontend bundle rebuilt and committed.
 
-- [ ] **22. Write example decks for teaching scenarios**
+- [x] **22. All cells should have an edit button to edit the title of a cell and add/remove view elements.**
+  Added an "Edit" toggle to every cell's header, opening a panel with two
+  actions: rename the cell (its actual function name/Deck-key identity,
+  not a separate cosmetic label -- confirmed with the user before
+  building, since everything else in the app -- slides, other cells'
+  code -- already identifies a cell by that name) and add/remove
+  attached elements via a kind picker + name field, with a × button per
+  existing element. Both write to the deck's `.py` file immediately on
+  submit, same "no staged/unsaved state" precedent item 21 established
+  for a brand-new cell.
+
+  Backend: `serialization.py` gained `rebuild_cell_source()` (regenerates
+  a cell's decorator + `def` line from a new name/elements list while
+  keeping its function body byte-identical -- element configs round-trip
+  through `ui.<kind>(name, **config)` exactly, since every `ui.py`
+  constructor's keyword params already match `Element.config`'s keys
+  1:1, confirmed before relying on it), `rename_cell()` (also cascades
+  into every `@app.slide(..., cells=[...])` reference naming the
+  old name, found via a fresh `ast.walk`), `add_element()`/
+  `remove_element()`. `Kernel.rename_cell()` refuses the rename
+  (clean `ValueError`, not a rewrite attempt) if any *other* cell's
+  already-parsed `reads` names the old cell -- i.e. some other cell
+  calls it directly by name, e.g. `drawSquares` calling `drawSquare()`
+  (`graph.py`'s existing "a cell's name is an implicit write" comment) --
+  rewriting an arbitrary Python identifier occurrence inside someone
+  else's code isn't safe to do blindly, so this is a clear, actionable
+  error, not a silent/partial rewrite; confirmed as the intended
+  behavior with the user up front. `Kernel.add_element()`/
+  `remove_element()` follow the same disk-write-then-reload-then-backfill
+  pattern as item 21's `add_cell()`.
+
+  Found and fixed a real bug via an end-to-end kernel test, not just
+  isolated serialization tests: adding an element to a deck that had
+  never used any element before (so its `from codeslides import ...`
+  line had no `ui`, e.g. `examples/hello.py`'s shape) wrote a file that
+  `NameError`ed the instant it was loaded, since the newly-written
+  `ui.slider(...)` call had nothing importing `ui`. Fixed with
+  `_ensure_ui_imported()`, which adds `ui` to the existing import line
+  only when it's actually missing.
+
+  Also found and fixed a second bug specific to item 21's own feature,
+  surfaced while wiring this one in: `App.tsx`'s `cell_added` merge
+  effect only checked `messages[messages.length - 1]`, but `cell_added`
+  is never guaranteed to be the last message in a batch (the server also
+  sends the cell's own `cell_status`/`cell_output` right after it, as
+  separate frames) -- confirmed via a Playwright script that intercepted
+  the raw websocket frames and found `cell_added` buried mid-batch, with
+  the new cell silently not rendering until a manual reload. Fixed (and
+  generalized to also cover `cell_renamed`/`element_added`/
+  `element_removed`) by scanning every message added since the effect's
+  last run, tracked via a ref, instead of only inspecting the last one.
+
+  Also added inline error feedback for a rejected rename/add/remove
+  (keyed by `cell_id`, since `ErrorMessage` already carries one) --
+  previously a blocked rename (e.g. the `drawSquares`-calls-`drawSquare`
+  case above) silently did nothing from the user's perspective, which a
+  real browser check caught immediately.
+
+  Verified end-to-end in a real browser via Playwright: renamed `setup`
+  to `base_setup` and confirmed the header, the on-disk `def` line, and
+  (separately, on a deck with a slide referencing the renamed cell) the
+  slide's `cells=[...]` all updated correctly, with the slide still
+  rendering the renamed cell's live output; added a `multiplier` slider
+  to a cell with no prior elements and confirmed it appeared on disk and
+  rendered live; removed it and confirmed the cell's decorator reverted
+  to plain `@app.cell` while an unrelated cell's own slider was
+  untouched; attempted the blocked rename case and confirmed a clean,
+  readable error appeared inline in the edit panel with no crash and the
+  websocket connection staying alive. 31 new backend tests (13 in
+  `test_serialization.py`, 9 in `test_kernel.py`, 9 in
+  `test_ws_handler.py`), full suite green (195 passed, 2 skipped), ruff
+  and oxlint clean, frontend bundle rebuilt and committed.
+
+- [ ] **23. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that

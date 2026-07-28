@@ -516,3 +516,100 @@ body.cs-resizing {
 .cs-slide .cs-cell-output {
   font-size: 1rem;
 }
+
+/* TODO.md #22's edit button: rename the cell's own identity, add/remove
+   attached elements. */
+.cs-edit-cell-toggle {
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  background: none;
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: #555;
+  padding: 0.05rem 0.5rem;
+  margin-left: auto;
+}
+
+.cs-edit-cell-toggle:hover {
+  background: #f2f2f2;
+}
+
+.cs-edit-cell-panel {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #fafafa;
+  padding: 0.75rem 1rem;
+  margin: 0.5rem 0;
+  font-size: 0.85rem;
+}
+
+.cs-edit-cell-error {
+  color: #c0392b;
+  background: #fbeae8;
+  border: 1px solid #e6b3ac;
+  border-radius: 3px;
+  padding: 0.35rem 0.6rem;
+  margin-bottom: 0.6rem;
+}
+
+.cs-edit-cell-rename {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.cs-edit-cell-rename label {
+  color: #666;
+}
+
+.cs-edit-cell-rename input {
+  font-family: ui-monospace, monospace;
+  padding: 0.15rem 0.4rem;
+}
+
+.cs-edit-cell-elements-label {
+  color: #666;
+  display: block;
+  margin-bottom: 0.35rem;
+}
+
+.cs-edit-cell-no-elements {
+  color: #999;
+  font-style: italic;
+}
+
+.cs-edit-cell-elements ul {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+}
+
+.cs-edit-cell-elements li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.2rem 0;
+  font-family: ui-monospace, monospace;
+}
+
+.cs-edit-cell-elements li em {
+  color: #999;
+  font-style: normal;
+}
+
+.cs-edit-cell-elements li button {
+  border: none;
+  background: none;
+  color: #c0392b;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 0.3rem;
+}
+
+.cs-edit-cell-add-element {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}

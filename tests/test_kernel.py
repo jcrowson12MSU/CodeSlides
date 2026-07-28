@@ -538,3 +538,160 @@ def test_add_cell_does_not_affect_a_different_sessions_instances(tmp_path):
 
     assert cell.name in session_a.instances
     assert cell.name not in session_b.instances
+
+
+_RENAME_DECK_SOURCE = (
+    "from codeslides import App, ui\n\n"
+    "app = App()\n\n"
+    '@app.cell(instance="editable", elements=[ui.slider("speed", min=1, max=10, default=3)])\n'
+    "def live_demo(speed):\n"
+    "    result = speed * 2\n"
+    "    return result\n\n"
+    '@app.slide("Live Coding", cells=["live_demo"])\n'
+    "def slide_1():\n"
+    '    """Notes."""\n'
+)
+
+
+def test_rename_cell_updates_the_kernel_baseline_and_disk(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    cell = kernel.rename_cell(session, "live_demo", "coding_demo")
+
+    assert cell.name == "coding_demo"
+    assert "coding_demo" in kernel.deck.cells
+    assert "live_demo" not in kernel.deck.cells
+    assert "def coding_demo(speed):" in path.read_text()
+    assert kernel.deck.slides[0].cell_names == ["coding_demo"]
+
+
+def test_rename_cell_remaps_the_requesting_sessions_state(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    kernel.rename_cell(session, "live_demo", "coding_demo")
+
+    assert "coding_demo" in session.instances
+    assert "live_demo" not in session.instances
+    # the next run_all must not KeyError on the renamed cell
+    kernel.run_all(session)
+
+
+def test_rename_cell_does_not_affect_a_different_sessions_instances(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session_a = Session(deck=deck)
+    session_b = Session(deck=deck)
+    kernel.run_all(session_a)
+    kernel.run_all(session_b)
+
+    kernel.rename_cell(session_a, "live_demo", "coding_demo")
+
+    assert "coding_demo" in session_a.instances
+    assert "live_demo" in session_b.instances
+    assert "coding_demo" not in session_b.instances
+
+
+def test_rename_cell_blocked_when_another_cell_calls_it_directly(tmp_path):
+    from codeslides.loader import load_deck
+
+    source = (
+        "from codeslides import App\n\napp = App()\n\n"
+        "@app.cell\ndef drawSquare():\n    x = 1\n    return x\n\n"
+        "@app.cell\ndef drawSquares():\n    result = drawSquare() + 1\n    return result\n"
+    )
+    path = _write_deck_file(tmp_path, source)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    with pytest.raises(ValueError, match="drawSquares"):
+        kernel.rename_cell(session, "drawSquare", "draw_one_square")
+
+    # nothing was written -- the on-disk name is untouched
+    assert "def drawSquare()" in path.read_text()
+
+
+def test_rename_cell_without_a_deck_path_raises():
+    app = _build_deck()
+    kernel = Kernel(app.deck)  # no deck_path
+    session = Session(deck=app.deck)
+
+    with pytest.raises(ValueError, match="deck file"):
+        kernel.rename_cell(session, "live_demo", "coding_demo")
+
+
+def test_add_element_updates_disk_kernel_and_session(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _ADD_CELL_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    cell, result = kernel.add_element(session, "setup", ui.slider("multiplier", min=1, max=5, default=2))
+
+    assert [e.name for e in cell.elements] == ["multiplier"]
+    assert result.status == "idle"
+    assert "multiplier" in kernel.deck.cells["setup"].elements[0].name
+    assert "multiplier" in session.instances["setup"].elements
+    assert "ui.slider('multiplier'" in path.read_text()
+
+
+def test_add_element_raises_on_a_duplicate_element_name(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    with pytest.raises(ValueError, match="speed"):
+        kernel.add_element(session, "live_demo", ui.button("speed"))
+
+
+def test_remove_element_updates_disk_kernel_and_session(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    cell, result = kernel.remove_element(session, "live_demo", "speed")
+
+    assert cell.elements == []
+    assert result.status == "error"  # live_demo's body still reads `speed`, now unbound
+    assert "speed" not in session.instances["live_demo"].elements
+    assert "ui.slider" not in path.read_text()
+
+
+def test_remove_element_raises_if_the_element_does_not_exist(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    with pytest.raises(ValueError, match="does_not_exist"):
+        kernel.remove_element(session, "live_demo", "does_not_exist")

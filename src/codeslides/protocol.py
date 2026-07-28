@@ -138,6 +138,49 @@ class AddCell:
     session_id: str
 
 
+@dataclass
+class RenameCell:
+    """Rename a cell's identity -- its Deck-key/function name, not a
+    separate cosmetic label (TODO.md #22's edit button). Same
+    write-immediately-to-disk precedent as `add_cell` (see
+    `kernel.Kernel.rename_cell`'s docstring): there's no staged/unsaved
+    rename state. Same scoping as `add_cell` too: guaranteed correct for
+    `session_id` and any new connection after this, not broadcast into
+    other already-open Sessions."""
+
+    type: ClassVar[str] = "rename_cell"
+    session_id: str
+    cell_id: str
+    new_name: str
+
+
+@dataclass
+class AddElement:
+    """Add a new element to an existing cell (TODO.md #22's element
+    picker). `kind`/`config` mirror `deck.Element` exactly (config is
+    that kind's constructor's own keyword arguments, e.g. `{"min": 1,
+    "max": 10, "default": 3}` for a slider) -- written to the deck's .py
+    file immediately, same precedent as `add_cell`/`rename_cell`."""
+
+    type: ClassVar[str] = "add_element"
+    session_id: str
+    cell_id: str
+    element_name: str
+    kind: str
+    config: dict[str, Any]
+
+
+@dataclass
+class RemoveElement:
+    """Remove an existing element from a cell (TODO.md #22), on disk,
+    immediately -- the inverse of `add_element`."""
+
+    type: ClassVar[str] = "remove_element"
+    session_id: str
+    cell_id: str
+    element_name: str
+
+
 # -- Server -> client messages -----------------------------------------------
 
 
@@ -226,6 +269,51 @@ class CellAdded:
 
 
 @dataclass
+class CellRenamed:
+    """Acknowledges a successful `rename_cell`. `old_cell_id` lets the
+    client drop the stale key from local deck/cell-state maps (they're
+    keyed by cell id, same as `deck.cells`); `cell_id` is the new name,
+    with the rest mirroring `CellAdded`'s shape so the client can splice
+    the renamed cell back in under its new key without a full refetch."""
+
+    type: ClassVar[str] = "cell_renamed"
+    session_id: str
+    old_cell_id: str
+    cell_id: str
+    instance: str
+    source: str
+    elements: list[dict[str, Any]]
+
+
+@dataclass
+class ElementAdded:
+    """Acknowledges a successful `add_element`: the owning cell's full,
+    updated static metadata (same shape as `CellAdded`), so the client
+    can replace its local copy of that one cell wholesale rather than
+    trying to patch just the new element in by hand."""
+
+    type: ClassVar[str] = "element_added"
+    session_id: str
+    cell_id: str
+    instance: str
+    source: str
+    elements: list[dict[str, Any]]
+
+
+@dataclass
+class ElementRemoved:
+    """Acknowledges a successful `remove_element` -- same shape as
+    `ElementAdded`, the owning cell's full updated metadata."""
+
+    type: ClassVar[str] = "element_removed"
+    session_id: str
+    cell_id: str
+    instance: str
+    source: str
+    elements: list[dict[str, Any]]
+
+
+@dataclass
 class SessionCreated:
     """Sent once, immediately after a websocket connection is accepted:
     tells the client the session_id implicitly created for that connection
@@ -258,6 +346,9 @@ ClientMessage = (
     | NavigateSlide
     | SaveDeck
     | AddCell
+    | RenameCell
+    | AddElement
+    | RemoveElement
 )
 ServerMessage = (
     CellStatus
@@ -268,6 +359,9 @@ ServerMessage = (
     | SessionCreated
     | DeckSaved
     | CellAdded
+    | CellRenamed
+    | ElementAdded
+    | ElementRemoved
     | ErrorMessage
 )
 
@@ -283,6 +377,9 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
         NavigateSlide,
         SaveDeck,
         AddCell,
+        RenameCell,
+        AddElement,
+        RemoveElement,
     )
 }
 

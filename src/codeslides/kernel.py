@@ -531,6 +531,123 @@ class Kernel:
         results = self._run_cells([name], session)
         return cell, results[name]
 
+    def rename_cell(self, session: Session, old_name: str, new_name: str) -> Cell:
+        """Rename a cell's identity (TODO.md #22 -- the edit button's
+        "edit the title of a cell"), on disk, immediately: rewrites the
+        cell's own `def`/decorator line and cascades into every slide's
+        `cells=[...]` reference (`serialization.rename_cell`), then
+        reloads this Kernel's baseline synchronously, same pattern as
+        `add_cell`/`save_deck`.
+
+        Refuses the rename (`ValueError`) if any *other* cell's already-
+        parsed `reads` names `old_name` -- i.e. some other cell's code
+        directly reads this cell's return value or calls it by name
+        (ARCHITECTURE.md section 3's graph edges). Rewriting an arbitrary
+        Python identifier occurrence inside someone else's cell body
+        isn't safe to do blindly (could be a substring match, a shadowed
+        local, anything) -- confirmed with the user this should be a
+        clean, actionable error telling the author to remove the
+        reference first, not a silent/partial rewrite.
+
+        Remaps `session`'s own `instances`/`source_overrides` entries
+        from `old_name` to `new_name` (same key, new name) so this
+        session doesn't `KeyError` on its next run -- other already-open
+        Sessions are unaffected until they reconnect, same scope as
+        `add_cell`."""
+        if self.deck_path is None:
+            raise ValueError("cannot rename a cell: this Kernel was not started from a deck file")
+        if old_name not in self.deck.cells:
+            raise ValueError(f"cannot rename cell {old_name!r}: it no longer exists")
+        if new_name in self.deck.cells and new_name != old_name:
+            raise ValueError(f"cannot rename cell {old_name!r} to {new_name!r}: that name already exists")
+
+        blockers = sorted(
+            name
+            for name, cell in self.deck.cells.items()
+            if name != old_name and old_name in cell.reads
+        )
+        if blockers:
+            raise ValueError(
+                f"cannot rename cell {old_name!r}: it's referenced by {blockers} -- "
+                "remove those references first"
+            )
+
+        from codeslides.serialization import rename_cell as _rename_cell_on_disk
+
+        _rename_cell_on_disk(self.deck_path, old_name, new_name)
+
+        from codeslides.loader import load_deck
+
+        self.reload_deck(load_deck(self.deck_path))
+
+        if old_name in session.instances:
+            session.instances[new_name] = session.instances.pop(old_name)
+        if old_name in session.source_overrides:
+            session.source_overrides[new_name] = session.source_overrides.pop(old_name)
+        if old_name in session.namespace:
+            del session.namespace[old_name]
+
+        cell = self.deck.cells[new_name]
+        session.seed_cell_instance(new_name, cell)
+        return cell
+
+    def add_element(self, session: Session, cell_name: str, element: Element) -> tuple[Cell, ExecutionResult]:
+        """Add `element` to `cell_name`'s `elements=[...]` list, on disk,
+        immediately (TODO.md #22's element picker), then reload this
+        Kernel's baseline synchronously, same pattern as `add_cell`.
+
+        Backfills `session`'s own instance for the new element (via
+        `Session.seed_cell_instance`, safe to call again for an
+        already-seeded cell -- it only fills in what's missing) and
+        re-runs the cell once so its status/output reflect the change
+        immediately, same as a freshly-added cell does."""
+        if self.deck_path is None:
+            raise ValueError("cannot add an element: this Kernel was not started from a deck file")
+        if cell_name not in self.deck.cells:
+            raise ValueError(f"cannot add an element to cell {cell_name!r}: it no longer exists")
+
+        from codeslides.serialization import add_element as _add_element_on_disk
+
+        _add_element_on_disk(self.deck_path, cell_name, element)
+
+        from codeslides.loader import load_deck
+
+        self.reload_deck(load_deck(self.deck_path))
+
+        cell = self.deck.cells[cell_name]
+        session.seed_cell_instance(cell_name, cell)
+        results = self._run_cells([cell_name], session)
+        return cell, results[cell_name]
+
+    def remove_element(self, session: Session, cell_name: str, element_name: str) -> tuple[Cell, ExecutionResult]:
+        """Remove the element named `element_name` from `cell_name`, on
+        disk, immediately, then reload this Kernel's baseline
+        synchronously -- the inverse of `add_element`.
+
+        Drops the element's now-stale `ElementInstance` from `session`'s
+        own instance for this cell (a removed element's leftover value/
+        content would otherwise linger in memory even though it's gone
+        from the Deck) and re-runs the cell once."""
+        if self.deck_path is None:
+            raise ValueError("cannot remove an element: this Kernel was not started from a deck file")
+        if cell_name not in self.deck.cells:
+            raise ValueError(f"cannot remove an element from cell {cell_name!r}: it no longer exists")
+
+        from codeslides.serialization import remove_element as _remove_element_on_disk
+
+        _remove_element_on_disk(self.deck_path, cell_name, element_name)
+
+        from codeslides.loader import load_deck
+
+        self.reload_deck(load_deck(self.deck_path))
+
+        cell = self.deck.cells[cell_name]
+        if cell_name in session.instances:
+            session.instances[cell_name].elements.pop(element_name, None)
+        session.seed_cell_instance(cell_name, cell)
+        results = self._run_cells([cell_name], session)
+        return cell, results[cell_name]
+
     def _effective_graph(self, session: Session) -> DependencyGraph:
         """The dependency graph as this Session currently sees it: the
         Deck's cells, with any of this Session's source overrides applied.

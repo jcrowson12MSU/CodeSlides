@@ -1,12 +1,16 @@
 import pytest
 
+from codeslides import ui
 from codeslides.loader import load_deck
 from codeslides.serialization import (
     InvalidSourceError,
     SaveConflictError,
+    add_element,
     append_cell,
     blank_cell_source,
     new_cell_name,
+    remove_element,
+    rename_cell,
     save_edits,
 )
 
@@ -194,3 +198,104 @@ def test_append_cell_twice_does_not_collide(deck_file):
     deck = load_deck(str(deck_file))
     assert "cell_1" in deck.cells
     assert "cell_2" in deck.cells
+
+
+def test_rename_cell_updates_the_def_line_and_keeps_the_body(deck_file):
+    rename_cell(str(deck_file), "live_demo", "coding_demo")
+
+    deck = load_deck(str(deck_file))
+    assert "coding_demo" in deck.cells
+    assert "live_demo" not in deck.cells
+    assert "result = base * speed" in deck.cells["coding_demo"].source
+    assert deck.cells["coding_demo"].instance == "editable"
+
+
+def test_rename_cell_preserves_its_elements(deck_file):
+    rename_cell(str(deck_file), "live_demo", "coding_demo")
+
+    deck = load_deck(str(deck_file))
+    assert [(e.name, e.kind, e.config) for e in deck.cells["coding_demo"].elements] == [
+        ("speed", "slider", {"min": 1, "max": 10, "default": 3})
+    ]
+
+
+def test_rename_cell_cascades_into_slide_references(deck_file):
+    rename_cell(str(deck_file), "live_demo", "coding_demo")
+
+    deck = load_deck(str(deck_file))
+    assert deck.slides[0].cell_names == ["coding_demo"]
+    assert "live_demo" not in deck_file.read_text()
+
+
+def test_rename_cell_raises_if_the_old_name_does_not_exist(deck_file):
+    with pytest.raises(SaveConflictError):
+        rename_cell(str(deck_file), "does_not_exist", "new_name")
+
+
+def test_rename_cell_raises_if_the_new_name_already_exists(deck_file):
+    with pytest.raises(SaveConflictError):
+        rename_cell(str(deck_file), "live_demo", "setup")
+
+
+def test_add_element_appends_to_an_existing_elements_list(deck_file):
+    add_element(str(deck_file), "live_demo", ui.button("go", label="Go"))
+
+    deck = load_deck(str(deck_file))
+    names = [e.name for e in deck.cells["live_demo"].elements]
+    assert names == ["speed", "go"]
+
+
+def test_add_element_creates_an_elements_list_on_a_cell_with_none(deck_file):
+    add_element(str(deck_file), "setup", ui.slider("multiplier", min=1, max=5, default=2))
+
+    deck = load_deck(str(deck_file))
+    assert [(e.name, e.kind, e.config) for e in deck.cells["setup"].elements] == [
+        ("multiplier", "slider", {"min": 1, "max": 5, "default": 2})
+    ]
+    # the cell's own body is untouched
+    assert "base = 5" in deck.cells["setup"].source
+
+
+def test_add_element_raises_on_a_duplicate_element_name(deck_file):
+    with pytest.raises(SaveConflictError):
+        add_element(str(deck_file), "live_demo", ui.button("speed", label="dup"))
+
+
+def test_add_element_raises_if_the_cell_does_not_exist(deck_file):
+    with pytest.raises(SaveConflictError):
+        add_element(str(deck_file), "does_not_exist", ui.button("go"))
+
+
+def test_remove_element_drops_it_from_the_elements_list(deck_file):
+    remove_element(str(deck_file), "live_demo", "speed")
+
+    deck = load_deck(str(deck_file))
+    assert deck.cells["live_demo"].elements == []
+    assert "def live_demo(speed):" in deck.cells["live_demo"].source
+
+
+def test_remove_element_raises_if_the_element_does_not_exist(deck_file):
+    with pytest.raises(SaveConflictError):
+        remove_element(str(deck_file), "live_demo", "does_not_exist")
+
+
+def test_remove_element_raises_if_the_cell_does_not_exist(deck_file):
+    with pytest.raises(SaveConflictError):
+        remove_element(str(deck_file), "does_not_exist", "speed")
+
+
+def test_add_element_imports_ui_if_the_deck_never_needed_it_before(tmp_path):
+    """Regression guard: a deck that never used any element (so its
+    `from codeslides import ...` line has no `ui`, e.g. examples/hello.py)
+    must still get a loadable file after its first-ever element is added
+    -- otherwise the written file NameErrors the moment it's loaded,
+    caught via a real end-to-end kernel test that didn't expect this."""
+    path = tmp_path / "deck.py"
+    path.write_text("from codeslides import App\n\napp = App()\n\n@app.cell\ndef setup():\n    base = 5\n    return base\n")
+
+    add_element(str(path), "setup", ui.slider("multiplier", min=1, max=5, default=2))
+
+    text = path.read_text()
+    assert "from codeslides import App, ui" in text
+    deck = load_deck(str(path))  # must not NameError
+    assert [e.name for e in deck.cells["setup"].elements] == ["multiplier"]
