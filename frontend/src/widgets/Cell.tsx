@@ -1,3 +1,4 @@
+import { useCallback, useRef, useState } from 'react'
 import type { CellState } from '../deckState'
 import { CellOutputView } from './CellOutputView'
 import { CodeEditor } from './CodeEditor'
@@ -5,6 +6,13 @@ import { ElementWidget } from './ElementWidget'
 import { TestsElementWidget } from './TestsElementWidget'
 import { ViewerElementWidget } from './ViewerElementWidget'
 import { isInputElement, isTestElement, isTestResult, isViewerElement, type ElementMeta } from './elementMeta'
+
+// How much of `.cs-cell-body`'s width the code column gets, as a fraction
+// (the elements column gets the rest). Clamped well short of 0/1 so
+// neither column can be dragged down to nothing -- both stay usable.
+const MIN_CODE_FRACTION = 0.15
+const MAX_CODE_FRACTION = 0.85
+const DEFAULT_CODE_FRACTION = 0.5
 
 export interface CellMeta {
   instance: 'static' | 'editable'
@@ -76,6 +84,52 @@ export function Cell({
   onToggleCollapse,
   onToggleMinimize,
 }: CellProps) {
+  // The code/elements split is per-cell, kept as local component state
+  // (not lifted to App.tsx) -- it's pure display layout with no server
+  // round-trip and no effect on execution/output, so it doesn't need the
+  // set_ui_state plumbing collapsed/minimized use. React preserves this
+  // state across re-renders as long as the Cell isn't unmounted (parent
+  // keys each Cell by cellId), so a drag survives the cell's own output
+  // changing. TODO.md #20: mainly useful in Slides view, where one cell
+  // is in focus at a time and giving a wide turtle canvas (or a long
+  // function body) more room is worth the drag.
+  const [codeFraction, setCodeFraction] = useState(DEFAULT_CODE_FRACTION)
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+  const draggingRef = useRef(false)
+
+  const handleResizeMove = useCallback((event: PointerEvent) => {
+    const body = bodyRef.current
+    if (!body) return
+    const rect = body.getBoundingClientRect()
+    if (rect.width === 0) return
+    const fraction = (event.clientX - rect.left) / rect.width
+    setCodeFraction(Math.min(MAX_CODE_FRACTION, Math.max(MIN_CODE_FRACTION, fraction)))
+  }, [])
+
+  const stopResizing = useCallback(() => {
+    if (!draggingRef.current) return
+    draggingRef.current = false
+    document.body.classList.remove('cs-resizing')
+    window.removeEventListener('pointermove', handleResizeMove)
+    window.removeEventListener('pointerup', stopResizing)
+  }, [handleResizeMove])
+
+  const startResizing = useCallback(
+    (event: React.PointerEvent) => {
+      event.preventDefault()
+      draggingRef.current = true
+      // Applied to <body>, not the handle -- during a fast drag the
+      // pointer can end up over the code editor or an element widget
+      // between move events; without a page-wide cursor/selection lock
+      // the drag would otherwise flicker as the cursor changes and text
+      // gets selected underneath it.
+      document.body.classList.add('cs-resizing')
+      window.addEventListener('pointermove', handleResizeMove)
+      window.addEventListener('pointerup', stopResizing)
+    },
+    [handleResizeMove, stopResizing],
+  )
+
   return (
     <div className={`cs-cell ${collapsed ? 'cs-cell-collapsed' : ''}`}>
       <div className="cs-cell-header">
@@ -94,9 +148,9 @@ export function Cell({
       </div>
 
       {!collapsed && (
-        <div className="cs-cell-body">
+        <div className="cs-cell-body" ref={bodyRef}>
           {!hideCode && (
-            <div className="cs-cell-code">
+            <div className="cs-cell-code" style={{ flexBasis: `${codeFraction * 100}%` }}>
               <CodeEditor
                 source={meta.source}
                 onRunCell={onRunCell}
@@ -106,7 +160,25 @@ export function Cell({
             </div>
           )}
 
-          <div className="cs-cell-side">
+          {/* No handle (and no split to speak of) once the code column
+              itself is hidden -- ARCHITECTURE.md's slideshow reveal-code
+              toggle already collapses to a single column in that case,
+              same as a screen narrow enough to stack the two columns
+              (see the @media rule in App.css). */}
+          {!hideCode && (
+            <div
+              className="cs-resize-handle"
+              onPointerDown={startResizing}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={`Resize ${cellId}'s code/elements split`}
+            />
+          )}
+
+          <div
+            className="cs-cell-side"
+            style={!hideCode ? { flexBasis: `${(1 - codeFraction) * 100}%` } : undefined}
+          >
             {meta.elements.length > 0 && (
               <div className="cs-cell-elements">
                 {/* Rendered in the exact order they're declared in the

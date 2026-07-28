@@ -79,25 +79,61 @@
 .cs-cell-body {
   display: flex;
   align-items: flex-start;
-  gap: 1.25rem;
+  gap: 0.5rem;
   margin: 0.5rem 0;
 }
 
 /* The code editor is the only thing in the left column; everything else
    (input/viewer elements, output) moves to the right column -- both the
    flat Cells view and the Slides view render through this same Cell
-   component, so this layout applies to both. */
+   component, so this layout applies to both. `flex-basis` is set inline
+   per-cell (Cell.tsx's codeFraction, TODO.md #20's resizable divider) --
+   flex-grow/shrink are 0 here so that inline basis is the actual
+   rendered width, not just a starting point flexbox is free to
+   redistribute. */
 .cs-cell-code {
-  flex: 1 1 0;
+  flex: 0 0 auto;
   min-width: 0;
 }
 
 .cs-cell-side {
-  flex: 1 1 0;
+  flex: 0 0 auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+}
+
+/* The draggable divider between .cs-cell-code and .cs-cell-side. A
+   narrow visible strip (2px) with a much wider invisible hit area (the
+   ::before pseudo-element, positioned via a negative inset) so it's
+   actually easy to grab without needing pixel-perfect precision. */
+.cs-resize-handle {
+  flex: 0 0 auto;
+  align-self: stretch;
+  width: 2px;
+  cursor: col-resize;
+  position: relative;
+  background: var(--border, #ddd);
+}
+
+.cs-resize-handle::before {
+  content: '';
+  position: absolute;
+  inset: 0 -6px;
+}
+
+.cs-resize-handle:hover,
+.cs-resize-handle:active {
+  background: var(--accent-border, #aa3bff);
+}
+
+/* Applied to <body> for the duration of a drag (Cell.tsx) so the cursor
+   stays col-resize and nothing gets text-selected even if the pointer
+   drifts off the handle itself between fast pointermove events. */
+body.cs-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .cs-code-editor {
@@ -124,9 +160,19 @@
     flex-direction: column;
   }
 
+  /* The resizable split (Cell.tsx's inline flex-basis, TODO.md #20) is a
+     horizontal-width concept -- meaningless once the columns stack
+     vertically, so it's overridden back to full width here, and the
+     drag handle (a horizontal cursor grab) is hidden rather than shown
+     sideways. */
   .cs-cell-code,
   .cs-cell-side {
+    flex-basis: auto !important;
     width: 100%;
+  }
+
+  .cs-resize-handle {
+    display: none;
   }
 }
 

@@ -521,7 +521,51 @@ reshape the plan below and are called out explicitly where they apply:
 
 - [ ] **19. Change the shortcut to go to the next/previous slide to cmd+control + left/right**
 
-- [ ] **20. Write example decks for teaching scenarios**
+- [x] **20. Add a divider between the left and right to resize these sections.**
+  As the divider is moved to the left, the code editor on the left gets
+  smaller and the right side gets bigger and vice versa.
+
+  Confirmed the intended scope with the user first: independent per
+  cell (each cell remembers its own split), not one shared ratio across
+  the whole deck, and mainly meant for the Slides view where a single
+  cell is in focus and giving a wide turtle canvas or a long function
+  body more room is genuinely useful.
+
+  Implemented entirely in `Cell.tsx` as local component state (a
+  `codeFraction` between 0.15 and 0.85, defaulting to 0.5) -- no
+  App.tsx/SlideShow.tsx prop threading needed, since this is pure
+  display layout with no server round-trip and no effect on execution,
+  unlike collapsed/minimized which do send `set_ui_state`. React
+  preserves this per-cell state across re-renders as long as the Cell
+  isn't unmounted (the parent already keys each Cell by `cellId`), so a
+  drag survives the cell's own output changing.
+
+  A new `.cs-resize-handle` div (native pointer events, not a library)
+  sits between `.cs-cell-code` and `.cs-cell-side`; both columns'
+  `flex-basis` is set inline as a percentage driven by the drag, with
+  `flex-grow`/`flex-shrink` pinned to 0 in CSS so the inline basis is
+  the actual rendered width rather than just a starting point flexbox
+  could redistribute. A `cs-resizing` class on `<body>` during the drag
+  locks the cursor and disables text selection page-wide, since a fast
+  drag can put the pointer briefly over the code editor or an element
+  widget between pointermove events. At the existing 800px stacking
+  breakpoint (`@media (max-width: 800px)`), the handle is hidden and
+  both columns' flex-basis is forced back to `auto !important` --
+  horizontal resizing is meaningless once the columns stack vertically.
+
+  Verified end-to-end in a real browser: dragging the handle right
+  grows the code column and shrinks the elements column by matching
+  pixel amounts (measured via `boundingBox()`, not just eyeballed), the
+  code editor stays fully functional mid-drag and after, the `body`
+  cursor lock is correctly removed on mouseup, the same drag works in
+  the Slides view (the primary intended use case), and the handle
+  correctly disappears with no leftover width override at a narrow
+  (700px) viewport. Frontend build/oxlint clean; no backend changes.
+
+- [ ] ** 21. Add a new cell button**
+  add the option to add new cells from the browser that could then be inserted into the source file. A cell should be able to have all veiwer element added to it.
+
+- [ ] **22. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that
@@ -530,7 +574,7 @@ reshape the plan below and are called out explicitly where they apply:
   elements — to validate the tool end-to-end and serve as templates for
   instructors.
 
-- [ ] **21. Add tests for kernel & dependency graph**
+- [ ] **23. Add tests for kernel & dependency graph**
   Unit tests for `ast`-based variable extraction, dependency graph
   construction/cycle detection, minimal-rerun-set computation, and
   integration tests that run a sample deck through the kernel and assert
@@ -538,7 +582,7 @@ reshape the plan below and are called out explicitly where they apply:
   specifically clones a cell/editor instance and asserts the two instances'
   namespaces and outputs never cross-contaminate.
 
-- [ ] **22. Polish, README, and packaging**
+- [ ] **24. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
   `pip install` (editable) / eventual PyPI packaging.
