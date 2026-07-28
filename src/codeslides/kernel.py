@@ -20,12 +20,13 @@ import textwrap
 import traceback
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import dataclass, field
+from typing import Any
 
 from codeslides import cs, turtle
 from codeslides.deck import Cell, Deck, Element
 from codeslides.graph import DependencyGraph, build_graph
 from codeslides.output import resolve_output, wire_safe_value
-from codeslides.session import Session
+from codeslides.session import CellInstance, Session
 
 _NESTED_SCOPE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
 
@@ -278,37 +279,97 @@ def _find_tests_element(elements: list[Element]) -> str | None:
     return test_elements[0] if len(test_elements) == 1 else None
 
 
-def run_tests(source: str, namespace: dict[str, object]) -> dict[str, str]:
+def run_tests(
+    source: str, namespace: dict[str, object], elements: list[Element] | None = None
+) -> dict[str, Any]:
     """Run a `tests` element's source (ARCHITECTURE.md section 3b) as
     plain Python statements -- ordinary `assert`s, not a
     `unittest.TestCase` -- against `namespace` (the cell's own effective
     namespace: its return-named values plus everything its upstream
     dependencies wrote, i.e. `session.namespace` at the moment right
-    after the cell's own execution finishes). Returns a wire-ready
-    `{"status": "pass" | "fail" | "error", "message": str}` dict:
+    after the cell's own execution finishes). Returns a wire-ready dict:
 
-    - "pass": every statement ran with no exception.
-    - "fail": an `AssertionError` was raised (a failed assertion).
-    - "error": anything else (a `NameError` referencing something the
-      cell never defined, a `SyntaxError` from an in-progress edit, etc)
-      -- distinguished from "fail" so an author can tell "the code under
-      test is wrong" apart from "the test itself doesn't even run."
+    - `status`: "pass" (every statement ran with no exception), "fail"
+      (an `AssertionError` was raised), or "error" (anything else -- a
+      `NameError` referencing something the cell never defined, a
+      `SyntaxError` from an in-progress edit, etc -- kept distinct from
+      "fail" so an author can tell "the code under test is wrong" apart
+      from "the test itself doesn't even run").
+    - `message`: the assertion/traceback text, or "" on pass.
+    - `turtle_commands`: present only if `elements` includes exactly one
+      `turtle_canvas` (same "ambiguous means none" rule execute_cell
+      already applies) -- the test's own turtle drawing, meant to be
+      written into that *same* canvas element by the caller, so a
+      turtle-drawing cell's test can be visually checked against the
+      cell's own canvas without needing a second one. Always present
+      (possibly `[]`) when the cell has a canvas, so the caller can
+      always tell "this cell has a canvas to update" from the key's
+      presence rather than an empty list being ambiguous with "no
+      canvas at all."
+
+    `cs`/`turtle` are seeded into the exec globals exactly like a cell's
+    own execution does (kernel.py's execute_cell docstring) -- test code
+    is still ordinary Python, so it needs the same framework names
+    available without an explicit import, same as the code it's testing.
 
     Runs in a *copy* of `namespace`, never the namespace itself -- test
     code must never be able to mutate a cell's actual results out from
     under it (ARCHITECTURE.md section 1's isolation principle applies
-    just as much to a test run as to any other execution)."""
+    just as much to a test run as to any other execution). The turtle
+    context is likewise fresh for every test run (a clean `_TurtleState`,
+    position reset to the origin) -- the test's drawing replaces
+    whatever the cell's own last run drew, it never draws *on top of*
+    stale turtle state left over from the cell."""
+    turtle_element = _find_turtle_canvas(elements or [])
+    result: dict[str, Any] = {"status": "pass", "message": ""}
+    if turtle_element is not None:
+        result["turtle_commands"] = []
     if not source.strip():
-        return {"status": "pass", "message": ""}
+        return result
+
     stdout, stderr = io.StringIO(), io.StringIO()
+    test_globals = {"cs": cs, "turtle": turtle, **namespace}
     try:
-        with redirect_stdout(stdout), redirect_stderr(stderr):
-            exec(compile(source, filename="<test>", mode="exec"), {**namespace})  # noqa: S102 - trusted lesson code
+        with (
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+            _maybe_turtle_context(turtle_element) as turtle_commands,
+        ):
+            exec(compile(source, filename="<test>", mode="exec"), test_globals)  # noqa: S102 - trusted lesson code
     except AssertionError as exc:
-        return {"status": "fail", "message": str(exc) or "assertion failed"}
+        result["status"] = "fail"
+        result["message"] = str(exc) or "assertion failed"
     except Exception:  # noqa: BLE001 - any other exception is a test-runner-level error, not a pass/fail
-        return {"status": "error", "message": traceback.format_exc()}
-    return {"status": "pass", "message": ""}
+        result["status"] = "error"
+        result["message"] = traceback.format_exc()
+
+    if turtle_element is not None:
+        result["turtle_commands"] = turtle_commands
+    return result
+
+
+def _run_and_apply_test(
+    instance: CellInstance, tests_element: str, namespace: dict[str, object], elements: list[Element]
+) -> dict[str, Any]:
+    """Run `instance`'s `tests_element` and apply the result: the test's
+    own `{"status", "message"}` onto the tests element's `content`
+    (ARCHITECTURE.md section 3b), and -- if the cell has a turtle canvas
+    -- the test's turtle drawing onto *that* canvas element's `content`,
+    replacing whatever the cell's own last run drew there. This is the
+    "test code can draw into the cell's canvas to visually check turtle
+    logic in isolation" behavior: the test's drawing intentionally
+    overwrites the cell's, since there's only one canvas and the point is
+    seeing what the test *would* draw, not layering it on top of
+    unrelated leftover state. A subsequent run of the cell itself (an
+    edit, a slider change) draws fresh and overwrites it right back."""
+    test_source = instance.elements[tests_element].value or ""
+    result = run_tests(test_source, namespace, elements)
+    instance.elements[tests_element].content = {"status": result["status"], "message": result["message"]}
+
+    turtle_element = _find_turtle_canvas(elements)
+    if turtle_element is not None and "turtle_commands" in result:
+        instance.elements[turtle_element].content = result["turtle_commands"]
+    return result
 
 
 class Kernel:
@@ -414,14 +475,17 @@ class Kernel:
         `on_cell_edited`/`on_element_changed`, this never touches the
         dependency graph or re-runs any cell: test source has no
         reads/writes of its own to the graph, it only observes the
-        results other cells already produced. Returns the new
-        `{"status", "message"}` result dict directly (there's no
-        ExecutionResult here -- nothing was "executed" as a cell)."""
-        instance = session.instances[cell_name].elements[element_name]
-        instance.value = source
-        result = run_tests(source, session.namespace)
-        instance.content = result
-        return result
+        results other cells already produced. If the cell has a
+        `turtle_canvas`, the test's own turtle drawing (if any) replaces
+        that canvas's content too -- see `_run_and_apply_test`. Returns
+        the new `{"status", "message"}` result (never `turtle_commands`;
+        the canvas gets its own separate update, this return value is
+        only ever used for the tests element's own badge)."""
+        instance = session.instances[cell_name]
+        elements = self.deck.cells[cell_name].elements
+        instance.elements[element_name].value = source
+        result = _run_and_apply_test(instance, element_name, session.namespace, elements)
+        return {"status": result["status"], "message": result["message"]}
 
     def _effective_graph(self, session: Session) -> DependencyGraph:
         """The dependency graph as this Session currently sees it: the
@@ -477,9 +541,11 @@ class Kernel:
             # be misleading, not informative.
             tests_element = _find_tests_element(elements)
             if tests_element is not None:
-                test_instance = instance.elements[tests_element]
                 if result.status == "idle":
-                    test_instance.content = run_tests(test_instance.value or "", session.namespace)
+                    _run_and_apply_test(instance, tests_element, session.namespace, elements)
                 else:
-                    test_instance.content = {"status": "error", "message": "cell did not run successfully"}
+                    instance.elements[tests_element].content = {
+                        "status": "error",
+                        "message": "cell did not run successfully",
+                    }
         return results

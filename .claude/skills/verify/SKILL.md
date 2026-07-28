@@ -264,3 +264,25 @@ Then drive the served app with a script (see the two written during the
   respectively, the reverse of how much of the rest of the codebase
   treats "value" vs. "content") -- don't assume `content` holds
   everything about a `tests` element just because it does for `notes`.
+- `run_tests()` seeds `cs`/`turtle` into test code's exec globals and
+  wraps the exec in the cell's own `turtle_canvas` execution context
+  (`_maybe_turtle_context`), so turtle calls from a `tests` editor draw
+  into the *cell's actual canvas* -- deliberately not an isolated
+  scratch canvas, confirmed with the user before building it this way.
+  This means a cell with both a `turtle_canvas` and a `tests` element
+  has its canvas's content overwritten a *second* time, after
+  `execute_cell` already captured the cell's own turtle write in
+  `result.element_writes` -- if you're touching
+  `ws_handler._element_output_messages`, remember the forced-resend
+  branch there exists specifically so the test's overwrite (not the
+  cell's now-stale write) is what actually reaches the browser. Verify
+  this by using a cell whose own body draws a visually distinct shape
+  from what its test draws (e.g. cell draws a triangle, test draws a
+  right angle) and confirming the canvas screenshot shows the *test's*
+  shape -- a test and cell that happen to draw the same thing would
+  mask a regression here.
+- A cell with a `turtle_canvas` but NO `tests` element must not get the
+  forced-resend treatment -- it would just be a spurious duplicate
+  message every run. Check `has_tests_element` gates it, and add a
+  regression test for a plain turtle-only cell alongside any turtle+
+  tests one, so a change that makes the gate too broad gets caught.

@@ -108,10 +108,29 @@ def _element_output_messages(session: Session, results: dict[str, ExecutionResul
     onto `ElementInstance.content` -- not through the `cs.execution_context`
     write-collection path every other viewer output goes through -- so
     without this fallback a freshly-run cell's test result would never
-    reach the browser at all."""
+    reach the browser at all.
+
+    A cell's `turtle_canvas` needs a *forced* resend (not skipped just
+    because `result.element_writes` already includes it), but only when
+    the cell has a `tests` element: a test's own turtle drawing
+    (ARCHITECTURE.md section 3b) is written into that same canvas
+    element *after* `execute_cell` already captured
+    `result.element_writes` -- so on a cell with a test, the canvas's
+    final `content` may differ from what those writes captured (the
+    test may have overwritten the cell's own drawing, or the cell may
+    have had no turtle calls of its own at all), and a message built
+    from `element_writes` alone would silently show the browser stale
+    content. A turtle-drawing cell with no `tests` element is
+    unaffected -- `element_writes` alone is already correct there, so
+    this forced resend is skipped for it rather than duplicating an
+    identical message every run."""
     messages: list[ServerMessage] = []
     for cell_id, result in results.items():
+        cell = session.deck.cells.get(cell_id)
+        has_tests_element = cell is not None and any(e.kind == "tests" for e in cell.elements)
         for write in result.element_writes:
+            if write.kind == "turtle" and has_tests_element:
+                continue  # forced resend below carries the post-test content instead
             messages.append(
                 ElementOutput(
                     session_id=session.session_id,
@@ -121,12 +140,13 @@ def _element_output_messages(session: Session, results: dict[str, ExecutionResul
                 )
             )
 
-        cell = session.deck.cells.get(cell_id)
         if cell is None:
             continue
         written_names = {w.element_name for w in result.element_writes}
         for element in cell.elements:
-            if element.kind in ("notes", "tests") and element.name not in written_names:
+            is_notes_or_tests_fallback = element.kind in ("notes", "tests") and element.name not in written_names
+            is_forced_turtle_resend = element.kind == "turtle_canvas" and has_tests_element
+            if is_notes_or_tests_fallback or is_forced_turtle_resend:
                 messages.append(
                     ElementOutput(
                         session_id=session.session_id,
@@ -245,7 +265,7 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
         result = registry.kernel.on_tests_edited(
             message.cell_id, message.element_id, message.source, session
         )
-        return [
+        messages: list[ServerMessage] = [
             ElementOutput(
                 session_id=message.session_id,
                 cell_id=message.cell_id,
@@ -253,6 +273,24 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 content=result,
             )
         ]
+        # If the cell has a turtle_canvas, the test's own turtle drawing
+        # (kernel.py's _run_and_apply_test) already replaced that canvas
+        # element's content -- surface it too, same as the test's own
+        # result, so the browser actually sees the redrawn canvas rather
+        # than needing a separate cell re-run to pick it up.
+        cell = session.deck.cells.get(message.cell_id)
+        if cell is not None:
+            canvases = [e.name for e in cell.elements if e.kind == "turtle_canvas"]
+            if len(canvases) == 1:
+                messages.append(
+                    ElementOutput(
+                        session_id=message.session_id,
+                        cell_id=message.cell_id,
+                        element_id=canvases[0],
+                        content=instance.elements[canvases[0]].content,
+                    )
+                )
+        return messages
 
     if isinstance(message, CloneSession):
         clone = registry.clone(message.source_session_id)

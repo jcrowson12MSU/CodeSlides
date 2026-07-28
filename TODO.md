@@ -420,6 +420,43 @@ reshape the plan below and are called out explicitly where they apply:
   full suite green, ruff/oxlint clean, frontend bundle rebuilt and
   committed.
 
+  **Follow-up (same task): turtle calls now work from a `tests`
+  editor.** Originally only plain `assert` statements ran; a turtle
+  call in test code hit a `NameError` (test code's exec globals didn't
+  include `turtle`) and, even with that fixed, would have hit
+  `turtle._state()`'s "outside of cell execution" error (nothing
+  established a turtle context around a test run). Fixed by seeding
+  `cs`/`turtle` into the test's exec globals and wrapping the exec in
+  the cell's own `turtle_canvas` execution context, exactly like
+  `execute_cell` already does for the cell's own body.
+
+  Explicitly *not* isolated the way the namespace is: the user's intent
+  was "a scratch space to test the code in the main editor without
+  interfering with the overall program," and confirmed the turtle
+  output specifically belongs on the cell's own canvas (not a separate
+  preview canvas, not silently discarded) -- so the test's drawing
+  intentionally *replaces* the canvas's content, since there's only one
+  canvas and the point is seeing what the test itself draws. The cell's
+  own next run (an edit, a slider change) draws fresh and overwrites it
+  right back; namespace isolation is untouched (a test can still never
+  corrupt the cell's actual return values), it's specifically the
+  canvas that's shared on purpose. `_element_output_messages` needed a
+  matching fix: a cell's own turtle write is captured in
+  `result.element_writes` *before* the test runs afterward and
+  overwrites the same canvas, so cells with both a `turtle_canvas` and
+  a `tests` element now force a fresh resend of the canvas's final
+  content instead of sending the (now-stale) write captured mid-run --
+  ordinary turtle-drawing cells with no `tests` element are unaffected.
+
+  Verified end-to-end in a real browser: a cell whose own body draws a
+  triangle, with a test that draws a right-angle path instead -- the
+  canvas visibly shows the *test's* path, not the cell's, while the
+  cell's own status stays `idle` with no error, confirming the test
+  truly didn't touch the cell's execution. 7 new tests in
+  `test_cell_tests_element.py`, 2 in `test_ws_handler.py` (forced
+  resend on a canvas+tests cell; no spurious resend on a plain cell
+  with tests but no canvas), full suite green (148 passed), ruff clean.
+
 - [ ] **16. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example

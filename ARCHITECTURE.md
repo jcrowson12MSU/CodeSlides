@@ -281,6 +281,25 @@ code can never mutate a cell's actual results out from under it — the
 same isolation principle (§1) that already governs every other execution
 path in the kernel.
 
+**Turtle calls run in the cell's own canvas, deliberately not isolated.**
+`cs`/`turtle` are seeded into test code's exec globals exactly like a
+cell's own execution — the design intent is "a scratch space for the
+code in the main editor," not a hermetically sealed sandbox, so a
+turtle-drawing cell's test can call `turtle.forward(...)` and see the
+result drawn onto that *same* `turtle_canvas` element, letting a student
+visually sanity-check turtle logic without needing a second canvas. Each
+test run gets a fresh `_TurtleState` (position reset to the origin, empty
+command list, via the same `execution_context()` every cell execution
+already uses) — but that fresh drawing **replaces** the canvas's content,
+it doesn't layer on top of whatever the cell's own last run drew there.
+There is only one canvas per element, and the point of running the test
+is seeing what the test itself draws; the cell's own next run (an edit, a
+slider change) draws fresh and overwrites it right back. This is the one
+place test isolation and namespace isolation diverge on purpose: the
+namespace copy exists so test code can never corrupt a cell's actual
+results, but the canvas is shared precisely so the test's drawing is
+visible at all.
+
 ## 4. Process & concurrency model
 
 - One **kernel subprocess per Deck-serving server process**, not per

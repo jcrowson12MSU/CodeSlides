@@ -2,7 +2,7 @@
 a second, unittest-like code editor attached to a cell, auto-run against
 the cell's own effective namespace every time the cell re-runs."""
 
-from codeslides import App, ui
+from codeslides import App, turtle, ui
 from codeslides.kernel import Kernel, run_tests
 from codeslides.session import Session
 
@@ -162,3 +162,127 @@ def test_tests_element_isolated_across_cloned_sessions():
     assert session.instances["live_demo"].elements["unit"].content == {"status": "pass", "message": ""}
     assert clone.instances["live_demo"].elements["unit"].value == "assert result == 999"
     assert clone.instances["live_demo"].elements["unit"].content["status"] == "fail"
+
+
+def _build_turtle_deck(cell_source_draws: bool, test_source: str):
+    """A cell with a turtle_canvas + tests element. `cell_source_draws`
+    controls whether the cell's own body has turtle calls (to
+    distinguish "the test's drawing" from "the cell's own drawing" in
+    the resulting canvas commands)."""
+    app = App()
+
+    if cell_source_draws:
+
+        @app.cell(
+            elements=[
+                ui.turtle_canvas("canvas", width=400, height=400),
+                ui.tests("unit", default=test_source),
+            ],
+        )
+        def draw_something():
+            turtle.forward(200)
+            turtle.right(90)
+            turtle.forward(200)
+
+    else:
+
+        @app.cell(
+            elements=[
+                ui.turtle_canvas("canvas", width=400, height=400),
+                ui.tests("unit", default=test_source),
+            ],
+        )
+        def draw_something():
+            pass
+
+    return app
+
+
+def test_run_tests_can_call_turtle_when_given_a_turtle_canvas_element():
+    from codeslides.deck import Element
+
+    canvas = Element(name="canvas", kind="turtle_canvas", config={"width": 400, "height": 400})
+    result = run_tests("turtle.forward(50)\nturtle.right(90)\nturtle.forward(50)", {}, [canvas])
+
+    assert result["status"] == "pass"
+    assert "turtle_commands" in result
+    assert len(result["turtle_commands"]) == 3
+
+
+def test_run_tests_has_no_turtle_commands_key_without_a_turtle_canvas_element():
+    result = run_tests("assert 1 == 1", {})
+    assert "turtle_commands" not in result
+
+
+def test_run_tests_turtle_call_errors_cleanly_with_no_canvas_element():
+    result = run_tests("turtle.forward(50)", {})
+    assert result["status"] == "error"
+    assert "turtle" in result["message"].lower()
+
+
+def test_tests_elements_turtle_drawing_appears_on_the_cells_own_canvas():
+    """The whole point: a cell with no turtle calls of its own can still
+    have its canvas populated by a test's turtle calls, so a student can
+    visually check turtle logic in isolation."""
+    app = _build_turtle_deck(cell_source_draws=False, test_source="turtle.forward(50)\nturtle.right(90)")
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+
+    kernel.run_all(session)
+
+    assert session.instances["draw_something"].status == "idle"
+    assert session.instances["draw_something"].elements["unit"].content == {"status": "pass", "message": ""}
+    canvas_content = session.instances["draw_something"].elements["canvas"].content
+    assert len(canvas_content) == 2
+
+
+def test_tests_elements_turtle_drawing_replaces_the_cells_own_drawing():
+    """A cell that *does* draw its own turtle picture still gets its
+    canvas overwritten by the test's drawing -- there's only one canvas,
+    and the point of running the test is seeing what the test itself
+    draws, not layering it on top of the cell's own leftover picture."""
+    app = _build_turtle_deck(cell_source_draws=True, test_source="turtle.forward(1)")
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+
+    kernel.run_all(session)
+
+    canvas_content = session.instances["draw_something"].elements["canvas"].content
+    # the cell's own body issues 3 turtle commands (forward, right, forward);
+    # the test issues exactly 1 -- the canvas reflects the test's 1, not the cell's 3
+    assert len(canvas_content) == 1
+
+
+def test_editing_the_test_source_updates_the_canvas_without_rerunning_the_cell():
+    app = _build_turtle_deck(cell_source_draws=True, test_source="turtle.forward(1)")
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+    namespace_before = dict(session.namespace)
+
+    kernel.on_tests_edited(
+        "draw_something", "unit", "turtle.forward(1)\nturtle.forward(1)\nturtle.forward(1)", session
+    )
+
+    canvas_content = session.instances["draw_something"].elements["canvas"].content
+    assert len(canvas_content) == 3
+    # the cell itself never re-ran
+    assert session.namespace == namespace_before
+
+
+def test_a_failing_test_still_updates_the_canvas_with_whatever_it_drew_before_failing():
+    app = _build_turtle_deck(
+        cell_source_draws=False,
+        test_source="turtle.forward(50)\nassert False, 'deliberate failure'",
+    )
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+
+    kernel.run_all(session)
+
+    assert session.instances["draw_something"].elements["unit"].content["status"] == "fail"
+    # the turtle.forward(50) call before the failing assert still recorded
+    # a command -- a test's turtle drawing isn't all-or-nothing the way
+    # namespace writes are, since there's no "partial namespace" risk here
+    canvas_content = session.instances["draw_something"].elements["canvas"].content
+    assert len(canvas_content) == 1

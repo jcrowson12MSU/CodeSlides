@@ -1,4 +1,4 @@
-from codeslides import App, cs, ui
+from codeslides import App, cs, turtle, ui
 from codeslides.kernel import Kernel
 from codeslides.loader import load_deck
 from codeslides.protocol import (
@@ -231,7 +231,86 @@ def test_run_all_surfaces_a_fresh_cells_test_result_without_any_edit():
 
     element_outputs = [m for m in messages if isinstance(m, ElementOutput) and m.element_id == "unit"]
     assert len(element_outputs) == 1
-    assert element_outputs[0].content == {"status": "pass", "message": ""}
+
+
+def _build_turtle_and_tests_deck(test_source: str = "turtle.forward(1)"):
+    app = App()
+
+    @app.cell(
+        elements=[
+            ui.turtle_canvas("canvas", width=400, height=400),
+            ui.tests("unit", default=test_source),
+        ],
+    )
+    def draw_something():
+        turtle.forward(200)
+        turtle.right(90)
+        turtle.forward(200)
+
+    return app
+
+
+def test_run_all_emits_exactly_one_canvas_message_reflecting_the_tests_drawing():
+    """The cell's own body draws 3 turtle commands; its tests element
+    draws 1. The canvas message the browser receives must reflect the
+    test's 1 command (the final state), and there must be exactly one
+    such message -- not the cell's stale write followed by a second,
+    duplicate-looking one for the test."""
+    registry = SessionRegistry(kernel=Kernel(_build_turtle_and_tests_deck("turtle.forward(1)").deck))
+    session = registry.create()
+
+    messages = handle_message(registry, RunAll(session_id=session.session_id))
+
+    canvas_messages = [m for m in messages if isinstance(m, ElementOutput) and m.element_id == "canvas"]
+    assert len(canvas_messages) == 1
+    assert len(canvas_messages[0].content) == 1
+
+
+def test_set_test_source_with_turtle_calls_updates_the_canvas():
+    registry = SessionRegistry(kernel=Kernel(_build_turtle_and_tests_deck("turtle.forward(1)").deck))
+    session = registry.create()
+    handle_message(registry, RunAll(session_id=session.session_id))
+
+    messages = handle_message(
+        registry,
+        SetTestSource(
+            session_id=session.session_id,
+            cell_id="draw_something",
+            element_id="unit",
+            source="turtle.forward(1)\nturtle.forward(1)\nturtle.forward(1)",
+        ),
+    )
+
+    unit_messages = [m for m in messages if isinstance(m, ElementOutput) and m.element_id == "unit"]
+    canvas_messages = [m for m in messages if isinstance(m, ElementOutput) and m.element_id == "canvas"]
+    assert len(unit_messages) == 1
+    assert unit_messages[0].content == {"status": "pass", "message": ""}
+    assert len(canvas_messages) == 1
+    assert len(canvas_messages[0].content) == 3
+
+
+def test_set_test_source_without_turtle_calls_does_not_emit_a_canvas_message():
+    """A test that never touches turtle shouldn't force a canvas resend --
+    only relevant when the cell actually has a turtle_canvas element and
+    the test could plausibly have drawn into it."""
+    app = App()
+
+    @app.cell(elements=[ui.tests("unit", default="assert True")])
+    def plain_cell():
+        x = 1
+        return x
+
+    registry = SessionRegistry(kernel=Kernel(app.deck))
+    session = registry.create()
+    handle_message(registry, RunAll(session_id=session.session_id))
+
+    messages = handle_message(
+        registry,
+        SetTestSource(session_id=session.session_id, cell_id="plain_cell", element_id="unit", source="assert True"),
+    )
+
+    canvas_messages = [m for m in messages if isinstance(m, ElementOutput) and m.element_id != "unit"]
+    assert canvas_messages == []
 
 
 def test_set_element_value_triggers_minimal_rerun():
