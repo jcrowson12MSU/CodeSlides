@@ -84,9 +84,9 @@ kernel.on_cell_edited("live_demo", "def live_demo(speed):\n    result = base + s
 print(session.namespace["result"], clone.namespace["result"])  # 35 12 -- original untouched
 ```
 
-The example decks in `examples/` (`hello.py`, `live_demo.py`) can be run
-the same way -- load them with `importlib`, then hand `app.deck` to a
-`Kernel`.
+The example decks in `examples/` (`hello.py`, `live_demo.py`,
+`tests_demo.py`) can be run the same way -- load them with `importlib`,
+then hand `app.deck` to a `Kernel`.
 
 ## See it work: the websocket protocol
 
@@ -131,6 +131,21 @@ a fresh checkout -- no separate frontend build step needed.
 (read-only) cell, an editable cell with an image viewer written via
 `cs.image()`, and an editable cell with a slider, a notes viewer
 (markdown edit/preview toggle), and a cross-cell dependency.
+
+`codeslides present <file>.py` opens the same server directly into the
+Slides presentation view instead of the flat Cells view -- useful for a
+deck that's actually meant to be presented, not just edited:
+
+```bash
+codeslides present examples/tests_demo.py
+```
+
+`examples/tests_demo.py` demonstrates `ui.tests(...)` (a second,
+unittest-like code editor attached to a cell, auto-run every time the
+cell itself re-runs): a markdown notes cell explaining the feature, a
+slider-driven cell whose test flips between pass and fail as the slider
+moves, and a cell whose turtle-canvas drawing comes entirely from its
+test's own turtle calls.
 
 ### Frontend development
 
