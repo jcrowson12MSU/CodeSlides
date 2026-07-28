@@ -7,6 +7,23 @@
   box-sizing: border-box;
 }
 
+/* TODO.md #24: locked to the top-left of the screen in both views (Cells
+   and Slides share this same top-level layout) -- previously scrolled
+   away with the rest of the page the moment a deck had enough content
+   to scroll, losing the one persistent orientation cue ("what app is
+   this") along with the connection status and view toggle. `position:
+   sticky` keeps it pinned to the viewport's top edge while the page
+   scrolls underneath; the background/z-index keep cell content from
+   visibly scrolling up through it. */
+.cs-app-title {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #fff;
+  padding-top: 1rem;
+  margin-top: -1rem;
+}
+
 .cs-hint {
   font-size: 0.85rem;
   color: #888;

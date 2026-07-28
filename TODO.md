@@ -754,7 +754,32 @@ reshape the plan below and are called out explicitly where they apply:
   (221 passed, 2 skipped), ruff and oxlint clean, frontend bundle
   rebuilt and committed.
 
-- [ ] **24. Write example decks for teaching scenarios**
+- [x] **24. Structure1.**
+  Lock the document title at the top left of the screen in both views.
+
+  The "CodeSlides" `<h1>` previously scrolled away with the rest of the
+  page the moment a deck had enough content to scroll -- losing the one
+  persistent orientation cue, along with the connection status and view
+  toggle rendered right below it, in both the Cells and Slides views
+  (they share the same top-level layout in `App.tsx`). Fixed with
+  `position: sticky; top: 0` on the title (a `.cs-app-title` class,
+  `App.css`), plus a solid background and `z-index` so cell/slide
+  content visibly scrolling underneath doesn't bleed through it. No
+  other layout changes -- the buttons/toggle staying below it (rather
+  than moving to the top-right) is explicitly item 26's scope, not this
+  one.
+
+  Verified in a real browser via Playwright: confirmed `position:
+  sticky` is applied and, after scrolling 600px down a long Cells-view
+  deck, the title's bounding-box top is pinned at the viewport's top
+  edge (`0px`, vs. `-496px` before the fix) instead of having scrolled
+  off screen -- and the same holds navigating to a tall Slides-view
+  slide (turtle canvas + long code) and scrolling there too.
+  Screenshots confirm no visual regression at the top of the page (load
+  state unchanged) and clean scrolling behavior underneath the pinned
+  title. No backend changes; frontend build/oxlint clean.
+
+- [ ] **25. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that

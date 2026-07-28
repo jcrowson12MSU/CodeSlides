@@ -307,7 +307,7 @@ function App() {
 
   return (
     <main className="app">
-      <h1>CodeSlides</h1>
+      <h1 className="cs-app-title">CodeSlides</h1>
       <p>
         Websocket: <strong>{connected ? `connected (${sessionId ?? '...'})` : 'connecting...'}</strong>
       </p>
