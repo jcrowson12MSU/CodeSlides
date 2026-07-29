@@ -1576,7 +1576,68 @@ reshape the plan below and are called out explicitly where they apply:
   changes beyond removing `default` from `EditCellPanel`'s notes
   defaults map; frontend build clean.
 
-- [ ] **37. Write example decks for teaching scenarios**
+- [x] **37. Hide a cell's docstring (its notes content) from the code editor too, not just the `@app.cell` decorator.**
+  TODO.md #36 made a cell's docstring its `notes` element content, but
+  `display_source` (the function that already strips the `@app.cell(...)`
+  decorator before source reaches the browser, TODO.md #33) didn't yet
+  strip the docstring -- it showed up twice: once as raw source text at
+  the top of the code editor, once rendered in its own markdown notes
+  viewer. Extended `display_source` to also drop the docstring's line
+  span (found via the same `_docstring_node` `set_notes_docstring`
+  already uses, so both directions agree on exactly what counts as "the
+  docstring").
+
+  This meant the editor's text was now decorator- *and* docstring-free,
+  so a plain code edit needed a second reattachment step alongside the
+  existing one: `reattach_decorator` (used by `on_cell_edited`) now also
+  calls `set_notes_docstring` to reinsert the current docstring after
+  reattaching the decorator, so a code-only edit can't silently delete a
+  cell's notes just because the editor never showed that line. Mid-
+  keystroke invalid code (the ordinary, expected state between
+  keystrokes) means the reattached body sometimes can't be re-parsed to
+  place the docstring -- `reattach_decorator` falls back to reattaching
+  just the decorator in that case, matching `on_cell_edited`'s existing
+  "still record something close to what was typed" contract; the graph-
+  rebuild step immediately afterward independently catches and reports
+  the same syntax error either way, so nothing is swallowed silently.
+
+  Found and fixed a second, more subtle bug surfaced only by exercising
+  this new reattachment path end-to-end in a real browser (not caught by
+  unit tests alone, since `examples/live_demo.py`'s existing docstring +
+  leading comment block combination hadn't been exercised through a save
+  before): `set_notes_docstring`'s "insert a new docstring" branch
+  positioned the new docstring immediately before `func.body[0]` --  but
+  comments aren't AST nodes, so a function body that opens with a
+  comment block (e.g. `live_demo`'s own `# base comes from...` comments)
+  has `func.body[0]` pointing at the first *real* statement, well past
+  those comments. A plain code edit on such a cell was reinserting the
+  docstring *below* the leading comments instead of at the true top of
+  the body. Fixed by anchoring the insertion to `func.lineno` (the `def`
+  line itself) instead, so the docstring always lands immediately after
+  `def ...:`, regardless of what comments follow.
+
+  Verified with both automated tests and a real running server. Added 6
+  new `serialization.py` tests (`display_source` strips the docstring /
+  is unchanged with none; `reattach_decorator` reinserts the current
+  docstring across a code edit, round-trips through `display_source`
+  with a docstring present, falls back gracefully to decorator-only
+  reattachment on unparseable edited code) plus a regression test
+  pinning the leading-comment insertion-position bug, and one new
+  `kernel.py` end-to-end test (`on_cell_edited` preserves an existing
+  docstring across a code-only edit, verified by actually saving and
+  reloading the file). Full suite: 246 passed, 2 skipped (7 new). In a
+  real browser via Playwright against `examples/live_demo.py`: confirmed
+  the code editor no longer shows the docstring text anywhere while the
+  notes viewer still renders it correctly; edited the cell's code
+  (`turtle.right(144)` to `turtle.right(72)`) via the real CodeMirror
+  editor, ran it with Shift+Enter, and clicked Save -- confirmed the
+  saved `.py` file has both the code change *and* the docstring intact,
+  correctly positioned as the true first line of the function body
+  ahead of its leading comment block (not after it, the bug above);
+  confirmed a subsequent page reload still hides the docstring from the
+  editor while still rendering it as notes.
+
+- [ ] **38. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that
@@ -1585,7 +1646,7 @@ reshape the plan below and are called out explicitly where they apply:
   elements — to validate the tool end-to-end and serve as templates for
   instructors.
 
-- [ ] **38. Add tests for kernel & dependency graph**
+- [ ] **39. Add tests for kernel & dependency graph**
   Unit tests for `ast`-based variable extraction, dependency graph
   construction/cycle detection, minimal-rerun-set computation, and
   integration tests that run a sample deck through the kernel and assert
@@ -1593,9 +1654,9 @@ reshape the plan below and are called out explicitly where they apply:
   specifically clones a cell/editor instance and asserts the two instances'
   namespaces and outputs never cross-contaminate.
 
-- [ ] **39. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
+- [ ] **40. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
 
-- [ ] **40. Polish, README, and packaging**
+- [ ] **41. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
   `pip install` (editable) / eventual PyPI packaging.

@@ -201,6 +201,50 @@ def test_reattach_decorator_tolerates_a_cell_with_no_decorator():
     assert reattach_decorator(current, "def plain():\n    return 2\n") == "def plain():\n    return 2\n"
 
 
+def test_display_source_strips_the_docstring_too():
+    source = '@app.cell\ndef setup():\n    "Some notes."\n    base = 5\n    return base\n'
+    assert display_source(source) == "def setup():\n    base = 5\n    return base\n"
+
+
+def test_display_source_is_unchanged_with_no_docstring():
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    assert display_source(source) == "def setup():\n    base = 5\n    return base\n"
+
+
+def test_reattach_decorator_reinserts_the_current_docstring():
+    # the editor only ever sees/edits display_source's output (no
+    # docstring) -- a plain code edit must not silently delete the
+    # cell's notes just because the editor never showed that line.
+    current = '@app.cell\ndef setup():\n    "Some notes."\n    base = 5\n    return base\n'
+    edited_display_source = "def setup():\n    base = 6\n    return base\n"
+    updated = reattach_decorator(current, edited_display_source)
+    assert display_docstring(updated) == "Some notes."
+    assert "base = 6" in updated
+
+
+def test_reattach_decorator_round_trips_through_display_source_with_a_docstring():
+    # set_notes_docstring always writes the literal via repr() (single
+    # quotes) regardless of how the original was quoted, so this isn't a
+    # byte-identical round trip like the no-docstring case above --
+    # assert semantic equivalence instead: same code body, same notes text.
+    original = '@app.cell\ndef setup():\n    "Some notes."\n    base = 5\n    return base\n'
+    updated = reattach_decorator(original, display_source(original))
+    assert display_docstring(updated) == display_docstring(original) == "Some notes."
+    assert display_source(updated) == display_source(original)
+
+
+def test_reattach_decorator_falls_back_to_no_docstring_if_the_edited_body_is_unparseable():
+    # mid-keystroke invalid code (an unclosed paren) is the ordinary,
+    # expected state of live-typed code -- reattach_decorator must not
+    # raise just because it can no longer find where to reinsert the
+    # docstring; it still reattaches the decorator so the override
+    # records something close to what was typed.
+    current = '@app.cell\ndef setup():\n    "Some notes."\n    base = 5\n    return base\n'
+    broken_edit = "def setup(:\n    base = 5\n"
+    updated = reattach_decorator(current, broken_edit)
+    assert updated == "@app.cell\n" + broken_edit
+
+
 def test_display_docstring_returns_empty_string_with_no_docstring():
     source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
     assert display_docstring(source) == ""
@@ -218,6 +262,18 @@ def test_set_notes_docstring_inserts_a_new_docstring():
     # the rest of the body is untouched
     assert "base = 5" in updated
     assert "return base" in updated
+
+
+def test_set_notes_docstring_inserts_before_leading_comments_not_after():
+    # Regression guard: comments aren't AST nodes, so func.body[0] is the
+    # first *real* statement -- inserting "before func.body[0]" would land
+    # the new docstring below a leading comment block instead of at the
+    # true top of the body, right after the `def` line.
+    source = "@app.cell\ndef setup():\n    # a leading comment\n    base = 5\n    return base\n"
+    updated = set_notes_docstring(source, "Title")
+    lines = updated.splitlines()
+    assert lines[2] == "    'Title'"
+    assert lines[3] == "    # a leading comment"
 
 
 def test_set_notes_docstring_replaces_an_existing_one():

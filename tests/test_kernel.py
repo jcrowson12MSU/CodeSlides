@@ -311,6 +311,42 @@ def test_on_notes_edited_skips_source_overrides_if_the_cells_code_is_unparseable
     assert session.source_overrides["cell_with_notes"] == "def cell_with_notes(:\n    base = 5\n"
 
 
+_NOTES_DECK_WITH_DOCSTRING_SOURCE = (
+    "from codeslides import App, ui\n\n"
+    "app = App()\n\n"
+    '@app.cell(elements=[ui.notes("n")])\n'
+    "def cell_with_notes():\n"
+    '    "Some notes."\n'
+    "    base = 5\n"
+    "    return base\n"
+)
+
+
+def test_on_cell_edited_preserves_the_docstring_across_a_code_only_edit(tmp_path):
+    """A plain code edit only ever sends display_source's output (no
+    decorator, no docstring) -- on_cell_edited must reattach both,
+    exactly the same round trip the real edit_cell websocket handler
+    relies on, or a code-only edit would silently delete the cell's
+    notes just because the editor never showed that line."""
+    path = _write_deck_file(tmp_path, _NOTES_DECK_WITH_DOCSTRING_SOURCE)
+    from codeslides.loader import load_deck
+    from codeslides.serialization import display_docstring, display_source, save_edits
+
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+
+    edited = display_source(deck.cells["cell_with_notes"].source).replace("base = 5", "base = 6")
+    kernel.on_cell_edited("cell_with_notes", edited, session)
+
+    assert display_docstring(session.source_overrides["cell_with_notes"]) == "Some notes."
+    assert "base = 6" in session.source_overrides["cell_with_notes"]
+
+    save_edits(str(path), session.source_overrides)
+    reloaded = load_deck(str(path))
+    assert reloaded.cells["cell_with_notes"].docstring == "Some notes."
+
+
 def test_element_writes_isolated_across_cloned_sessions():
     app = _build_viewer_deck()
     kernel = Kernel(app.deck)

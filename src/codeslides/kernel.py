@@ -434,13 +434,21 @@ class Kernel:
         source is still recorded as the override (so the editor keeps
         showing what the user typed) and no other cell is touched.
 
-        `source` is decorator-free (the browser's editor only ever shows/
-        edits `display_source`'s output) -- `reattach_decorator` reunites
-        it with whatever decorator currently applies to this cell (this
-        Session's own prior override if one exists, else the Deck's
-        baseline) before it's recorded, so `session.source_overrides`
-        stays the full shape `save_edits`/`_apply_overrides` expect and a
-        later Save doesn't silently drop the decorator from the file."""
+        `source` is decorator- and docstring-free (the browser's editor
+        only ever shows/edits `display_source`'s output, which strips
+        both) -- `reattach_decorator` reunites it with whatever decorator
+        *and* docstring currently apply to this cell (this Session's own
+        prior override if one exists, else the Deck's baseline) before
+        it's recorded, so `session.source_overrides` stays the full shape
+        `save_edits`/`_apply_overrides` expect and a later Save doesn't
+        silently drop the decorator or the cell's notes from the file.
+
+        `reattach_decorator` falls back to reattaching just the decorator
+        (no docstring) if the edited body doesn't even parse -- the
+        ordinary, expected state of live-typed code between keystrokes --
+        so the override still records what was typed rather than
+        nothing at all; the graph-rebuild below independently fails and
+        reports the same syntax error either way."""
         current = session.source_overrides.get(cell_name, self.deck.cells[cell_name].source)
         session.source_overrides[cell_name] = reattach_decorator(current, source)
         try:
