@@ -95,6 +95,47 @@ def test_viewer_elements_are_not_passed_as_kwargs():
     assert session.namespace["picture"] == "a square"
 
 
+def test_a_cell_local_import_turtle_is_a_no_op_and_the_framework_turtle_still_works():
+    """A real `import turtle` executing for real would rebind the name to
+    the actual stdlib module (which the browser's turtle canvas can't
+    see at all, and which crashes outright on a machine without tkinter
+    -- reproduced by hand). It must be a silent no-op: codeslides.turtle
+    stays bound, and turtle.forward(...) still records a real command."""
+    app = App()
+
+    @app.cell(elements=[ui.turtle_canvas("canvas")])
+    def draw():
+        import turtle
+
+        turtle.forward(50)
+        result = 1
+        return result
+
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+
+    assert session.instances["draw"].status == "idle", session.instances["draw"].error
+    commands = session.instances["draw"].elements["canvas"].content
+    assert commands == [
+        {"op": "goto", "x": 50.0, "y": 0.0, "pen_down": True, "color": "black", "width": 1.0}
+    ]
+
+
+def test_import_turtle_as_something_else_is_not_treated_as_a_no_op():
+    """Deliberately narrow: only a bare `import turtle` is a no-op. `import
+    turtle as t` is a real import under a different name that the
+    framework's own turtle has no reason to intercept -- it isn't the
+    name every cell's globals already provide `codeslides.turtle` under,
+    so there's nothing to protect it from shadowing."""
+    import ast
+
+    from codeslides.kernel import strip_noop_turtle_imports
+
+    tree = ast.parse("import turtle as t\n")
+    assert strip_noop_turtle_imports(tree.body) == tree.body
+
+
 def test_multi_value_return_unpacks_by_name():
     app = App()
 

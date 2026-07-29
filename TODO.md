@@ -1757,7 +1757,72 @@ reshape the plan below and are called out explicitly where they apply:
   -- purely a backend serialization/display change, same as the
   decorator-hiding feature it extends.
 
-- [ ] **40. Write example decks for teaching scenarios**
+- [x] **40. Make `import turtle` safe to write in a deck file (deck-level or cell-local) -- and a no-op when it runs inside CodeSlides.**
+  The user's actual requirement: code presented in CodeSlides should
+  also be exactly what a student runs standalone afterward, and a
+  student's own copy needs a real `import turtle` to work at all --
+  the deck author should be able to write it too, naturally, without
+  it doing anything different inside CodeSlides itself (where
+  `codeslides.turtle`, already seeded into every cell's globals
+  alongside `cs`, is what a bare `turtle.forward(...)` call actually
+  needs to resolve to).
+
+  Reproduced two real, distinct breakages by hand before fixing
+  anything: a cell-local `import turtle` (as the first line of a cell
+  body) silently *rebinds* the cell's own `turtle` name to the real
+  stdlib module for the rest of that cell's execution -- the next
+  `turtle.forward(...)` call in the same cell then either opens a real
+  Tk window under the hood (invisible to and unrecorded by the
+  browser's own turtle canvas) or, on a machine without tkinter
+  available, crashes outright:
+  `ModuleNotFoundError: No module named '_tkinter'`. A **deck-level**
+  `import turtle` (TODO.md #38's top-level-import feature, at the true
+  top of the file) is worse: it crashes `load_deck` itself, before any
+  cell ever runs, since the stdlib import executes for real the moment
+  the deck file's own top-level code runs -- an author writing the
+  single most natural line for a turtle-graphics lesson would prevent
+  the whole deck from loading in CodeSlides at all, only working once
+  the exact same file was later run as a plain script.
+
+  Fixed both with one new `kernel.py` function,
+  `strip_noop_turtle_imports(stmts)`: walks a list of top-level
+  statements and drops any bare, unaliased `import turtle` (deliberately
+  narrow -- `import turtle as t` and `from turtle import ...` are left
+  alone, since neither is the literal name `codeslides.turtle` is
+  already provided under) before anything is compiled/exec'd. Applied
+  in exactly the two places that actually execute a deck/cell's code:
+  `kernel.py`'s `_compile_cell_function` (strips from the cell's own
+  `func.body` before compiling it) and `loader.py`'s `load_deck` (parses
+  the whole file's AST, strips at the module's top level, before
+  `compile`/`exec` -- previously compiled the raw source string
+  directly; now compiles the modified tree instead, via
+  `ast.fix_missing_locations`). Crucially, the strip only ever changes
+  what's compiled *in memory* -- `Cell.source`, the on-disk `.py` file,
+  and everything `display_source`/`save_edits` round-trip are completely
+  untouched, so a student's later standalone run of the exact same file
+  gets a real, working `import turtle` doing its real job.
+
+  Verified with both automated tests and a real running server. Added 2
+  new `kernel.py` tests (a cell-local `import turtle` is a no-op and
+  `turtle.forward(...)` still records a real command onto the canvas;
+  `import turtle as t` is deliberately *not* treated as a no-op) and 2
+  new `loader.py` tests (a deck-level `import turtle` no longer crashes
+  `load_deck`, and correctly stays out of `deck.imports`; the on-disk
+  file is byte-for-byte untouched by the strip). Full suite: 269 passed,
+  2 skipped (4 new). In a real browser via Playwright: a deck with
+  `import turtle` at the true top of the file (no cell-local import at
+  all) loaded successfully with no console errors, the cell ran `idle`,
+  and the turtle canvas rendered a real drawn path (forward/right/
+  forward, an L-shape) -- confirming `codeslides.turtle` handled the
+  calls, not a broken/invisible stdlib turtle; edited the cell's code
+  and re-ran it with Shift+Enter, still `idle`, no errors; clicked Save
+  and confirmed the saved `.py` file still has `import turtle` at the
+  top, completely unchanged, with the edit correctly folded into the
+  cell body; reloaded the page and confirmed the deck still loads and
+  runs correctly on a fresh `load_deck` call. No frontend changes
+  needed -- purely a kernel/loader execution-time fix.
+
+- [ ] **41. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that
@@ -1766,7 +1831,7 @@ reshape the plan below and are called out explicitly where they apply:
   elements — to validate the tool end-to-end and serve as templates for
   instructors.
 
-- [ ] **41. Add tests for kernel & dependency graph**
+- [ ] **42. Add tests for kernel & dependency graph**
   Unit tests for `ast`-based variable extraction, dependency graph
   construction/cycle detection, minimal-rerun-set computation, and
   integration tests that run a sample deck through the kernel and assert
@@ -1774,9 +1839,9 @@ reshape the plan below and are called out explicitly where they apply:
   specifically clones a cell/editor instance and asserts the two instances'
   namespaces and outputs never cross-contaminate.
 
-- [ ] **42. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
+- [ ] **43. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
 
-- [ ] **43. Polish, README, and packaging**
+- [ ] **44. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
   `pip install` (editable) / eventual PyPI packaging.

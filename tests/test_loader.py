@@ -150,3 +150,46 @@ def test_load_deck_ignores_a_cell_local_import(tmp_path):
     deck = load_deck(str(path))
 
     assert "math" not in deck.imports
+
+
+def test_load_deck_does_not_crash_on_a_top_level_import_turtle(tmp_path):
+    """A real top-level `import turtle` would try to actually import
+    stdlib turtle at load time -- reproduced by hand, this crashes with
+    ModuleNotFoundError: No module named '_tkinter' on any machine
+    without tkinter available (also true of some CI/server
+    environments). load_deck must never let a deck author's own
+    `import turtle` -- exactly what they'd naturally write, and what a
+    student's own copy of the file needs for real once presenting is
+    over -- break loading the deck in CodeSlides itself."""
+    path = tmp_path / "deck.py"
+    path.write_text(
+        "from codeslides import App, ui\nimport turtle\n\napp = App()\n\n"
+        '@app.cell(elements=[ui.turtle_canvas("canvas")])\n'
+        "def draw():\n    turtle.forward(50)\n    result = 1\n    return result\n"
+    )
+
+    deck = load_deck(str(path))  # must not raise
+
+    assert "draw" in deck.cells
+    # turtle is already codeslides.turtle everywhere a cell can see it
+    # (kernel.py's execute_cell) -- it must not also end up in
+    # deck.imports as if it were an ordinary deck-level import.
+    assert "turtle" not in deck.imports
+
+
+def test_load_deck_leaves_the_on_disk_file_untouched_by_the_turtle_strip(tmp_path):
+    # The no-op strip only ever affects what's compiled/exec'd in memory
+    # -- the file itself must still read exactly as the author wrote it,
+    # since a student later runs this same .py file standalone and needs
+    # `import turtle` to do its real job there.
+    source = (
+        "from codeslides import App, ui\nimport turtle\n\napp = App()\n\n"
+        '@app.cell(elements=[ui.turtle_canvas("canvas")])\n'
+        "def draw():\n    turtle.forward(50)\n    result = 1\n    return result\n"
+    )
+    path = tmp_path / "deck.py"
+    path.write_text(source)
+
+    load_deck(str(path))
+
+    assert path.read_text() == source

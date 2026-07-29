@@ -11,6 +11,7 @@ from pathlib import Path
 
 from codeslides.app import App
 from codeslides.deck import Deck
+from codeslides.kernel import strip_noop_turtle_imports
 
 
 def _module_level_import_names(source: str) -> set[str]:
@@ -61,7 +62,22 @@ def load_deck(path: str) -> Deck:
     """
     module_path = Path(path)
     source = module_path.read_text()
-    code = compile(source, str(module_path), "exec")
+    # A bare top-level `import turtle` is a real stdlib import here --
+    # unlike a cell body's own copy (kernel.py's _compile_cell_function,
+    # same strip_noop_turtle_imports call), which only ever runs inside
+    # execute_cell's own globals, this genuinely executes at deck-load
+    # time. It would try to actually import stdlib turtle (which imports
+    # tkinter and crashes outright on any machine without it -- a real
+    # bug, reproduced by hand), or, worse, succeed and silently shadow
+    # every cell's `turtle` name with the real module for the rest of
+    # this module's execution. Stripped the same way and for the same
+    # reason: `turtle` is already `codeslides.turtle` everywhere a cell
+    # can see it, and the on-disk file is untouched -- this only changes
+    # what actually runs during `load_deck` itself.
+    tree = ast.parse(source, filename=str(module_path))
+    tree.body = strip_noop_turtle_imports(tree.body)
+    ast.fix_missing_locations(tree)
+    code = compile(tree, str(module_path), "exec")
     module = types.ModuleType(module_path.stem)
     module.__file__ = str(module_path)
     exec(code, module.__dict__)  # noqa: S102 - loading a Python source file *is* the feature

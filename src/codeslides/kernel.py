@@ -32,6 +32,44 @@ from codeslides.session import CellInstance, Session
 _NESTED_SCOPE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
 
 
+def strip_noop_turtle_imports(stmts: list[ast.stmt]) -> list[ast.stmt]:
+    """Drop every bare `import turtle` statement from a top-level
+    statement list (a cell's own body, here, or a whole deck module's
+    top level, `loader.py`'s `load_deck`) -- `turtle` is already provided
+    as `codeslides.turtle` in every cell's execution globals (this
+    module's own `call_globals`/`test_globals`), the same framework name
+    `cs` already is with no import needed. A real `import turtle`
+    executing for real would rebind the name to the actual stdlib module
+    (which opens a Tk window and does nothing this app's own turtle
+    canvas can see) -- or, at deck-load time, simply crash outright on
+    any machine without tkinter available (real bug, reproduced by
+    hand: `ModuleNotFoundError: No module named '_tkinter'`).
+
+    Deliberately narrow: only a bare, unaliased `import turtle` (not
+    `import turtle as t`, not `from turtle import forward`) is treated
+    as a no-op -- the author is expected to keep writing plain
+    `turtle.forward(...)` calls exactly like the framework name already
+    requires, so an ordinary `import turtle` is the only spelling that
+    needs to silently do nothing. The statement is dropped rather than
+    rewritten so the *displayed*/on-disk source is completely
+    unaffected (ARCHITECTURE.md section 2's file format is still
+    `Cell.source`/`inspect.getsource` verbatim) -- this only changes
+    what actually executes, mirroring the very reason the import is
+    there in the first place: so a student later runs the same `.py`
+    file standalone, where `import turtle` needs to do its real job.
+    """
+    return [
+        stmt
+        for stmt in stmts
+        if not (
+            isinstance(stmt, ast.Import)
+            and len(stmt.names) == 1
+            and stmt.names[0].name == "turtle"
+            and stmt.names[0].asname is None
+        )
+    ]
+
+
 class CellDefinitionError(ValueError):
     """Raised when a cell's `return` statement doesn't cleanly name its
     declared writes (ARCHITECTURE.md section 3: cells expose named
@@ -65,6 +103,7 @@ def _compile_cell_function(source: str, globals_dict: dict[str, object]):
         raise ValueError(f"expected exactly one function definition, found {len(func_defs)}")
     func = func_defs[0]
     func.decorator_list = []  # strip @app.cell(...) -- only the plain function is executed
+    func.body = strip_noop_turtle_imports(func.body)
 
     return_names = _extract_return_names(func)
 
