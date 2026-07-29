@@ -1935,7 +1935,78 @@ reshape the plan below and are called out explicitly where they apply:
   changes needed -- purely a backend serialization/display consistency
   fix.
 
-- [ ] **43. Write example decks for teaching scenarios**
+- [x] **43. A cell with a `tests` element should never auto-run its own top-level body with no arguments -- only its test (which calls the function itself) should exercise it.**
+  Root cause of a real reported error: `markCorners(cells2=None,
+  t=None)` has no input elements bound to either parameter (its own
+  elements are a `notes` viewer and a `turtle_canvas`, both outputs,
+  never inputs) -- so every auto-run of the cell called it as
+  `markCorners()`, both parameters silently defaulting to `None`, and
+  `print(len(cells2))` raised `TypeError: object of type 'NoneType' has
+  no len()` on every single run, regardless of what the test box's own
+  call passed. This is a whole class of cell that only makes sense as
+  *logic to be called with real arguments*, not as a top-level script
+  that runs itself -- and a `tests` element already existing on the
+  cell is exactly the signal that this is that kind of cell.
+
+  Split `execute_cell` into two paths in `_run_cells`, chosen once per
+  cell via the same `_find_tests_element` check that already gates the
+  auto-run-tests step: a cell with no `tests` element still goes
+  through `execute_cell` exactly as before (define, bind input-element
+  values as kwargs, call, unpack `return`-named values); a cell *with*
+  one now goes through a new `define_cell` instead, which compiles the
+  function and binds it into `session.namespace` under its own name --
+  so `markCorners`, `createMatrix`, and any other cell can still call
+  it directly, same as `drawSquares` calling `drawSquare(...)` already
+  could -- but never actually invokes it. `CellDefinitionError`/
+  `SyntaxError` (a bad `return` shape, invalid syntax) are still
+  reported as this cell's own error, since those are definition-time
+  problems independent of ever being called. The tests element then
+  auto-runs immediately afterward exactly as before, against whatever
+  the definition (not a call) put in the namespace -- which is
+  nothing beyond the function itself, so the test is squarely
+  responsible for producing any value by calling it.
+
+  Confirmed with the user this is an intentional, unconditional rule
+  for *every* cell with a `tests` element, no exceptions -- including
+  `createMatrix`, whose own return value other cells might otherwise
+  have relied on; a tested cell's result is now only ever produced by
+  something actually calling it (the test box, or another cell's own
+  code), never by the cell auto-running itself. This also surfaced,
+  while investigating, that a `tests` element's edited source was
+  never being persisted anywhere by the Save button at all (only
+  `instance.elements[...].value`, in-memory only, unlike a code or
+  notes edit which both fold into `session.source_overrides`) -- noted
+  as a distinct, still-open gap, not addressed here.
+
+  Verified with both automated tests and a real running server.
+  Updated 9 pre-existing `test_cell_tests_element.py`/`test_kernel.py`/
+  `test_ws_handler.py` tests whose test source relied on the old
+  auto-call-then-test model (e.g. bare `assert result == 15` reading a
+  namespace value only a direct call now produces) to call the cell
+  explicitly instead (`assert live_demo(3) == 15`), and added 2 new
+  ones (`live_demo` is never auto-called with no arguments at all --
+  `result` never appears in the namespace from `run_all` alone; the
+  test can call the cell with a value completely independent of
+  whatever its own slider element currently holds). Full suite: 281
+  passed, 2 skipped. In a real browser via Playwright, using an exact
+  copy of the real `marchingSquares.py` deck: confirmed `markCorners`
+  now loads and runs with `idle` status (previously `error` on every
+  load); typed the user's exact reported test code
+  (`cells1 = createMatrix(3,4); t = "t"; print(cells1);
+  markCorners(cells1, t)`) into `markCorners`'s own tests box and
+  confirmed it now runs with `PASS` status, the real matrix printed,
+  and the correct `len()` result -- the exact original failure,
+  resolved end-to-end. No frontend changes needed -- purely a kernel
+  execution-model change.
+
+  Known follow-on, not addressed here: a cell's input elements (e.g.
+  `live_demo`'s `speed` slider) still render normally in the browser
+  for a tested cell even though they no longer affect anything at
+  execution time, since the test is what calls the function now, with
+  whatever arguments it chooses -- this could read as misleading UI
+  until/unless addressed separately.
+
+- [ ] **44. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that
@@ -1944,7 +2015,7 @@ reshape the plan below and are called out explicitly where they apply:
   elements — to validate the tool end-to-end and serve as templates for
   instructors.
 
-- [ ] **44. Add tests for kernel & dependency graph**
+- [ ] **45. Add tests for kernel & dependency graph**
   Unit tests for `ast`-based variable extraction, dependency graph
   construction/cycle detection, minimal-rerun-set computation, and
   integration tests that run a sample deck through the kernel and assert
@@ -1952,9 +2023,23 @@ reshape the plan below and are called out explicitly where they apply:
   specifically clones a cell/editor instance and asserts the two instances'
   namespaces and outputs never cross-contaminate.
 
-- [ ] **45. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
+- [ ] **46. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
 
-- [ ] **46. Polish, README, and packaging**
+- [ ] **47. Persist a `tests` element's edited source when Save is clicked -- it currently only lives in memory.**
+  Discovered while fixing #43: unlike a code edit or a notes edit (both
+  of which fold into `session.source_overrides`, later written by
+  `save_edits`), `on_tests_edited` only ever writes
+  `instance.elements[element_name].value` -- pure in-memory `Session`
+  state. Clicking Save never touches it, so a test box's content
+  reverts to the deck file's original `ui.tests(name, default="...")`
+  the moment the page reloads or a new Session connects. Needs its own
+  fold-into-`source_overrides` treatment (likely regenerating the
+  cell's `elements=[...]` list with the new `default=`, the same shape
+  `add_element`/`set_element_config` already produce on disk, just
+  routed through the Save button's existing mechanism instead of
+  writing immediately).
+
+- [ ] **48. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
   `pip install` (editable) / eventual PyPI packaging.

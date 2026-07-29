@@ -322,6 +322,46 @@ def execute_cell(
     )
 
 
+def define_cell(
+    cell_name: str,
+    source: str,
+    session: Session,
+    deck_imports: dict[str, object] | None = None,
+) -> ExecutionResult:
+    """Compile the cell named `cell_name`'s function and bind it into
+    `session.namespace` under its own name -- exactly like `execute_cell`
+    already does -- but never actually *call* it. Used instead of
+    `execute_cell` for a cell that has a `tests` element attached
+    (`_run_cells`): that cell's own top-level body is never auto-run with
+    no arguments the way a plain cell's is; only the test (which calls
+    the function itself, with whatever arguments it chooses) exercises
+    it. `markCorners(cells, t)` having no input elements bound to
+    `cells`/`t` used to mean it was always called as `markCorners()`,
+    both parameters defaulting to `None` -- this sidesteps that
+    entirely, since the function is simply never invoked on its own.
+
+    Never writes a `return`-named value into the namespace (nothing ran
+    to produce one) -- a cell relying on another *tested* cell's return
+    value for its own reads would need that other cell's test to have
+    actually run and, if it chooses to, written the value back some
+    other way; this function only ever provides the *callable* itself,
+    same as any two ordinary module-level functions would see each
+    other regardless of whether either has been called yet.
+
+    Still reports `CellDefinitionError`/`SyntaxError` (a bad `return`
+    shape, invalid syntax) as this cell's own error -- those are
+    definition-time problems, not call-time ones, so skipping the call
+    doesn't skip catching them."""
+    try:
+        call_globals = {"cs": cs, "turtle": turtle, **(deck_imports or {}), **session.namespace}
+        fn, _ = _compile_cell_function(source, call_globals)
+    except Exception:  # noqa: BLE001 - same "a cell's own error must not kill the kernel" rule as execute_cell
+        return ExecutionResult(status="error", error=traceback.format_exc())
+
+    session.namespace[cell_name] = fn
+    return ExecutionResult(status="idle")
+
+
 def _find_tests_element(elements: list[Element]) -> str | None:
     """Return the name of the cell's one `tests` element, if it has
     exactly one -- same "ambiguous means none" rule as
@@ -882,14 +922,28 @@ class Kernel:
         instance's status/output/error in place. `instance.output` carries
         the tagged output union from ARCHITECTURE.md section 6 (`kind` +
         `data`, resolved by `codeslides.output.resolve_output` from the
-        cell's raw returned value), alongside stdout/stderr."""
+        cell's raw returned value), alongside stdout/stderr.
+
+        A cell with a `tests` element is *defined* (`define_cell`) but
+        never auto-run with no arguments the way a plain cell is --
+        only its test (which calls the function itself, with whatever
+        arguments it chooses) exercises it. A cell like `markCorners(cells,
+        t)`, with no input elements bound to either parameter, would
+        otherwise always be called as `markCorners()`, both defaulting to
+        `None` regardless of what the test box passes -- this makes that
+        entire class of "cell auto-ran with placeholder Nones" error
+        impossible for a tested cell, not just harder to trigger."""
         results: dict[str, ExecutionResult] = {}
         for name in names:
             source = session.source_overrides.get(name, self.deck.cells[name].source)
             instance = session.instances[name]
             instance.status = "running"
             elements = self.deck.cells[name].elements
-            result = execute_cell(name, source, session, elements=elements, deck_imports=self.deck.imports)
+            tests_element = _find_tests_element(elements)
+            if tests_element is not None:
+                result = define_cell(name, source, session, deck_imports=self.deck.imports)
+            else:
+                result = execute_cell(name, source, session, elements=elements, deck_imports=self.deck.imports)
             instance.status = result.status
             resolved = resolve_output(result.value) if result.status == "idle" else None
             instance.output = {
@@ -904,12 +958,12 @@ class Kernel:
 
             # Auto-run this cell's attached tests element (ARCHITECTURE.md
             # section 3b), if it has one, against the namespace as it
-            # stands right after this cell's own run -- exactly what the
-            # cell's own body would have seen. Skipped on the cell's own
-            # error: there's no valid new result to test against, and
-            # running tests against a stale/partial namespace would just
-            # be misleading, not informative.
-            tests_element = _find_tests_element(elements)
+            # stands right after the cell was defined (or, for an
+            # untested cell, run) -- exactly what the test's own call
+            # into the function will see. Skipped on an error defining/
+            # running the cell: there's no valid function/namespace to
+            # test against, and running tests against a stale/partial
+            # namespace would just be misleading, not informative.
             if tests_element is not None:
                 if result.status == "idle":
                     _run_and_apply_test(

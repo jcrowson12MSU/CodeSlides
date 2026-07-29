@@ -1048,7 +1048,7 @@ def test_a_tests_element_can_use_a_deck_level_top_level_import(tmp_path):
         "from codeslides import App, ui\n\n"
         "import math\n\n"
         "app = App()\n\n"
-        '@app.cell(elements=[ui.tests("unit", default="assert math.isclose(value, 4.0)")])\n'
+        '@app.cell(elements=[ui.tests("unit", default="assert math.isclose(uses_math(), 4.0)")])\n'
         "def uses_math():\n"
         "    value = math.sqrt(16)\n"
         "    return value\n"

@@ -1,13 +1,17 @@
 """Tests for the `ui.tests(...)` element (ARCHITECTURE.md section 3b):
-a second, unittest-like code editor attached to a cell, auto-run against
-the cell's own effective namespace every time the cell re-runs."""
+a second, unittest-like code editor attached to a cell. A cell with a
+`tests` element is *defined* but never auto-called with no arguments the
+way a plain cell is -- only the test (which calls the function itself,
+with whatever arguments it chooses) exercises it. See TODO.md's
+"the main code editor should not be run at all if there is a test
+block" entry."""
 
 from codeslides import App, turtle, ui
 from codeslides.kernel import Kernel, run_tests
 from codeslides.session import Session
 
 
-def _build_deck(test_source: str = "assert result == 15"):
+def _build_deck(test_source: str = "assert live_demo(3) == 15"):
     app = App()
 
     @app.cell
@@ -97,7 +101,7 @@ def test_run_tests_surfaces_stdout_printed_before_a_failing_assertion():
 
 
 def test_tests_element_auto_runs_after_run_all_and_passes():
-    app = _build_deck("assert result == 15")
+    app = _build_deck("assert live_demo(3) == 15")
     kernel = Kernel(app.deck)
     session = Session(deck=app.deck)
 
@@ -112,7 +116,7 @@ def test_tests_element_auto_runs_after_run_all_and_passes():
 
 
 def test_tests_element_auto_runs_and_fails():
-    app = _build_deck("assert result == 999, 'wrong'")
+    app = _build_deck("assert live_demo(3) == 999, 'wrong'")
     kernel = Kernel(app.deck)
     session = Session(deck=app.deck)
 
@@ -126,54 +130,68 @@ def test_tests_element_auto_runs_and_fails():
     }
 
 
-def test_tests_element_reruns_automatically_when_an_upstream_slider_changes():
-    app = _build_deck("assert result == 35")
+def test_live_demo_is_never_auto_called_with_no_arguments():
+    """The core of this change: live_demo(speed) has an input element
+    (a slider) bound to `speed`, but that binding is only ever consumed
+    if the cell is actually *called* -- and a tested cell no longer is,
+    automatically. `result` (a name only the call would produce) must
+    never appear in the namespace just from run_all; only the test
+    calling live_demo() itself produces a value."""
+    app = _build_deck("assert live_demo(3) == 15")
     kernel = Kernel(app.deck)
     session = Session(deck=app.deck)
+
     kernel.run_all(session)
-    assert session.instances["live_demo"].elements["unit"].content["status"] == "fail"
 
-    kernel.on_element_changed("live_demo", "speed", 7, session)
-
-    assert session.namespace["result"] == 35
-    assert session.instances["live_demo"].elements["unit"].content == {
-        "status": "pass",
-        "message": "",
-        "stdout": "",
-        "stderr": "",
-    }
+    assert session.instances["live_demo"].status == "idle"
+    assert "result" not in session.namespace
+    assert callable(session.namespace["live_demo"])
+    assert session.instances["live_demo"].elements["unit"].content["status"] == "pass"
 
 
-def test_tests_element_does_not_run_when_the_cell_itself_errors():
-    app = _build_deck("assert result == 15")
+def test_tests_element_can_call_the_cell_with_a_different_argument_than_any_slider_value():
+    """A tested cell's own input-element value (e.g. a slider) is no
+    longer consumed automatically at all -- the test is free to call
+    the function with whatever argument it chooses, completely
+    independent of what the slider element instance currently holds."""
+    app = _build_deck("assert live_demo(7) == 35")
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+
+    kernel.run_all(session)
+
+    assert session.instances["live_demo"].elements["unit"].content["status"] == "pass"
+
+
+def test_tests_element_does_not_run_when_the_cell_itself_fails_to_define():
+    app = _build_deck("assert live_demo(3) == 15")
     kernel = Kernel(app.deck)
     session = Session(deck=app.deck)
     kernel.run_all(session)
     assert session.instances["live_demo"].elements["unit"].content["status"] == "pass"
 
-    # break the cell itself -- speed is no longer a valid parameter name
-    kernel.on_cell_edited(
-        "live_demo",
-        "def live_demo(nope):\n    result = base * nope\n    return result\n",
-        session,
-    )
+    # break the cell's own *definition* -- a bad return shape
+    # (CellDefinitionError), not just a bad call -- since defining (not
+    # calling) is what a tested cell can now fail at. A plain
+    # SyntaxError from a mid-edit is a separate, pre-existing early-
+    # return path in on_cell_edited (before _run_cells is ever reached
+    # at all), so it wouldn't exercise the "cell errored -> mark test
+    # error" branch this test is actually checking.
+    kernel.on_cell_edited("live_demo", "def live_demo(speed):\n    return speed + 1\n", session)
 
-    # the cell errors (no `nope` element is bound), and the test result
-    # reflects that no valid run happened -- not a stale "pass" left over
-    # from before the edit
     assert session.instances["live_demo"].status == "error"
     assert session.instances["live_demo"].elements["unit"].content["status"] == "error"
 
 
 def test_on_tests_edited_reruns_the_test_without_rerunning_the_cell():
-    app = _build_deck("assert result == 999")
+    app = _build_deck("assert live_demo(3) == 999")
     kernel = Kernel(app.deck)
     session = Session(deck=app.deck)
     kernel.run_all(session)
     assert session.instances["live_demo"].elements["unit"].content["status"] == "fail"
     namespace_before = dict(session.namespace)
 
-    result = kernel.on_tests_edited("live_demo", "unit", "assert result == 15", session)
+    result = kernel.on_tests_edited("live_demo", "unit", "assert live_demo(3) == 15", session)
 
     assert result == {"status": "pass", "message": "", "stdout": "", "stderr": ""}
     assert session.instances["live_demo"].elements["unit"].content == {
@@ -182,62 +200,61 @@ def test_on_tests_edited_reruns_the_test_without_rerunning_the_cell():
         "stdout": "",
         "stderr": "",
     }
-    assert session.instances["live_demo"].elements["unit"].value == "assert result == 15"
-    # the cell itself never re-ran -- namespace is untouched
+    assert session.instances["live_demo"].elements["unit"].value == "assert live_demo(3) == 15"
+    # the cell itself never re-ran (re-defined) -- namespace is untouched
     assert session.namespace == namespace_before
 
 
 def test_tests_element_value_is_seeded_from_default():
-    app = _build_deck("assert result == 15")
+    app = _build_deck("assert live_demo(3) == 15")
     session = Session(deck=app.deck)
-    assert session.instances["live_demo"].elements["unit"].value == "assert result == 15"
+    assert session.instances["live_demo"].elements["unit"].value == "assert live_demo(3) == 15"
     # no run has happened yet -- no result to show
     assert session.instances["live_demo"].elements["unit"].content is None
 
 
 def test_a_print_only_test_with_no_assertions_still_shows_its_output_end_to_end():
     """The real motivating use case: a tests box holding just
-    `print(createMatrix(3, 4))`, no assert anywhere, to show/talk
-    through a sample call and its output -- not a pass/fail check at
-    all. Confirms this survives the full auto-run-after-run_all path
-    (not just a direct run_tests call)."""
+    `print(double(21))`, no assert anywhere, to show/talk through a
+    sample call and its output -- not a pass/fail check at all.
+    Confirms this survives the full auto-run-after-run_all path (not
+    just a direct run_tests call), and that the test calling the
+    (never-auto-called) function itself is what actually exercises it."""
     app = App()
 
     @app.cell(elements=[ui.tests("unit", default="print(double(21))")])
-    def make_double():
-        def double(x):
-            return x * 2
-
-        return double
+    def double(x):
+        result = x * 2
+        return result
 
     kernel = Kernel(app.deck)
     session = Session(deck=app.deck)
 
     kernel.run_all(session)
 
-    content = session.instances["make_double"].elements["unit"].content
+    content = session.instances["double"].elements["unit"].content
     assert content["status"] == "pass"
     assert content["stdout"] == "42\n"
 
 
 def test_tests_element_isolated_across_cloned_sessions():
-    app = _build_deck("assert result == 15")
+    app = _build_deck("assert live_demo(3) == 15")
     kernel = Kernel(app.deck)
     session = Session(deck=app.deck)
     kernel.run_all(session)
 
     clone = session.clone()
-    kernel.on_tests_edited("live_demo", "unit", "assert result == 999", clone)
+    kernel.on_tests_edited("live_demo", "unit", "assert live_demo(3) == 999", clone)
 
     # the clone's edit never touches the source session's test state
-    assert session.instances["live_demo"].elements["unit"].value == "assert result == 15"
+    assert session.instances["live_demo"].elements["unit"].value == "assert live_demo(3) == 15"
     assert session.instances["live_demo"].elements["unit"].content == {
         "status": "pass",
         "message": "",
         "stdout": "",
         "stderr": "",
     }
-    assert clone.instances["live_demo"].elements["unit"].value == "assert result == 999"
+    assert clone.instances["live_demo"].elements["unit"].value == "assert live_demo(3) == 999"
     assert clone.instances["live_demo"].elements["unit"].content["status"] == "fail"
 
 

@@ -146,7 +146,7 @@ def test_set_ui_state_notes_source_updates_content_without_rerun():
 def test_set_test_source_runs_the_test_and_emits_element_output():
     app = App()
 
-    @app.cell(elements=[ui.tests("unit", default="assert x == 1")])
+    @app.cell(elements=[ui.tests("unit", default="assert cell_with_tests() == 1")])
     def cell_with_tests():
         x = 1
         return x
@@ -167,7 +167,7 @@ def test_set_test_source_runs_the_test_and_emits_element_output():
             session_id=session.session_id,
             cell_id="cell_with_tests",
             element_id="unit",
-            source="assert x == 999, 'nope'",
+            source="assert cell_with_tests() == 999, 'nope'",
         ),
     )
 
@@ -180,13 +180,16 @@ def test_set_test_source_runs_the_test_and_emits_element_output():
         "stdout": "",
         "stderr": "",
     }
-    assert session.instances["cell_with_tests"].elements["unit"].value == "assert x == 999, 'nope'"
+    assert (
+        session.instances["cell_with_tests"].elements["unit"].value
+        == "assert cell_with_tests() == 999, 'nope'"
+    )
 
 
 def test_set_test_source_does_not_rerun_the_cell():
     app = App()
 
-    @app.cell(elements=[ui.tests("unit", default="assert x == 1")])
+    @app.cell(elements=[ui.tests("unit", default="assert cell_with_tests() == 1")])
     def cell_with_tests():
         x = 1
         return x
@@ -202,7 +205,7 @@ def test_set_test_source_does_not_rerun_the_cell():
             session_id=session.session_id,
             cell_id="cell_with_tests",
             element_id="unit",
-            source="assert x == 1",
+            source="assert cell_with_tests() == 1",
         ),
     )
 
