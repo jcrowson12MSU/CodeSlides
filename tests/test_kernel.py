@@ -777,9 +777,16 @@ def test_set_element_config_updates_disk_and_kernel_baseline(tmp_path):
 
     cell = kernel.set_element_config(session, "live_demo", "preview", {"src": "https://new.example.com"})
 
+    # Reloading re-executes the on-disk `ui.iframe(...)` call through the
+    # real constructor, which re-applies its own `height=240` default for
+    # the kwarg this call omitted -- see test_serialization.py's own
+    # version of this assertion for the full explanation.
     preview = next(e for e in cell.elements if e.name == "preview")
-    assert preview.config == {"src": "https://new.example.com"}
-    assert kernel.deck.cells["live_demo"].elements[-1].config == {"src": "https://new.example.com"}
+    assert preview.config == {"src": "https://new.example.com", "height": 240}
+    assert kernel.deck.cells["live_demo"].elements[-1].config == {
+        "src": "https://new.example.com",
+        "height": 240,
+    }
 
 
 def test_set_element_config_pushes_an_iframes_new_src_into_the_sessions_content(tmp_path):

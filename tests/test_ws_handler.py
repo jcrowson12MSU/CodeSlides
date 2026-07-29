@@ -879,7 +879,11 @@ def test_set_element_config_emits_element_config_set_and_writes_to_disk(tmp_path
     assert ElementOutput in kinds
     config_set = next(m for m in messages if isinstance(m, ElementConfigSet))
     preview = next(e for e in config_set.elements if e["name"] == "preview")
-    assert preview["config"] == {"src": "https://new.example.com"}
+    # Reloading re-executes the on-disk `ui.iframe(...)` call through the
+    # real constructor, which re-applies its own `height=240` default for
+    # the kwarg this SetElementConfig payload omitted -- see
+    # test_serialization.py's own version of this assertion.
+    assert preview["config"] == {"src": "https://new.example.com", "height": 240}
     output = next(m for m in messages if isinstance(m, ElementOutput))
     assert output.element_id == "preview"
     assert output.content == "https://new.example.com"

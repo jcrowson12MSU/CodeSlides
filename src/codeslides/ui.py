@@ -31,8 +31,8 @@ def image(name: str) -> Element:
     return Element(name=name, kind="image", config={})
 
 
-def iframe(name: str, *, src: str = "") -> Element:
-    return Element(name=name, kind="iframe", config={"src": src})
+def iframe(name: str, *, src: str = "", height: int = 240) -> Element:
+    return Element(name=name, kind="iframe", config={"src": src, "height": height})
 
 
 def notes(name: str, *, default: str = "") -> Element:

@@ -1395,7 +1395,64 @@ reshape the plan below and are called out explicitly where they apply:
   scroll lock both still work. No backend changes; frontend build/
   oxlint clean.
 
-- [ ] **35. Write example decks for teaching scenarios**
+- [x] **35. Add a text box to set an iframe element's height, if the cell has one.**
+  `ui.iframe(name, *, src="")` had no way to control its rendered
+  height -- `.cs-iframe-viewer` was a fixed `240px` in CSS, the same
+  for every iframe in every deck. Added a `height: int = 240` keyword
+  parameter to `ui.iframe()` (`ui.py`), stored in `Element.config`
+  exactly like `turtle_canvas`'s existing `width`/`height` kwargs --
+  `240` matches the prior fixed CSS value, so an existing deck with no
+  `height=...` in its `ui.iframe(...)` call renders identically to
+  before. On the frontend, `IframeViewer` (`viewerElements.tsx`) now
+  takes a `height` prop applied via inline `style={{ height }}` (a per-
+  element, author-editable value, not a fixed CSS constant) --
+  `ViewerElementWidget.tsx` wires it from `element.config.height`, the
+  same pattern `turtle_canvas`'s width/height already used one case
+  above it. Added a second textbox to `EditCellPanel`'s existing iframe
+  section (TODO.md #23's URL textbox), following that exact same
+  "local draft state, submit via `set_element_config`" pattern --
+  `type="number"` with a client-side guard rejecting non-positive
+  values before ever sending `set_element_config` (mirrors the kind of
+  validation `InvalidSourceError` already guards server-side for
+  source edits, just for a numeric field with no server-side
+  counterpart to fall back on). No changes needed to
+  `set_element_config` itself (`kernel.py`/`serialization.py`,
+  already a fully generic wholesale-config replace with no per-key
+  validation) or to the websocket protocol.
+
+  Along the way, discovered and correctly reasoned through a subtlety
+  in how `set_element_config` round-trips: it serializes *exactly* the
+  config dict it's given into the on-disk `ui.iframe(...)` call (e.g.
+  omitting `height` if only `src` was submitted, which the frontend's
+  own `{ ...element.config, src }` spread pattern always avoids in
+  practice) -- but reloading that file re-executes the call through
+  the real constructor, which re-applies its own `height=240` default
+  for any omitted kwarg. Three pre-existing tests that constructed
+  `ui.iframe(...)` calls or `set_element_config` payloads without a
+  `height` key had assertions written before `height` existed as a
+  parameter, and needed updating to expect the constructor's default
+  being reapplied on reload -- not a bug, just a stale expectation.
+
+  Verified with both automated tests and a real browser. Added 2 new
+  `serialization.py` unit tests (`ui.iframe()`'s default config
+  includes `height: 240`; `set_element_config` can update just the
+  height) and fixed the 3 stale assertions above; full suite: 228
+  passed, 2 skipped (2 new). In a real browser via Playwright: added a
+  new cell, attached an iframe element via the picker, confirmed the
+  height textbox defaults to `240`; set a src and a custom height
+  (`600`) and confirmed the rendered `.cs-iframe-viewer`'s actual
+  pixel height changed accordingly (602px, +2px border); confirmed the
+  height persists correctly across a full page reload and a fresh
+  session re-running the cell from scratch (both the config value and
+  the rendered pixel height); confirmed submitting an invalid height
+  (`0`, `-50`) is silently rejected client-side (rendered height
+  unchanged) while a subsequent valid value still applies correctly
+  afterward; confirmed the height textbox correctly shows the
+  persisted value even before an iframe has any `src` yet (the
+  no-content placeholder case). No frontend regressions; frontend
+  build/oxlint clean.
+
+- [ ] **36. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that
@@ -1404,7 +1461,7 @@ reshape the plan below and are called out explicitly where they apply:
   elements — to validate the tool end-to-end and serve as templates for
   instructors.
 
-- [ ] **36. Add tests for kernel & dependency graph**
+- [ ] **37. Add tests for kernel & dependency graph**
   Unit tests for `ast`-based variable extraction, dependency graph
   construction/cycle detection, minimal-rerun-set computation, and
   integration tests that run a sample deck through the kernel and assert
@@ -1412,9 +1469,9 @@ reshape the plan below and are called out explicitly where they apply:
   specifically clones a cell/editor instance and asserts the two instances'
   namespaces and outputs never cross-contaminate.
 
-- [ ] **37. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
+- [ ] **38. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
 
-- [ ] **38. Polish, README, and packaging**
+- [ ] **39. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
   `pip install` (editable) / eventual PyPI packaging.

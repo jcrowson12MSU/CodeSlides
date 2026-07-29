@@ -13,7 +13,7 @@ const ELEMENT_KIND_DEFAULTS: Record<string, Record<string, unknown>> = {
   text_input: { default: '' },
   turtle_canvas: { width: 400, height: 400 },
   image: {},
-  iframe: { src: '' },
+  iframe: { src: '', height: 240 },
   notes: { default: '' },
   tests: { default: '' },
 }
@@ -27,8 +27,8 @@ export interface EditCellPanelProps {
   onAddElement: (name: string, kind: string, config: Record<string, unknown>) => void
   onRemoveElement: (elementName: string) => void
   /** TODO.md #23: reorder elements (up/down arrows) and edit an iframe
-   * element's src (a plain textbox) -- both write to the deck's .py
-   * file immediately, same precedent as rename/add/remove. */
+   * element's src/height (plain textboxes) -- both write to the deck's
+   * .py file immediately, same precedent as rename/add/remove. */
   onReorderElements: (elementOrder: string[]) => void
   onSetElementConfig: (elementId: string, config: Record<string, unknown>) => void
   /** Set when the last rename/add-element/remove-element for this cell
@@ -63,6 +63,10 @@ export function EditCellPanel({
   // as the rename field above, since set_element_config writes to disk
   // immediately and shouldn't fire on every keystroke.
   const [iframeSrcDrafts, setIframeSrcDrafts] = useState<Record<string, string>>({})
+  // Same pattern, for an iframe element's height (px) -- a separate
+  // draft/submit pair from src's above since the two are independent
+  // fields a user may edit and submit one at a time.
+  const [iframeHeightDrafts, setIframeHeightDrafts] = useState<Record<string, string>>({})
 
   const existingNames = new Set(elements.map((e) => e.name))
   const canAdd = newElementName.trim().length > 0 && !existingNames.has(newElementName.trim())
@@ -94,6 +98,14 @@ export function EditCellPanel({
     event.preventDefault()
     const src = iframeSrcDrafts[element.name] ?? String(element.config.src ?? '')
     onSetElementConfig(element.name, { ...element.config, src })
+  }
+
+  function handleIframeHeightSubmit(event: React.FormEvent, element: ElementMeta) {
+    event.preventDefault()
+    const draft = iframeHeightDrafts[element.name] ?? String(element.config.height ?? 240)
+    const height = Number.parseInt(draft, 10)
+    if (!Number.isFinite(height) || height <= 0) return
+    onSetElementConfig(element.name, { ...element.config, height })
   }
 
   return (
@@ -164,6 +176,26 @@ export function EditCellPanel({
                     }
                   />
                   <button type="submit">Set URL</button>
+                </form>
+              )}
+              {element.kind === 'iframe' && (
+                <form
+                  className="cs-edit-cell-iframe-height"
+                  onSubmit={(event) => handleIframeHeightSubmit(event, element)}
+                >
+                  <label htmlFor={`${cellId}-${element.name}-height`}>Height (px)</label>
+                  <input
+                    id={`${cellId}-${element.name}-height`}
+                    type="number"
+                    min={1}
+                    step={1}
+                    placeholder="240"
+                    value={iframeHeightDrafts[element.name] ?? String(element.config.height ?? 240)}
+                    onChange={(event) =>
+                      setIframeHeightDrafts((prev) => ({ ...prev, [element.name]: event.target.value }))
+                    }
+                  />
+                  <button type="submit">Set height</button>
                 </form>
               )}
             </li>

@@ -30,7 +30,13 @@ export function ViewerElementWidget({
       widget = <ImageViewer elementId={element.name} content={content} />
       break
     case 'iframe':
-      widget = <IframeViewer elementId={element.name} content={content} />
+      widget = (
+        <IframeViewer
+          elementId={element.name}
+          content={content}
+          height={Number(element.config.height ?? 240)}
+        />
+      )
       break
     case 'notes':
       widget = (

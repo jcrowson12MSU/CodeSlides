@@ -34,9 +34,14 @@ export function ImageViewer({ elementId, content }: ImageViewerProps) {
 export interface IframeViewerProps {
   elementId: string
   content: unknown
+  /** `ui.iframe(..., height=...)`'s config value (default 240, matching
+   * the pre-existing fixed CSS height) -- set inline rather than via a
+   * CSS class since it's a per-element, author-editable value (the
+   * EditCellPanel height textbox), not a fixed constant. */
+  height: number
 }
 
-export function IframeViewer({ elementId, content }: IframeViewerProps) {
+export function IframeViewer({ elementId, content, height }: IframeViewerProps) {
   if (!content || typeof content !== 'string') {
     return (
       <div className="cs-element cs-element-viewer cs-element-empty">
@@ -48,7 +53,7 @@ export function IframeViewer({ elementId, content }: IframeViewerProps) {
   return (
     <div className="cs-element cs-element-viewer">
       <span className="cs-element-label">{elementId}</span>
-      <iframe className="cs-iframe-viewer" src={content} title={elementId} />
+      <iframe className="cs-iframe-viewer" src={content} title={elementId} style={{ height }} />
     </div>
   )
 }

@@ -381,7 +381,29 @@ def test_set_element_config_updates_an_iframes_src(deck_file):
 
     deck = load_deck(str(deck_file))
     preview = next(e for e in deck.cells["live_demo"].elements if e.name == "preview")
-    assert preview.config == {"src": "https://new.example.com"}
+    # `set_element_config` serializes exactly the config dict it's given
+    # into the `ui.iframe(...)` call on disk (no `height` kwarg here) --
+    # but reloading re-executes that call through the real constructor,
+    # which re-applies its own `height=240` default for the omitted
+    # kwarg, same as any other omitted keyword argument would.
+    assert preview.config == {"src": "https://new.example.com", "height": 240}
+
+
+def test_ui_iframe_defaults_to_a_240px_height():
+    element = ui.iframe("preview")
+    assert element.config == {"src": "", "height": 240}
+
+
+def test_set_element_config_updates_an_iframes_height(deck_file):
+    add_element(str(deck_file), "live_demo", ui.iframe("preview", src="https://example.com", height=240))
+
+    set_element_config(
+        str(deck_file), "live_demo", "preview", {"src": "https://example.com", "height": 600}
+    )
+
+    deck = load_deck(str(deck_file))
+    preview = next(e for e in deck.cells["live_demo"].elements if e.name == "preview")
+    assert preview.config == {"src": "https://example.com", "height": 600}
     # position and other elements are untouched
     assert [e.name for e in deck.cells["live_demo"].elements] == ["speed", "preview"]
 
