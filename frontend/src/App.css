@@ -525,7 +525,7 @@ body.cs-resizing {
 
 .cs-notes-header {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
 }
 
@@ -565,7 +565,7 @@ body.cs-resizing {
      default heading sizes/margins (up to 2em with a matching margin)
      were designed for full-page reading, not a title sitting a few
      lines above a couple sentences of body text. */
-  font-size: 1rem;
+  font-size: 1.15rem;
   margin: 0 0 0.15rem;
 }
 

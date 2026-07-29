@@ -59,7 +59,6 @@ export function IframeViewer({ elementId, content, height }: IframeViewerProps) 
 }
 
 export interface NotesViewerProps {
-  elementId: string
   content: unknown
   onChangeSource: (source: string) => void
 }
@@ -68,15 +67,17 @@ export interface NotesViewerProps {
 // editor and a rendered view, toggled by the user. Toggling and editing
 // are both pure UI/authoring state -- neither sends set_element_value nor
 // triggers a cell re-run (ARCHITECTURE.md section 8); edits go out as
-// set_ui_state's notes_source field instead.
-export function NotesViewer({ elementId, content, onChangeSource }: NotesViewerProps) {
+// set_ui_state's notes_source field instead. Unlike every other viewer,
+// this one never shows its own element name -- notes content is markdown
+// meant to be read starting right at its own title if it has one, not
+// prefixed with authoring metadata a reader has no use for.
+export function NotesViewer({ content, onChangeSource }: NotesViewerProps) {
   const [editing, setEditing] = useState(false)
   const source = typeof content === 'string' ? content : ''
 
   return (
     <div className="cs-element cs-element-viewer cs-notes-viewer">
       <div className="cs-notes-header">
-        <span className="cs-element-label">{elementId}</span>
         <button type="button" className="cs-notes-toggle" onClick={() => setEditing((v) => !v)}>
           {editing ? 'preview' : 'edit'}
         </button>

@@ -41,7 +41,6 @@ export function ViewerElementWidget({
     case 'notes':
       widget = (
         <NotesViewer
-          elementId={element.name}
           content={content}
           onChangeSource={(source) => onChangeNotesSource(element.name, source)}
         />
