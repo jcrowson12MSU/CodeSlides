@@ -30,12 +30,17 @@ def _build_deck(test_source: str = "assert result == 15"):
 
 
 def test_run_tests_pass():
-    assert run_tests("assert 1 + 1 == 2", {}) == {"status": "pass", "message": ""}
+    assert run_tests("assert 1 + 1 == 2", {}) == {
+        "status": "pass",
+        "message": "",
+        "stdout": "",
+        "stderr": "",
+    }
 
 
 def test_run_tests_fail_with_assertion_message():
     result = run_tests("assert 1 == 2, 'nope'", {})
-    assert result == {"status": "fail", "message": "nope"}
+    assert result == {"status": "fail", "message": "nope", "stdout": "", "stderr": ""}
 
 
 def test_run_tests_fail_with_no_assertion_message():
@@ -62,8 +67,33 @@ def test_run_tests_cannot_mutate_the_caller_s_namespace():
 
 
 def test_run_tests_empty_source_passes_trivially():
-    assert run_tests("", {}) == {"status": "pass", "message": ""}
-    assert run_tests("   \n  ", {}) == {"status": "pass", "message": ""}
+    assert run_tests("", {}) == {"status": "pass", "message": "", "stdout": "", "stderr": ""}
+    assert run_tests("   \n  ", {}) == {"status": "pass", "message": "", "stdout": "", "stderr": ""}
+
+
+def test_run_tests_surfaces_printed_output_with_no_assertions_at_all():
+    """The tests box isn't only for assert-only unittest-style checks --
+    a plain `print(some_function(3, 4))` with no assertions at all is
+    just as valid, to show/talk through a sample input and its output.
+    Previously this printed text was captured internally and then
+    silently discarded before ever reaching the caller."""
+    result = run_tests("print(double(21))", {"double": lambda x: x * 2})
+    assert result["status"] == "pass"
+    assert result["stdout"] == "42\n"
+
+
+def test_run_tests_surfaces_stdout_alongside_a_passing_assertion():
+    result = run_tests("print('checking...')\nassert 1 + 1 == 2", {})
+    assert result["status"] == "pass"
+    assert result["stdout"] == "checking...\n"
+
+
+def test_run_tests_surfaces_stdout_printed_before_a_failing_assertion():
+    # output printed before the failure is still real, useful context --
+    # not thrown away just because the test overall failed.
+    result = run_tests("print('about to fail')\nassert False", {})
+    assert result["status"] == "fail"
+    assert result["stdout"] == "about to fail\n"
 
 
 def test_tests_element_auto_runs_after_run_all_and_passes():
@@ -73,7 +103,12 @@ def test_tests_element_auto_runs_after_run_all_and_passes():
 
     kernel.run_all(session)
 
-    assert session.instances["live_demo"].elements["unit"].content == {"status": "pass", "message": ""}
+    assert session.instances["live_demo"].elements["unit"].content == {
+        "status": "pass",
+        "message": "",
+        "stdout": "",
+        "stderr": "",
+    }
 
 
 def test_tests_element_auto_runs_and_fails():
@@ -86,6 +121,8 @@ def test_tests_element_auto_runs_and_fails():
     assert session.instances["live_demo"].elements["unit"].content == {
         "status": "fail",
         "message": "wrong",
+        "stdout": "",
+        "stderr": "",
     }
 
 
@@ -99,7 +136,12 @@ def test_tests_element_reruns_automatically_when_an_upstream_slider_changes():
     kernel.on_element_changed("live_demo", "speed", 7, session)
 
     assert session.namespace["result"] == 35
-    assert session.instances["live_demo"].elements["unit"].content == {"status": "pass", "message": ""}
+    assert session.instances["live_demo"].elements["unit"].content == {
+        "status": "pass",
+        "message": "",
+        "stdout": "",
+        "stderr": "",
+    }
 
 
 def test_tests_element_does_not_run_when_the_cell_itself_errors():
@@ -133,8 +175,13 @@ def test_on_tests_edited_reruns_the_test_without_rerunning_the_cell():
 
     result = kernel.on_tests_edited("live_demo", "unit", "assert result == 15", session)
 
-    assert result == {"status": "pass", "message": ""}
-    assert session.instances["live_demo"].elements["unit"].content == {"status": "pass", "message": ""}
+    assert result == {"status": "pass", "message": "", "stdout": "", "stderr": ""}
+    assert session.instances["live_demo"].elements["unit"].content == {
+        "status": "pass",
+        "message": "",
+        "stdout": "",
+        "stderr": "",
+    }
     assert session.instances["live_demo"].elements["unit"].value == "assert result == 15"
     # the cell itself never re-ran -- namespace is untouched
     assert session.namespace == namespace_before
@@ -148,6 +195,31 @@ def test_tests_element_value_is_seeded_from_default():
     assert session.instances["live_demo"].elements["unit"].content is None
 
 
+def test_a_print_only_test_with_no_assertions_still_shows_its_output_end_to_end():
+    """The real motivating use case: a tests box holding just
+    `print(createMatrix(3, 4))`, no assert anywhere, to show/talk
+    through a sample call and its output -- not a pass/fail check at
+    all. Confirms this survives the full auto-run-after-run_all path
+    (not just a direct run_tests call)."""
+    app = App()
+
+    @app.cell(elements=[ui.tests("unit", default="print(double(21))")])
+    def make_double():
+        def double(x):
+            return x * 2
+
+        return double
+
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+
+    kernel.run_all(session)
+
+    content = session.instances["make_double"].elements["unit"].content
+    assert content["status"] == "pass"
+    assert content["stdout"] == "42\n"
+
+
 def test_tests_element_isolated_across_cloned_sessions():
     app = _build_deck("assert result == 15")
     kernel = Kernel(app.deck)
@@ -159,7 +231,12 @@ def test_tests_element_isolated_across_cloned_sessions():
 
     # the clone's edit never touches the source session's test state
     assert session.instances["live_demo"].elements["unit"].value == "assert result == 15"
-    assert session.instances["live_demo"].elements["unit"].content == {"status": "pass", "message": ""}
+    assert session.instances["live_demo"].elements["unit"].content == {
+        "status": "pass",
+        "message": "",
+        "stdout": "",
+        "stderr": "",
+    }
     assert clone.instances["live_demo"].elements["unit"].value == "assert result == 999"
     assert clone.instances["live_demo"].elements["unit"].content["status"] == "fail"
 
@@ -231,7 +308,12 @@ def test_tests_elements_turtle_drawing_appears_on_the_cells_own_canvas():
     kernel.run_all(session)
 
     assert session.instances["draw_something"].status == "idle"
-    assert session.instances["draw_something"].elements["unit"].content == {"status": "pass", "message": ""}
+    assert session.instances["draw_something"].elements["unit"].content == {
+        "status": "pass",
+        "message": "",
+        "stdout": "",
+        "stderr": "",
+    }
     canvas_content = session.instances["draw_something"].elements["canvas"].content
     assert len(canvas_content) == 2
 

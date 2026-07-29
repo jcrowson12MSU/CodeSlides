@@ -1822,7 +1822,55 @@ reshape the plan below and are called out explicitly where they apply:
   runs correctly on a fresh `load_deck` call. No frontend changes
   needed -- purely a kernel/loader execution-time fix.
 
-- [ ] **41. Write example decks for teaching scenarios**
+- [x] **41. Surface a `tests` element's printed output, not just its pass/fail status.**
+  Prompted by a real authoring question: the `tests` box was assumed to
+  be assert-only (a unittest-style pass/fail check), but the actual
+  want was broader -- use the same box to show sample inputs/outputs too
+  (`print(createMatrix(3, 4))`, no assertions at all), so an instructor
+  can talk through what a function does without a second, separate
+  scratch area. That already ran as plain Python (`run_tests` just
+  `exec`s the box's source, no `unittest.TestCase` involved) -- but its
+  captured stdout was silently discarded before ever reaching the
+  caller, and the frontend only rendered the message area when
+  `status !== 'pass'`, so a print-only box (always a trivial "pass",
+  nothing to assert) showed literally nothing, indistinguishable from
+  an empty box.
+
+  Fixed both halves. `kernel.py`'s `run_tests` now always returns
+  `stdout`/`stderr` alongside `status`/`message` (previously captured
+  into local `io.StringIO()`s and thrown away); `_run_and_apply_test`
+  carries them into the tests element's `content`; `on_tests_edited`
+  (the live-edit-in-the-browser path, `SetTestSource` in
+  `ws_handler.py`) needed the same fix separately -- it explicitly
+  reconstructed a narrower `{"status", "message"}` dict of its own to
+  send back over the wire, which would have silently dropped stdout
+  for every live edit even after the rest of the fix, since that's the
+  primary way an author actually interacts with this box. Frontend:
+  `TestResult` (`elementMeta.ts`) gained optional `stdout`/`stderr`
+  fields (optional since `kernel.py`'s own "cell errored, tests never
+  ran" fallback content has neither); `TestsElementWidget.tsx` now
+  always renders captured output in a new `.cs-tests-output` block,
+  regardless of pass/fail, alongside the existing (still pass/fail-only)
+  message area for actual assertion failures.
+
+  Verified with both automated tests and a real running server. Fixed
+  10 pre-existing tests that asserted the old, narrower exact-dict shape
+  (now correctly expects the two new always-present keys) and added 4
+  new ones (`run_tests` surfaces stdout with no assertions at all,
+  alongside a passing assertion, and printed-before-a-failing-assertion
+  output isn't thrown away either; an end-to-end kernel test confirming
+  a print-only test element on a real cell shows its output after
+  `run_all`). Full suite: 273 passed, 2 skipped (4 new). In a real
+  browser via Playwright: a `createMatrix` cell with
+  `ui.tests("unit", default="print(createMatrix(3, 4))")` (no
+  assertions) showed a green "PASS" badge *and* the printed matrix
+  output right below it, in the same visual style as the cell's own
+  output area; edited the test box live in the browser (changing the
+  call's arguments) and re-ran it, confirmed the printed output updated
+  correctly via the live-edit path specifically (not just the initial
+  `run_all`), with no console errors. Frontend build/lint clean.
+
+- [ ] **42. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that
@@ -1831,7 +1879,7 @@ reshape the plan below and are called out explicitly where they apply:
   elements — to validate the tool end-to-end and serve as templates for
   instructors.
 
-- [ ] **42. Add tests for kernel & dependency graph**
+- [ ] **43. Add tests for kernel & dependency graph**
   Unit tests for `ast`-based variable extraction, dependency graph
   construction/cycle detection, minimal-rerun-set computation, and
   integration tests that run a sample deck through the kernel and assert
@@ -1839,9 +1887,9 @@ reshape the plan below and are called out explicitly where they apply:
   specifically clones a cell/editor instance and asserts the two instances'
   namespaces and outputs never cross-contaminate.
 
-- [ ] **43. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
+- [ ] **44. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
 
-- [ ] **44. Polish, README, and packaging**
+- [ ] **45. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
   `pip install` (editable) / eventual PyPI packaging.

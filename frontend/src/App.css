@@ -673,6 +673,17 @@ body.cs-resizing {
   color: #8a6100;
 }
 
+.cs-tests-output {
+  margin: 0.35rem 0 0;
+  padding: 0.5rem;
+  border-radius: 4px;
+  font-size: var(--cs-font-tight);
+  white-space: pre-wrap;
+  overflow-x: auto;
+  background: #f6f6f6;
+  color: #333;
+}
+
 .cs-element-wrapper {
   display: flex;
   align-items: flex-start;

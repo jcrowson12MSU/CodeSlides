@@ -28,10 +28,16 @@ export function isTestElement(kind: string): boolean {
 }
 
 // A `tests` element's result (ARCHITECTURE.md section 3b), mirroring
-// codeslides.kernel.run_tests's wire shape exactly.
+// codeslides.kernel.run_tests's wire shape exactly. stdout/stderr are
+// optional -- kernel.py's own "cell errored, tests never ran" fallback
+// content (`{status: "error", message: "cell did not run successfully"}`)
+// doesn't include them, since nothing was ever executed to capture output
+// from.
 export interface TestResult {
   status: 'pass' | 'fail' | 'error'
   message: string
+  stdout?: string
+  stderr?: string
 }
 
 export function isTestResult(content: unknown): content is TestResult {

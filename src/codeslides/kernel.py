@@ -351,6 +351,14 @@ def run_tests(
       "fail" so an author can tell "the code under test is wrong" apart
       from "the test itself doesn't even run").
     - `message`: the assertion/traceback text, or "" on pass.
+    - `stdout`/`stderr`: always populated, pass or fail -- this box isn't
+      only for `assert`-only unittest-style checks; an author can just as
+      well write `print(createMatrix(3, 4))` with no assertions at all,
+      to show/talk through a sample input and its output, and that
+      printed text needs to actually reach the browser. Previously
+      captured here but silently discarded before ever reaching the
+      caller -- a print-only box always reported a trivial "pass" with
+      its output thrown away, indistinguishable from an empty box.
     - `turtle_commands`: present only if `elements` includes exactly one
       `turtle_canvas` (same "ambiguous means none" rule execute_cell
       already applies) -- the test's own turtle drawing, meant to be
@@ -377,7 +385,7 @@ def run_tests(
     whatever the cell's own last run drew, it never draws *on top of*
     stale turtle state left over from the cell."""
     turtle_element = _find_turtle_canvas(elements or [])
-    result: dict[str, Any] = {"status": "pass", "message": ""}
+    result: dict[str, Any] = {"status": "pass", "message": "", "stdout": "", "stderr": ""}
     if turtle_element is not None:
         result["turtle_commands"] = []
     if not source.strip():
@@ -399,6 +407,8 @@ def run_tests(
         result["status"] = "error"
         result["message"] = traceback.format_exc()
 
+    result["stdout"] = stdout.getvalue()
+    result["stderr"] = stderr.getvalue()
     if turtle_element is not None:
         result["turtle_commands"] = turtle_commands
     return result
@@ -412,19 +422,32 @@ def _run_and_apply_test(
     deck_imports: dict[str, object] | None = None,
 ) -> dict[str, Any]:
     """Run `instance`'s `tests_element` and apply the result: the test's
-    own `{"status", "message"}` onto the tests element's `content`
-    (ARCHITECTURE.md section 3b), and -- if the cell has a turtle canvas
-    -- the test's turtle drawing onto *that* canvas element's `content`,
-    replacing whatever the cell's own last run drew there. This is the
-    "test code can draw into the cell's canvas to visually check turtle
-    logic in isolation" behavior: the test's drawing intentionally
-    overwrites the cell's, since there's only one canvas and the point is
-    seeing what the test *would* draw, not layering it on top of
-    unrelated leftover state. A subsequent run of the cell itself (an
-    edit, a slider change) draws fresh and overwrites it right back."""
+    own `{"status", "message", "stdout", "stderr"}` onto the tests
+    element's `content` (ARCHITECTURE.md section 3b), and -- if the cell
+    has a turtle canvas -- the test's turtle drawing onto *that* canvas
+    element's `content`, replacing whatever the cell's own last run drew
+    there. This is the "test code can draw into the cell's canvas to
+    visually check turtle logic in isolation" behavior: the test's
+    drawing intentionally overwrites the cell's, since there's only one
+    canvas and the point is seeing what the test *would* draw, not
+    layering it on top of unrelated leftover state. A subsequent run of
+    the cell itself (an edit, a slider change) draws fresh and overwrites
+    it right back.
+
+    `stdout`/`stderr` are included regardless of `status` -- this box
+    isn't only for `assert`-only checks; `print(createMatrix(3, 4))`
+    with no assertions at all is just as valid a use (showing/talking
+    through a sample input and its output), and its printed text needs
+    to reach the browser exactly like the cell's own output already
+    does."""
     test_source = instance.elements[tests_element].value or ""
     result = run_tests(test_source, namespace, elements, deck_imports=deck_imports)
-    instance.elements[tests_element].content = {"status": result["status"], "message": result["message"]}
+    instance.elements[tests_element].content = {
+        "status": result["status"],
+        "message": result["message"],
+        "stdout": result["stdout"],
+        "stderr": result["stderr"],
+    }
 
     turtle_element = _find_turtle_canvas(elements)
     if turtle_element is not None and "turtle_commands" in result:
@@ -589,16 +612,26 @@ class Kernel:
         results other cells already produced. If the cell has a
         `turtle_canvas`, the test's own turtle drawing (if any) replaces
         that canvas's content too -- see `_run_and_apply_test`. Returns
-        the new `{"status", "message"}` result (never `turtle_commands`;
-        the canvas gets its own separate update, this return value is
-        only ever used for the tests element's own badge)."""
+        the new `{"status", "message", "stdout", "stderr"}` result (never
+        `turtle_commands`; the canvas gets its own separate update) --
+        this is what `ws_handler.py`'s `SetTestSource` sends straight
+        back to the browser as this element's live output, so a
+        print-only test box (no assertions at all, just e.g.
+        `print(createMatrix(3, 4))` to show a sample input/output) needs
+        its printed text here, not just in the auto-run-after-a-cell-edit
+        path."""
         instance = session.instances[cell_name]
         elements = self.deck.cells[cell_name].elements
         instance.elements[element_name].value = source
         result = _run_and_apply_test(
             instance, element_name, session.namespace, elements, deck_imports=self.deck.imports
         )
-        return {"status": result["status"], "message": result["message"]}
+        return {
+            "status": result["status"],
+            "message": result["message"],
+            "stdout": result["stdout"],
+            "stderr": result["stderr"],
+        }
 
     def add_cell(self, session: Session) -> tuple[Cell, ExecutionResult]:
         """Add a brand-new, blank `instance="editable"` cell (TODO.md

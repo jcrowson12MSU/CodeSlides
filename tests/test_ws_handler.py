@@ -157,6 +157,8 @@ def test_set_test_source_runs_the_test_and_emits_element_output():
     assert session.instances["cell_with_tests"].elements["unit"].content == {
         "status": "pass",
         "message": "",
+        "stdout": "",
+        "stderr": "",
     }
 
     messages = handle_message(
@@ -171,10 +173,12 @@ def test_set_test_source_runs_the_test_and_emits_element_output():
 
     assert len(messages) == 1
     assert isinstance(messages[0], ElementOutput)
-    assert messages[0].content == {"status": "fail", "message": "nope"}
+    assert messages[0].content == {"status": "fail", "message": "nope", "stdout": "", "stderr": ""}
     assert session.instances["cell_with_tests"].elements["unit"].content == {
         "status": "fail",
         "message": "nope",
+        "stdout": "",
+        "stderr": "",
     }
     assert session.instances["cell_with_tests"].elements["unit"].value == "assert x == 999, 'nope'"
 
@@ -298,7 +302,7 @@ def test_set_test_source_with_turtle_calls_updates_the_canvas():
     unit_messages = [m for m in messages if isinstance(m, ElementOutput) and m.element_id == "unit"]
     canvas_messages = [m for m in messages if isinstance(m, ElementOutput) and m.element_id == "canvas"]
     assert len(unit_messages) == 1
-    assert unit_messages[0].content == {"status": "pass", "message": ""}
+    assert unit_messages[0].content == {"status": "pass", "message": "", "stdout": "", "stderr": ""}
     assert len(canvas_messages) == 1
     assert len(canvas_messages[0].content) == 3
 

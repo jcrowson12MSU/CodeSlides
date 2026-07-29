@@ -21,6 +21,12 @@ export interface TestsElementWidgetProps {
 }
 
 export function TestsElementWidget({ elementId, source, result, onChangeSource }: TestsElementWidgetProps) {
+  // Printed output matters on every status, not just failure -- this box
+  // is just as often a sample-input/sample-output demo (`print(f(3, 4))`,
+  // no assertions at all) as it is an assert-only unittest-style check,
+  // and a "pass" with silently-discarded stdout would be indistinguishable
+  // from an empty box.
+  const output = [result?.stdout, result?.stderr].filter(Boolean).join('')
   return (
     <div className="cs-element cs-element-viewer cs-tests-viewer">
       <div className="cs-tests-header">
@@ -35,6 +41,7 @@ export function TestsElementWidget({ elementId, source, result, onChangeSource }
       {result && result.status !== 'pass' && result.message && (
         <pre className={`cs-tests-message cs-tests-message-${result.status}`}>{result.message}</pre>
       )}
+      {output && <pre className="cs-tests-output">{output}</pre>}
     </div>
   )
 }
