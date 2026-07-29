@@ -245,6 +245,50 @@ def test_reattach_decorator_falls_back_to_no_docstring_if_the_edited_body_is_unp
     assert updated == "@app.cell\n" + broken_edit
 
 
+def test_display_source_with_hide_def_also_strips_the_def_line():
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    assert display_source(source, hide_def=True) == "base = 5\nreturn base\n"
+
+
+def test_display_source_with_hide_def_dedents_a_multi_statement_body():
+    source = "@app.cell\ndef setup():\n    base = 5\n    doubled = base * 2\n    return doubled\n"
+    assert (
+        display_source(source, hide_def=True)
+        == "base = 5\ndoubled = base * 2\nreturn doubled\n"
+    )
+
+
+def test_display_source_with_hide_def_still_strips_the_docstring():
+    source = '@app.cell\ndef setup():\n    "Some notes."\n    base = 5\n    return base\n'
+    assert display_source(source, hide_def=True) == "base = 5\nreturn base\n"
+
+
+def test_reattach_decorator_with_hide_def_reinserts_the_def_line_and_reindents():
+    current = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    edited_display_source = "base = 6\nreturn base\n"
+    assert (
+        reattach_decorator(current, edited_display_source, hide_def=True)
+        == "@app.cell\ndef setup():\n    base = 6\n    return base\n"
+    )
+
+
+def test_reattach_decorator_with_hide_def_round_trips_through_display_source():
+    original = "@app.cell(instance=\"editable\")\ndef setup():\n    base = 5\n    return base\n"
+    assert (
+        reattach_decorator(original, display_source(original, hide_def=True), hide_def=True)
+        == original
+    )
+
+
+def test_reattach_decorator_with_hide_def_preserves_the_real_def_line_including_its_name():
+    # the def line's own text (name, any params) is never shown/editable
+    # in hide_def mode -- confirm it's carried over unchanged from
+    # current_full_source, not reconstructed or lost.
+    current = "@app.cell\ndef some_unusual_name(x):\n    return x\n"
+    updated = reattach_decorator(current, "return x + 1\n", hide_def=True)
+    assert updated == "@app.cell\ndef some_unusual_name(x):\n    return x + 1\n"
+
+
 def test_display_docstring_returns_empty_string_with_no_docstring():
     source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
     assert display_docstring(source) == ""

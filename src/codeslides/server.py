@@ -83,7 +83,7 @@ def create_app(deck: Deck | None = None, deck_path: str | None = None) -> FastAP
             "cells": {
                 name: {
                     "instance": cell.instance,
-                    "source": display_source(cell.source),
+                    "source": display_source(cell.source, hide_def=cell.hide_def),
                     "elements": [
                         {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                     ],

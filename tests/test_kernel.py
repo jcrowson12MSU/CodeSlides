@@ -1032,3 +1032,82 @@ def test_deck_built_directly_via_app_without_load_deck_has_no_imports():
     execution proceeds exactly as it did before this feature."""
     app = _build_deck()
     assert app.deck.imports == {}
+
+
+_HIDE_DEF_DECK_SOURCE = (
+    "from codeslides import App\n\n"
+    "app = App()\n\n"
+    "@app.cell(instance=\"editable\", hide_def=True)\n"
+    "def setup():\n"
+    "    base = 5\n"
+    "    return base\n"
+)
+
+
+def test_hide_def_cell_source_still_has_the_real_def_line():
+    """hide_def only ever affects display/reattachment (serialization.py)
+    -- Cell.source, execution, and the dependency graph all still see
+    the cell's real, complete function, exactly like a hide_def=False
+    cell. Only what the browser is shown/sends back changes."""
+    app = App()
+
+    @app.cell(hide_def=True)
+    def setup():
+        base = 5
+        return base
+
+    cell = app.deck.cells["setup"]
+    assert cell.hide_def is True
+    assert "def setup():" in cell.source
+
+
+def test_hide_def_survives_a_kernel_construction(tmp_path):
+    """Regression guard of the same shape as the Cell.docstring bug this
+    session already found once: graph.py's parse_cell reconstructs a
+    fresh Cell on every Kernel(), and it's easy to add a new Cell field
+    without also carrying it through there."""
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _HIDE_DEF_DECK_SOURCE)
+    deck = load_deck(str(path))
+    assert deck.cells["setup"].hide_def is True
+
+    kernel = Kernel(deck, deck_path=str(path))
+    assert kernel.deck.cells["setup"].hide_def is True
+
+
+def test_on_cell_edited_with_hide_def_reattaches_the_def_line_before_saving(tmp_path):
+    from codeslides.loader import load_deck
+    from codeslides.serialization import save_edits
+
+    path = _write_deck_file(tmp_path, _HIDE_DEF_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+
+    # what the browser's editor actually sends for a hide_def cell: no
+    # def line, un-indented -- see display_source(hide_def=True)'s output
+    kernel.on_cell_edited("setup", "base = 7\nreturn base\n", session)
+
+    assert session.instances["setup"].status == "idle"
+    assert session.namespace["base"] == 7
+    assert "def setup():" in session.source_overrides["setup"]
+
+    save_edits(str(path), session.source_overrides)
+    reloaded = load_deck(str(path))
+    assert reloaded.cells["setup"].hide_def is True
+    assert "base = 7" in reloaded.cells["setup"].source
+
+
+def test_get_deck_api_hides_the_def_line_for_a_hide_def_cell(tmp_path):
+    from codeslides.loader import load_deck
+    from codeslides.serialization import display_source
+
+    path = _write_deck_file(tmp_path, _HIDE_DEF_DECK_SOURCE)
+    deck = load_deck(str(path))
+    cell = deck.cells["setup"]
+
+    shown = display_source(cell.source, hide_def=cell.hide_def)
+
+    assert "def setup" not in shown
+    assert shown == "base = 5\nreturn base\n"

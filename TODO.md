@@ -1687,7 +1687,77 @@ reshape the plan below and are called out explicitly where they apply:
   correctly after the edit, not just on first load. No frontend changes
   needed -- this is purely a kernel-side execution-globals fix.
 
-- [ ] **39. Write example decks for teaching scenarios**
+- [x] **39. Give `@app.cell` an option to render a cell without its function header in the browser.**
+  Prompted by a real authoring snag: a top-level `import random` written
+  above `app = App()` (TODO.md #38's deck-level imports) got pasted
+  *between* `@app.cell(...)` and `def setup():` instead -- a plain
+  `SyntaxError`, since nothing can separate a decorator from the def it
+  decorates. Fixing the placement was a one-line answer, but it surfaced
+  the actual ask underneath: a typical no-parameter `setup()` cell's own
+  `def setup():` line is pure boilerplate the author never needs to see
+  or edit, same rationale TODO.md #33 already applied to the `@app.cell`
+  decorator itself.
+
+  Considered making this the default for every parameterless cell, but
+  a decorator-level opt-in is more honest about what actually changes:
+  a cell with input-element parameters (`def live_demo(speed):`) needs
+  its `def` line visible, since that's the only place the parameter-to-
+  slider binding is visible at all -- an automatic rule tied to "has no
+  params" would be a proxy for the real distinction (whether hiding the
+  line hides information the author needs), and `hide_def` doesn't stop
+  someone from putting it on a parameterized cell if they accept that
+  tradeoff themselves.
+
+  Added `@app.cell(hide_def=True)`, stored on a new `Cell.hide_def: bool
+  = False` field (`deck.py`) -- purely a display/round-trip concern,
+  same as the decorator already is: `Cell.source`, execution
+  (`kernel.py`), and the dependency graph (`graph.py`) always see the
+  cell's real, complete function regardless of this flag. Extended
+  `display_source`/`reattach_decorator` (`serialization.py`) with a
+  `hide_def` parameter: `display_source` now also strips the `def
+  name(...):` line and dedents the body one level when set;
+  `reattach_decorator` reinserts the real `def` line (from the current
+  full source, same as it already does for the decorator -- the line
+  itself, including any parameter list, was never shown or editable to
+  begin with) and re-indents the body back under it. `server.py`'s
+  `/api/deck` and `ws_handler.py`'s `CellAdded`/`on_cell_edited`
+  (`kernel.py`) all thread `cell.hide_def` through to these two
+  functions the same way they already thread the decorator/docstring
+  handling.
+
+  Also proactively fixed the same class of bug this session already hit
+  once for `Cell.docstring`: `graph.py`'s `parse_cell` (run on every
+  `Kernel` construction, reconstructing a fresh `Cell` from the old one)
+  now also carries `hide_def` forward -- caught and fixed before it
+  could repeat as a silent regression, with a dedicated regression test
+  guarding it this time.
+
+  Verified with both automated tests and a real running server. Added 6
+  new `serialization.py` tests (`display_source`/`reattach_decorator`
+  with `hide_def`: strips/reinserts the `def` line, dedents/re-indents a
+  multi-statement body, still strips the docstring too, round-trips,
+  preserves the real `def` line's exact text including an unusual
+  function name) and 4 new `kernel.py` tests (`hide_def` set via the
+  decorator lands on the `Cell`; survives a fresh `Kernel` construction
+  -- the regression guard above; `on_cell_edited` reattaches the `def`
+  line correctly before saving, verified by actually saving and
+  reloading the file; `/api/deck`'s `display_source` call really hides
+  the line end-to-end). Full suite: 265 passed, 2 skipped (10 new). In a
+  real browser via Playwright: a `hide_def=True` cell's code editor
+  showed only `base = 5` / `return base` at column 0, no `def setup():`
+  line anywhere, and still ran correctly (`idle`, output `5`); edited
+  the body via the real CodeMirror editor and ran it with Shift+Enter,
+  confirmed the new value computed correctly and the editor still
+  showed no `def` line; clicked Save and confirmed the on-disk `.py`
+  file correctly reconstructed the full `def setup():` line with the
+  edited body properly re-indented underneath it; reloaded the page and
+  confirmed the edit persisted with the `def` line still hidden;
+  confirmed `EditCellPanel` (rename, elements list) still opens and
+  works normally alongside a `hide_def` cell. No frontend changes needed
+  -- purely a backend serialization/display change, same as the
+  decorator-hiding feature it extends.
+
+- [ ] **40. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that
@@ -1696,7 +1766,7 @@ reshape the plan below and are called out explicitly where they apply:
   elements — to validate the tool end-to-end and serve as templates for
   instructors.
 
-- [ ] **40. Add tests for kernel & dependency graph**
+- [ ] **41. Add tests for kernel & dependency graph**
   Unit tests for `ast`-based variable extraction, dependency graph
   construction/cycle detection, minimal-rerun-set computation, and
   integration tests that run a sample deck through the kernel and assert
@@ -1704,9 +1774,9 @@ reshape the plan below and are called out explicitly where they apply:
   specifically clones a cell/editor instance and asserts the two instances'
   namespaces and outputs never cross-contaminate.
 
-- [ ] **41. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
+- [ ] **42. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
 
-- [ ] **42. Polish, README, and packaging**
+- [ ] **43. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
   `pip install` (editable) / eventual PyPI packaging.

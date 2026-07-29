@@ -154,6 +154,7 @@ def parse_cell(cell: Cell) -> Cell:
         writes=writes,
         elements=cell.elements,
         docstring=cell.docstring,
+        hide_def=cell.hide_def,
     )
 
 

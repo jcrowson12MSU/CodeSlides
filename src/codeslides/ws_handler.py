@@ -401,7 +401,7 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 session_id=message.session_id,
                 cell_id=cell.name,
                 instance=cell.instance,
-                source=display_source(cell.source),
+                source=display_source(cell.source, hide_def=cell.hide_def),
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],

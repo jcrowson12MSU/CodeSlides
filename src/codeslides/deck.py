@@ -70,6 +70,13 @@ class Cell:
     # notes text (`session.py`'s instance-seeding) shouldn't need to
     # re-parse `source` themselves.
     docstring: str = ""
+    # `@app.cell(hide_def=True)` -- hides this cell's own `def name(...):`
+    # line from the browser's code editor (in addition to the decorator,
+    # always hidden), showing just the dedented body. Purely a display/
+    # `serialization.py` (`display_source`/`reattach_decorator`) concern;
+    # `source` here still always has the real `def` line, same as it
+    # always keeps the decorator regardless of this flag.
+    hide_def: bool = False
 
     def __post_init__(self) -> None:
         names = [e.name for e in self.elements]
@@ -78,7 +85,12 @@ class Cell:
 
     @classmethod
     def from_function(
-        cls, fn, *, instance: str = "static", elements: list[Element] | None = None
+        cls,
+        fn,
+        *,
+        instance: str = "static",
+        elements: list[Element] | None = None,
+        hide_def: bool = False,
     ) -> Cell:
         return cls(
             name=fn.__name__,
@@ -86,6 +98,7 @@ class Cell:
             instance=instance,
             elements=elements or [],
             docstring=fn.__doc__ or "",
+            hide_def=hide_def,
         )
 
 

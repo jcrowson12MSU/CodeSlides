@@ -120,7 +120,7 @@ def _split_cell_source(source: str) -> tuple[str, list[str]]:
     return lines[def_start], lines[def_start + 1 :]
 
 
-def display_source(source: str) -> str:
+def display_source(source: str, hide_def: bool = False) -> str:
     """The `@app.cell(...)` decorator (however many lines it spans) is
     Deck-authoring boilerplate the user never asked to see or edit --
     strip it before source reaches a browser's code editor (server.py's
@@ -138,15 +138,27 @@ def display_source(source: str) -> str:
     `reattach_decorator`, editing it there would fight with the notes
     viewer over the same line. Uses the *dedented* body from
     `_split_cell_source` (matching `_docstring_node`'s own dedented
-    parse) so the line-span arithmetic lines up."""
+    parse) so the line-span arithmetic lines up.
+
+    `hide_def=True` (`@app.cell(hide_def=True)`, `Cell.hide_def`) also
+    strips the `def name(...):` line itself, dedenting the body one level
+    so it reads as ordinary top-level-looking statements instead of an
+    indented function body -- for a cell whose `def` line is pure
+    boilerplate (a typical no-parameter `setup()`), not something the
+    author needs to see or edit. `reattach_decorator` is the inverse:
+    it reinserts the real `def` line (re-indenting the body back under
+    it) the same way it already reinserts the decorator."""
     def_line, body_lines = _split_cell_source(source)
     docstring_source = "\n".join([def_line, *body_lines]) + "\n"
     node = _docstring_node(docstring_source)
     if node is None:
-        return docstring_source
-    start, end = node.lineno - 1, node.end_lineno  # 0-indexed, exclusive end
-    lines = docstring_source.splitlines()
-    del lines[start:end]
+        lines = docstring_source.splitlines()
+    else:
+        start, end = node.lineno - 1, node.end_lineno  # 0-indexed, exclusive end
+        lines = docstring_source.splitlines()
+        del lines[start:end]
+    if hide_def:
+        lines = textwrap.dedent("\n".join(lines[1:])).splitlines()
     return "\n".join(lines) + "\n"
 
 
@@ -162,7 +174,9 @@ def _decorator_prefix(source: str) -> str:
     return "\n".join(lines) + "\n" if lines else ""
 
 
-def reattach_decorator(current_full_source: str, edited_display_source: str) -> str:
+def reattach_decorator(
+    current_full_source: str, edited_display_source: str, hide_def: bool = False
+) -> str:
     """The browser only ever shows/edits `display_source`'s decorator-free
     output (a live `edit_cell` sends back exactly that shape) -- before an
     edit is recorded as a `session.source_overrides` entry, it must be
@@ -177,6 +191,15 @@ def reattach_decorator(current_full_source: str, edited_display_source: str) -> 
     only what's already keeping this cell's `elements=[...]` and
     `instance=...` in sync with the Deck's own state.
 
+    `hide_def=True` (`Cell.hide_def`) means `edited_display_source` is
+    also `def`-line-free and un-indented (`display_source`'s inverse
+    transform) -- `current_full_source` supplies the real `def` line too,
+    same rationale as the decorator: the browser never showed or let the
+    author edit it (a `hide_def` cell's parameter list, if it somehow has
+    one, isn't editable from the code editor at all), so it must be
+    reinserted, with the body re-indented one level to sit back under it,
+    before this is recorded as the override.
+
     `edited_display_source` is also docstring-free (`display_source`
     strips it too, since it's the cell's notes content, rendered in its
     own markdown viewer -- not code) -- `set_notes_docstring` reinserts
@@ -188,11 +211,15 @@ def reattach_decorator(current_full_source: str, edited_display_source: str) -> 
     unclosed paren, a dangling colon) -- `set_notes_docstring` needs to
     parse the reattached body to place the docstring, so on a
     `SyntaxError`/`ValueError` this falls back to reattaching just the
-    decorator, no docstring reinsertion. The caller (`on_cell_edited`)
-    still records this as the override so the editor keeps showing what
-    was typed, and its own graph-rebuild step independently reports the
-    same syntax error -- this fallback exists only so recording the
-    override itself can't raise first."""
+    decorator (and `def` line, if `hide_def`), no docstring reinsertion.
+    The caller (`on_cell_edited`) still records this as the override so
+    the editor keeps showing what was typed, and its own graph-rebuild
+    step independently reports the same syntax error -- this fallback
+    exists only so recording the override itself can't raise first."""
+    if hide_def:
+        def_line, _ = _split_cell_source(current_full_source)
+        indented_body = textwrap.indent(edited_display_source, "    ")
+        edited_display_source = def_line + "\n" + indented_body
     reattached = _decorator_prefix(current_full_source) + edited_display_source
     try:
         return set_notes_docstring(reattached, display_docstring(current_full_source))

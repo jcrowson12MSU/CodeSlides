@@ -456,12 +456,15 @@ class Kernel:
 
         `source` is decorator- and docstring-free (the browser's editor
         only ever shows/edits `display_source`'s output, which strips
-        both) -- `reattach_decorator` reunites it with whatever decorator
-        *and* docstring currently apply to this cell (this Session's own
-        prior override if one exists, else the Deck's baseline) before
-        it's recorded, so `session.source_overrides` stays the full shape
+        both) -- and, for a `hide_def=True` cell (`Cell.hide_def`), also
+        `def`-line-free and un-indented -- `reattach_decorator` reunites
+        it with whatever decorator, docstring, and (if `hide_def`) `def`
+        line currently apply to this cell (this Session's own prior
+        override if one exists, else the Deck's baseline) before it's
+        recorded, so `session.source_overrides` stays the full shape
         `save_edits`/`_apply_overrides` expect and a later Save doesn't
-        silently drop the decorator or the cell's notes from the file.
+        silently drop the decorator, the `def` line, or the cell's notes
+        from the file.
 
         `reattach_decorator` falls back to reattaching just the decorator
         (no docstring) if the edited body doesn't even parse -- the
@@ -470,7 +473,8 @@ class Kernel:
         nothing at all; the graph-rebuild below independently fails and
         reports the same syntax error either way."""
         current = session.source_overrides.get(cell_name, self.deck.cells[cell_name].source)
-        session.source_overrides[cell_name] = reattach_decorator(current, source)
+        hide_def = self.deck.cells[cell_name].hide_def
+        session.source_overrides[cell_name] = reattach_decorator(current, source, hide_def=hide_def)
         try:
             graph = self._effective_graph(session)
         except (SyntaxError, ValueError) as exc:

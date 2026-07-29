@@ -31,11 +31,34 @@ class App:
 
     deck: Deck = field(default_factory=Deck)
 
-    def cell(self, func=None, *, instance: str = "static", elements: list[Element] | None = None):
-        """Register a function as a Cell. See ARCHITECTURE.md sections 2-3."""
+    def cell(
+        self,
+        func=None,
+        *,
+        instance: str = "static",
+        elements: list[Element] | None = None,
+        hide_def: bool = False,
+    ):
+        """Register a function as a Cell. See ARCHITECTURE.md sections 2-3.
+
+        `hide_def=True` hides the cell's own `def name(...):` line from the
+        browser's code editor, showing just the dedented body -- for a
+        cell like a typical no-parameter `setup()` where that line is
+        pure boilerplate, not something the author needs to see or edit.
+        Only meaningful for a parameterless cell in practice: a cell with
+        input-element parameters (e.g. `def live_demo(speed):`) needs its
+        `def` line visible so its parameter-to-element binding isn't
+        hidden along with it -- `hide_def` doesn't forbid this, but the
+        editor still won't show or let you edit the parameter list either
+        way, so pair it with parameters at your own risk. The `def` line
+        itself (and the `@app.cell(...)` decorator, hidden regardless)
+        are still always present in `Cell.source`/the on-disk `.py` file;
+        this only ever affects what the editor displays and accepts back."""
 
         def register(fn):
-            self.deck.add_cell(Cell.from_function(fn, instance=instance, elements=elements))
+            self.deck.add_cell(
+                Cell.from_function(fn, instance=instance, elements=elements, hide_def=hide_def)
+            )
             return fn
 
         if func is not None:
