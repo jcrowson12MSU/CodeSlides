@@ -5,11 +5,12 @@ See TODO.md #13 for real teaching examples with full reactivity wired up.
 """
 
 from codeslides import App, cs, turtle, ui
+import random
 
 app = App()
 
 
-@app.cell
+@app.cell(hide_def=True)
 def setup():
     base = 5
     return base
