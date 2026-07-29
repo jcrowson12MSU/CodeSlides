@@ -938,7 +938,46 @@ reshape the plan below and are called out explicitly where they apply:
   internal regions and clicking to focus the code editor. No backend
   changes; frontend build/oxlint clean.
 
-- [ ] **29. Write example decks for teaching scenarios**
+- [x] **29. Structure6.**
+  Make it so that a cell's main code editor has the same height as the
+  overall height of the right side.
+
+  Previously the two columns capped independently: the code editor at
+  a fixed `max-height` (300px in Cells view, 420px in Slides view)
+  regardless of content, while `.cs-cell-side` (the elements/output
+  column) had no cap at all and simply grew to fit -- for any cell with
+  a turtle canvas, several elements, or a long output, the code column
+  ended up visibly short next to a much taller elements column (up to
+  728px vs. a capped 300px in one measured case).
+
+  Fixed by switching `.cs-cell-body` from `align-items: flex-start` to
+  `stretch`, and the code editor's height from `max-height` to
+  `height: 100%` (with `min-height: 0` on every flex ancestor down the
+  chain -- required for a flex child to actually respect a height
+  smaller than its content wants, the same gotcha item 20's resizable
+  divider already had to work around, just for the vertical axis this
+  time instead of horizontal). Since `.cs-cell-side` has no height cap
+  of its own, it's the column that ends up driving each row's actual
+  height in practice, with the code editor's own `.cm-scroller`
+  scrolling internally if its content is taller than that. Removed the
+  now-redundant `420px` Slides-view override entirely -- item 28's
+  `55vh` cap (applied only while `cs-slides-locked`) is still the sole
+  place height gets capped there, so both approaches compose correctly
+  without conflict.
+
+  Verified in a real browser via Playwright: measured every cell's
+  code-column and side-column height in both views and confirmed they
+  match exactly (down to sub-pixel precision) for cells with no
+  elements, a short single element, and a tall multi-element stack
+  (turtle canvas + slider + notes); confirmed the code editor's
+  internal scroll still activates correctly when content genuinely
+  exceeds the matched height; confirmed the resizable divider (item 20)
+  still works and heights stay matched after a horizontal drag;
+  confirmed a cell still collapses cleanly; and confirmed item 28's
+  Slides-view scroll lock (`scrollY: 0`) is still intact. No backend
+  changes; frontend build/oxlint clean.
+
+- [ ] **30. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that

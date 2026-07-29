@@ -179,9 +179,21 @@
   padding: 0 0.35rem;
 }
 
+/* TODO.md #29: `align-items: stretch` (was `flex-start`) so the code
+   column always matches the elements column's own natural height,
+   rather than each capping independently -- previously a fixed
+   `max-height: 300px` on the code editor (below) left it looking
+   visibly short next to a much taller elements column (a turtle
+   canvas + slider + notes routinely runs 700px+), and vice versa for a
+   short cell where the code was the taller side. `.cs-cell-side` has
+   no height cap of its own in the flat Cells view, so it's the one
+   that ends up driving the row's height in practice; `.cs-cell-code`
+   stretching to match and using `height: 100%` (not `max-height`)
+   below is what makes the code editor track that instead of a fixed
+   number. */
 .cs-cell-body {
   display: flex;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 0.5rem;
   margin: 0.5rem 0;
 }
@@ -197,6 +209,8 @@
 .cs-cell-code {
   flex: 0 0 auto;
   min-width: 0;
+  min-height: 0;
+  display: flex;
 }
 
 .cs-cell-side {
@@ -241,10 +255,25 @@ body.cs-resizing {
 
 .cs-code-editor {
   margin: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
 }
 
+/* `height: 100%` (not `max-height`) is what makes the editor track
+   `.cs-cell-side`'s natural height via the `stretch` chain above,
+   instead of capping at an independent fixed number. `min-height: 0`
+   on every flex ancestor down to here is required for a flex child to
+   actually respect a height smaller than its content wants -- without
+   it, `height: 100%` is silently ignored and the editor grows to fit
+   all its lines regardless, same classic flexbox gotcha the resizable
+   divider (item 20) already had to work around for width. A 100px
+   floor keeps a one-line cell from being squashed illegibly thin next
+   to an empty elements column. */
 .cs-code-editor .cm-editor {
-  max-height: 300px;
+  height: 100%;
+  min-height: 100px;
+  flex: 1 1 auto;
 }
 
 .cs-code-editor .cm-scroller {
@@ -649,9 +678,15 @@ body.cs-resizing {
   padding: 1.25rem 1.5rem;
 }
 
+/* TODO.md #29: no `max-height` override here anymore -- the base rule's
+   `height: 100%` (stretched to match `.cs-cell-side`) already applies
+   in Slides view too via the same `.cs-cell-body` flex-stretch. The
+   `55vh` cap that keeps a locked Slides-view page from overflowing the
+   viewport (TODO.md #28) is scoped to `.cs-slides-locked` specifically,
+   further down -- this rule now only needs the larger presentation
+   font size. */
 .cs-slide .cs-code-editor .cm-editor {
   font-size: 16px;
-  max-height: 420px;
 }
 
 .cs-slide .cs-cell-output {
