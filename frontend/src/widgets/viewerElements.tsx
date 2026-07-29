@@ -77,11 +77,14 @@ export function NotesViewer({ content, onChangeSource }: NotesViewerProps) {
 
   return (
     <div className="cs-element cs-element-viewer cs-notes-viewer">
-      <div className="cs-notes-header">
-        <button type="button" className="cs-notes-toggle" onClick={() => setEditing((v) => !v)}>
-          {editing ? 'preview' : 'edit'}
-        </button>
-      </div>
+      {/* Absolutely positioned over the content (not a flex row of its
+          own) so it never reserves a full row's worth of vertical space
+          above the rendered markdown -- with no element-name label left
+          to share that row (see this component's own comment above), an
+          empty header row read as unwanted blank space at the top. */}
+      <button type="button" className="cs-notes-toggle" onClick={() => setEditing((v) => !v)}>
+        {editing ? 'preview' : 'edit'}
+      </button>
       {editing ? (
         <textarea
           className="cs-notes-editor"

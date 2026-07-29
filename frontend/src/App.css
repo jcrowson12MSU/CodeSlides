@@ -520,18 +520,20 @@ body.cs-resizing {
 }
 
 .cs-notes-viewer {
+  position: relative; /* anchors .cs-notes-toggle's absolute positioning */
   border: 1px solid #eee;
   border-radius: 4px;
   padding: 0.5rem;
 }
 
-.cs-notes-header {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-}
-
 .cs-notes-toggle {
+  /* Overlaid in the corner rather than given its own row (previously
+     .cs-notes-header) -- with no element-name label left to share that
+     row with, a whole row reserved for just this one small button read
+     as unwanted blank space above the rendered markdown. */
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
   font-size: var(--cs-font-sm);
   border: 1px solid #ccc;
   border-radius: 3px;
@@ -555,6 +557,13 @@ body.cs-resizing {
 .cs-notes-rendered {
   font-size: var(--cs-font-md);
   line-height: 1.4;
+  /* Reserves room for .cs-notes-toggle's absolutely-positioned corner
+     overlay so a long first-line heading wraps around it instead of
+     running underneath -- only the first couple lines actually sit
+     next to the button, but padding the whole block is simpler than
+     targeting just :first-child and costs nothing once text wraps
+     below the button's own height. */
+  padding-right: 3.5rem;
 }
 
 .cs-notes-rendered h1,
