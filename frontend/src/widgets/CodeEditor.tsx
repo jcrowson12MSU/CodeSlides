@@ -7,6 +7,7 @@ import {
   foldGutter,
   foldKeymap,
   indentOnInput,
+  indentUnit,
   syntaxHighlighting,
 } from '@codemirror/language'
 import { Prec, EditorState, type Extension } from '@codemirror/state'
@@ -91,6 +92,19 @@ export function CodeEditor({ source, onRunCell, onRunAll, readOnly = false }: Co
     const extensions: Extension[] = [
       lineNumbers(),
       python(),
+      // CodeMirror's own default `indentUnit` is 2 spaces; every deck's
+      // .py source (and Python convention generally, PEP 8) uses 4 --
+      // without this, the auto-indent Option B2 just added (Enter after
+      // `def foo():`) inserted 2 spaces per level, one indent narrower
+      // than the rest of the file it's editing. This only changes what
+      // *new* indentation the editor produces going forward -- loaded
+      // `source` is displayed and edited as literal, unmodified text
+      // either way (this app saves the editor's exact content back to
+      // the .py file byte-for-byte, so transforming displayed
+      // whitespace on load without an equal-and-opposite transform on
+      // save would silently corrupt a file's indentation the moment it
+      // was next edited and saved).
+      indentUnit.of('    '),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
       Prec.highest(
         keymap.of([
