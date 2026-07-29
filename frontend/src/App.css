@@ -771,15 +771,60 @@ button.cs-add-cell-button {
    live teaching first" principle. */
 .cs-slide {
   font-size: 1.15rem;
+  display: flex;
+  flex-direction: column;
 }
 
 .cs-slide-title {
   font-size: 2rem;
   margin: 0 0 1rem;
+  flex: 0 0 auto;
 }
 
 .cs-slide .cs-cell {
   padding: 1.25rem 1.5rem;
+}
+
+/* The user wants a slide's cell(s) to grow and fill whatever vertical
+   space is left below the title (previously a short cell just left a
+   blank gap down to the bottom of the screen -- cells only ever shrunk
+   to fit content, never grew beyond it). The JS-measured
+   `--cs-slide-available-height` custom property (set on `.cs-slide`
+   itself by SlideShow.tsx, since the actual remaining space depends on
+   the header's collapsed/expanded state and can't be derived from CSS
+   alone without duplicating that arithmetic) is applied as `.cs-slide`'s
+   own `min-height`, not each cell's -- with `flex: 1` below splitting
+   that height evenly if a slide ever has more than one cell (decks are
+   meant to keep one cell per slide, but this degrades sanely rather
+   than each cell independently claiming the full height, which
+   overflowed the viewport when a slide happened to have more than one).
+   `min-height` (not `height`) is a floor, not a fixed size -- genuinely
+   tall content still grows past it and hits its own scroll behavior
+   below exactly as before; this only stretches *short* content that
+   previously left dead space. `display: flex` + `flex-direction:
+   column` on `.cs-cell` propagates the stretch down through
+   `.cs-cell-header` (kept to its natural size) to `.cs-cell-body`,
+   which is what item 29's existing `align-items: stretch` chain
+   ultimately sizes `.cs-cell-code`/`.cs-cell-side` from. */
+.cs-slide {
+  min-height: var(--cs-slide-available-height, 0);
+}
+
+.cs-slide .cs-cell {
+  box-sizing: border-box;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.cs-slide .cs-cell-header {
+  flex: 0 0 auto;
+}
+
+.cs-slide .cs-cell-body {
+  flex: 1;
+  min-height: 0;
 }
 
 /* TODO.md #29: no `max-height` override here anymore -- the base rule's

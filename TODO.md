@@ -1143,6 +1143,63 @@ reshape the plan below and are called out explicitly where they apply:
   smaller title taking less horizontal space. No backend changes;
   frontend build/oxlint clean.
 
+  **Follow-up (same task): the user asked to increase a slide's cell
+  height to use all the available space, since a short cell left a
+  large blank gap at the bottom of the screen (e.g. a two-line output
+  cell on an 800px-tall viewport left ~270px of dead space below it).**
+  Root cause: item 29's cell-sizing chain (`align-items: stretch`) only
+  ever matches the code column's height to the elements column's own
+  *natural content* height, and the `55vh` cap from item 28 only
+  *shrinks* content that's too tall -- nothing in that chain ever grew
+  a cell *beyond* its content to fill leftover viewport space. Confirmed
+  with the user that decks are meant to keep exactly one cell per
+  slide, simplifying the design: the available space (viewport height
+  minus everything above the slide) needed to be *measured*, not
+  derived from CSS alone, since it depends on the header's collapsed/
+  expanded state (item 32) which isn't expressible as a fixed
+  `calc(100vh - Npx)`. Added a `ResizeObserver`-free effect in
+  SlideShow.tsx that reads `.cs-slide`'s own `getBoundingClientRect().
+  top` on mount, on window resize, and whenever `headerCollapsed` or
+  the slide `index` changes, and writes the result to a
+  `--cs-slide-available-height` CSS custom property on `.cs-slide`
+  itself. `App.css` applies that as `.cs-slide`'s own `min-height`
+  (a floor, not a fixed size, so genuinely tall content still grows
+  past it and hits the pre-existing `55vh`/internal-scroll behavior
+  exactly as before) and makes `.cs-cell` a `flex: 1` flex-column child
+  of `.cs-slide` so a lone cell claims the whole floor -- and, since a
+  slide *could* still technically have more than one cell even though
+  the convention is one, `flex: 1` splits that floor evenly across
+  however many cells actually exist rather than each one independently
+  demanding the full height (an early version of this used `min-height`
+  directly on `.cs-cell`, which is what caused that overflow, caught by
+  testing against this repo's own two-cell "Setup" slide). Threaded the
+  stretch from `.cs-cell` down through `.cs-cell-header` (kept to its
+  natural size) to `.cs-cell-body`, which is what item 29's own
+  `align-items: stretch` chain already sizes the code/elements columns
+  from.
+
+  Verified in a real browser via Playwright: measured a short single-
+  cell slide's cell bottom before/after (44px content height leaving a
+  ~530px gap -> cell now reaches to 782px of an 800px viewport, an
+  18px margin matching the page's own bottom padding); confirmed a
+  two-cell slide splits the available height evenly between both cells
+  without overflowing the viewport (previously each cell independently
+  claimed the full height and overflowed by ~60px before the `flex: 1`
+  fix); confirmed a genuinely tall code cell (turtle canvas + long
+  source) still hits the pre-existing `55vh` cap and scrolls
+  internally rather than being force-grown past it; confirmed the page-
+  level scroll lock (item 28, `scrollY: 0` after wheel) is unaffected;
+  confirmed the available-height calculation correctly recomputes both
+  when collapsing/expanding the header and when navigating between
+  slides (no stale height from a previous slide); confirmed Cells view
+  is completely unaffected (`min-height: 0px`, `flex-grow: 0` on its
+  cells, same small content-sized height as before); and confirmed the
+  resizable divider (item 20) and the narrow-viewport (700px) stacked
+  layout both still work, with the latter's genuinely-taller-than-
+  available stacked content correctly growing past the floor rather
+  than being compressed. No backend changes; frontend build/oxlint
+  clean.
+
 - [ ] **33. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example

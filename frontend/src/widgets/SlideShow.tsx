@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CellState } from '../deckState'
 import { Cell, type CellMeta } from './Cell'
 
@@ -68,11 +68,35 @@ export function SlideShow({
 }: SlideShowProps) {
   const [index, setIndex] = useState(0)
   const [revealOverrides, setRevealOverrides] = useState<Record<number, boolean>>({})
+  const slideRef = useRef<HTMLDivElement | null>(null)
 
   const slide = slides[index]
   const atStart = index === 0
   const atEnd = index === slides.length - 1
   const revealed = revealOverrides[index] ?? slide?.reveal_code ?? false
+
+  // The user wants a slide's single cell to grow and fill whatever
+  // vertical space is left below it, rather than only shrinking to fit
+  // (the pre-existing `55vh` cap in App.css) -- previously a short cell
+  // left a large blank gap at the bottom of the screen. How much space is
+  // "left" depends on `.cs-slide`'s own top offset, which itself depends
+  // on whether the header is collapsed (TODO.md #32) -- rather than
+  // duplicating that arithmetic in CSS for both states, measure it
+  // directly and expose it as a custom property `.cs-cell` (App.css)
+  // reads to size itself. Recomputed on window resize and whenever
+  // `headerCollapsed` changes, since both change the offset.
+  useEffect(() => {
+    function updateAvailableHeight() {
+      const el = slideRef.current
+      if (!el) return
+      const top = el.getBoundingClientRect().top
+      const available = Math.max(window.innerHeight - top, 0)
+      el.style.setProperty('--cs-slide-available-height', `${available}px`)
+    }
+    updateAvailableHeight()
+    window.addEventListener('resize', updateAvailableHeight)
+    return () => window.removeEventListener('resize', updateAvailableHeight)
+  }, [headerCollapsed, index])
 
   // App.tsx renders the current slide's title in its own header row while
   // the header is collapsed (SlideShow's own `.cs-slide-title` is hidden
@@ -139,7 +163,7 @@ export function SlideShow({
       </div>
       )}
 
-      <div className="cs-slide">
+      <div className="cs-slide" ref={slideRef}>
         {!headerCollapsed && <h2 className="cs-slide-title">{slide.title}</h2>}
         {slide.cells.map((cellId) => {
           const meta = cellMeta[cellId]
