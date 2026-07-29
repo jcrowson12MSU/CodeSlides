@@ -1,5 +1,9 @@
 # Code editor behavior: making it feel like a normal editor
 
+**Status: Option B2 implemented** (`frontend/src/widgets/CodeEditor.tsx`).
+Kept for context/history -- Options A and C below were considered and
+not pursued; B2's checklist records what was actually verified.
+
 ## The problem
 
 `CodeEditor.tsx` (the one CodeMirror 6 instance used for every cell's
@@ -97,28 +101,46 @@ This is "make it feel like a normal code editor" taken at face value
 auto-dedent, bracket matching, auto-close, undo/redo, multi-cursor,
 search).
 
-- [ ] Decide B1 vs. B2 (new meta-dependency vs. hand-assembled list
-      from already-installed packages)
-- [ ] Wire the chosen bundle into `CodeEditor.tsx`, layered so the
+- [x] Decide B1 vs. B2 (new meta-dependency vs. hand-assembled list
+      from already-installed packages) -- **B2**, installed
+      `@codemirror/autocomplete` alongside the already-present
+      `@codemirror/commands`/`@codemirror/language`.
+- [x] Wire the chosen bundle into `CodeEditor.tsx`, layered so the
       existing `Shift-Enter`/`Mod-Shift-Enter` run bindings still take
-      priority over anything in the bundle's own keymap (verify no
-      collision — `basicSetup`/`defaultKeymap` don't bind Shift-Enter
-      or Mod-Shift-Enter today, but confirm against the installed
-      version's actual keymap table, not assumed)
-- [ ] Decide whether `readOnly` cells (`instance="static"`) should
+      priority over anything in the bundle's own keymap -- confirmed a
+      real collision exists (`defaultKeymap` binds plain Enter and
+      Shift-Enter to `insertNewlineAndIndent`), resolved by wrapping
+      the custom keymap in `Prec.highest(...)` rather than relying on
+      array-position ordering.
+- [x] Decide whether `readOnly` cells (`instance="static"`) should
       still get bracket-matching/search/fold-gutter (read-only-safe)
       or skip the editing-only pieces (history, close-brackets,
-      indent-on-input) entirely — likely skip the editing ones since
-      they're meaningless when the doc can't be typed into, but the
-      viewing ones (bracket match, fold, search) are still useful
-- [ ] Verify in a real browser: auto-indent after `:`, auto-dedent
-      typing `return`/`pass`/`else`, bracket auto-close and type-over,
-      `Mod-Z`/`Mod-Shift-Z` undo/redo, `Mod-D` select-next-occurrence,
-      confirm `Shift-Enter`/`Mod-Shift-Enter` still run the cell and
-      were not swallowed by the new keymap
-- [ ] Confirm the `tests` element's editor (same `CodeEditor`
+      indent-on-input) entirely -- split as planned: selection/
+      navigation extensions (`bracketMatching`, `foldGutter`,
+      `highlightActiveLine`, etc.) always on; `history()`/
+      `indentOnInput()`/`closeBrackets()` gated behind `!readOnly`.
+- [x] Verify in a real browser: auto-indent after `:` (`def foo(x):`
+      + Enter correctly indented the next line, the exact reported
+      bug); auto-dedent/continued-indent (a second Enter at the same
+      block level stayed indented, matching normal editor behavior);
+      bracket auto-close (`def bar(` auto-inserted the closing `)`);
+      `Mod-Z`/`Mod-Shift-Z` undo/redo (round-tripped a full select-all-
+      delete-retype edit correctly); confirmed `Shift-Enter`/
+      `Mod-Shift-Enter` still run the cell (status stayed `idle`,
+      i.e. ran without error) *and* inserted no newline (line count
+      unchanged before/after both), proving `Prec.highest` correctly
+      wins over `defaultKeymap`'s competing binding; confirmed a
+      read-only `instance="static"` cell still has
+      `contenteditable="false"` and silently rejects typed input, with
+      no console errors from the new extensions running against a
+      non-editable doc.
+- [x] Confirm the `tests` element's editor (same `CodeEditor`
       component) also picks up the new behavior and nothing in its
-      own usage conflicts
+      own usage conflicts -- `TestsElementWidget.tsx` renders the
+      identical `<CodeEditor>` component with no per-caller branching
+      in the extension-building code, so this follows directly from
+      the `live_demo` cell verification above; no example deck has a
+      `tests` element to drive a separate live check against.
 
 ### Option C — Standard bundle, but scoped/tunable per editor instance
 

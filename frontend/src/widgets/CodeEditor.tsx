@@ -1,8 +1,26 @@
+import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
 import { python } from '@codemirror/lang-python'
-import { indentWithTab } from '@codemirror/commands'
-import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
-import { EditorState, type Extension } from '@codemirror/state'
-import { EditorView, keymap, lineNumbers } from '@codemirror/view'
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import {
+  bracketMatching,
+  defaultHighlightStyle,
+  foldGutter,
+  foldKeymap,
+  indentOnInput,
+  syntaxHighlighting,
+} from '@codemirror/language'
+import { Prec, EditorState, type Extension } from '@codemirror/state'
+import {
+  crosshairCursor,
+  drawSelection,
+  dropCursor,
+  EditorView,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  keymap,
+  lineNumbers,
+  rectangularSelection,
+} from '@codemirror/view'
 import { useEffect, useRef } from 'react'
 
 export interface CodeEditorProps {
@@ -12,15 +30,24 @@ export interface CodeEditorProps {
   readOnly?: boolean
 }
 
-// A single cell's source editor (ARCHITECTURE.md section 2/3): plain
-// CodeMirror 6 with Python highlighting, uncontrolled after mount (the
-// editor owns keystroke-level state; `source` only re-syncs the view when
-// it changes for a reason other than local typing -- e.g. another
-// Session's edit, or the initial load -- see the effect below).
+// A single cell's source editor (ARCHITECTURE.md section 2/3): CodeMirror
+// 6 with Python highlighting plus a hand-assembled bundle of its standard
+// editing extensions (EDITOR_BEHAVIOR.md's Option B2) -- auto-indent on
+// Enter, auto-dedent, bracket matching/auto-close, undo/redo, fold
+// gutter, active-line highlight -- so it behaves like an ordinary code
+// editor rather than a bare syntax-highlighted textbox. Uncontrolled
+// after mount (the editor owns keystroke-level state; `source` only
+// re-syncs the view when it changes for a reason other than local typing
+// -- e.g. another Session's edit, or the initial load -- see the effect
+// below).
 //
 // Keyboard shortcuts:
 //   Shift+Enter -> run this cell (edit_cell -> minimal re-run, ARCHITECTURE.md section 3)
 //   Mod+Shift+Enter -> run every cell in the deck (run_all)
+//   Everything else CodeMirror's defaultKeymap/historyKeymap/foldKeymap
+//   bind (Mod-Z/Mod-Shift-Z undo/redo, Mod-D select-next-occurrence,
+//   Mod-[/Mod-] indent/dedent, etc.) -- see @codemirror/commands' own
+//   docs for the full list.
 export function CodeEditor({ source, onRunCell, onRunAll, readOnly = false }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -43,15 +70,54 @@ export function CodeEditor({ source, onRunCell, onRunAll, readOnly = false }: Co
       return true
     }
 
+    // EDITOR_BEHAVIOR.md's Option B2: hand-assembled standard-editor
+    // bundle from packages already installed (@codemirror/commands,
+    // @codemirror/language) plus one new one (@codemirror/autocomplete,
+    // for closeBrackets). Previously this editor only had syntax
+    // highlighting and a Tab-key binding -- none of CodeMirror's usual
+    // editing behavior (auto-indent on Enter, auto-dedent, bracket
+    // matching/auto-close, undo/redo) was wired in, so it didn't behave
+    // like a normal code editor (the reported bug: Enter after
+    // `def foo():` left the next line at column 0).
+    //
+    // `Prec.highest` on our own Shift-Enter/Mod-Shift-Enter keymap: both
+    // `defaultKeymap` (below) and this editor bind Enter-family keys --
+    // `defaultKeymap` maps plain Enter/Shift-Enter to
+    // `insertNewlineAndIndent`, which would otherwise compete with our
+    // run-the-cell binding for the same key depending on extension
+    // array order. Highest precedence makes the outcome explicit rather
+    // than relying on array-position ordering to keep working correctly
+    // as more extensions get added later.
     const extensions: Extension[] = [
       lineNumbers(),
       python(),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-      keymap.of([
-        { key: 'Shift-Enter', run: runCell },
-        { key: 'Mod-Shift-Enter', run: runAll },
-        indentWithTab,
-      ]),
+      Prec.highest(
+        keymap.of([
+          { key: 'Shift-Enter', run: runCell },
+          { key: 'Mod-Shift-Enter', run: runAll },
+        ]),
+      ),
+      // Auto-close-bracket type-over needs closeBracketsKeymap ahead of
+      // defaultKeymap's own Backspace handling (matches upstream
+      // basicSetup's own ordering) -- both editing-only, so gated behind
+      // `!readOnly` below with the rest of that group.
+      keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, ...foldKeymap, indentWithTab]),
+      // Selection/navigation niceties that make sense whether or not the
+      // doc is editable -- a read-only cell can still be clicked into,
+      // have its brackets highlighted, and have its fold gutter used.
+      bracketMatching(),
+      foldGutter(),
+      highlightActiveLine(),
+      highlightActiveLineGutter(),
+      drawSelection(),
+      dropCursor(),
+      rectangularSelection(),
+      crosshairCursor(),
+      // Editing-only behavior: meaningless (and, for closeBrackets,
+      // actively unwanted -- nothing should insert text) on a read-only
+      // `instance="static"` cell.
+      ...(readOnly ? [] : [history(), indentOnInput(), closeBrackets()]),
       EditorView.editable.of(!readOnly),
       EditorView.theme({
         '&': { fontSize: '13px', border: '1px solid #ddd', borderRadius: '4px' },
