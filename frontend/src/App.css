@@ -48,16 +48,19 @@
   cursor: pointer;
 }
 
-/* TODO.md #27: the old raw "Websocket: connected (<session-id>)" text
-   line moved into a small circular icon button in the top-right header,
-   next to the toggle/Save -- the full status (including the session id,
-   useful for debugging two open tabs) is still available, just via the
-   button's native `title` tooltip on hover instead of always being
-   visible inline. Color signals state at a glance without needing to
-   hover: amber while connecting, green once connected -- default
-   button styling reused for cursor/font, overridden here for the round
-   shape and color. */
-.cs-ws-status-button {
+/* TODO.md #27 (revised): the "?" button in the top-right header no
+   longer shows websocket connection status -- confirmed with the user
+   that info didn't actually matter day to day, and a hover-only native
+   `title` tooltip was easy to miss besides. Repurposed as a real
+   click-to-open help popover listing keyboard shortcuts instead, since
+   there was previously no single place showing all of them (the
+   Cells-view-only hint text disappeared entirely in Slides view, and
+   the Slides-view navigation shortcut had no visible hint anywhere). */
+.cs-help {
+  position: relative;
+}
+
+.cs-help-button {
   width: 1.75rem;
   height: 1.75rem;
   padding: 0 !important;
@@ -69,14 +72,42 @@
   line-height: 1;
 }
 
-.cs-ws-status-connecting {
-  border-color: #e0a800 !important;
-  color: #e0a800;
+.cs-help-popover {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  z-index: 20;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  padding: 0.75rem 1rem;
+  width: 260px;
+  font-size: 0.85rem;
 }
 
-.cs-ws-status-connected {
-  border-color: #2a8f4d !important;
-  color: #2a8f4d;
+.cs-help-popover h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.cs-help-popover dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto;
+  row-gap: 0.5rem;
+}
+
+.cs-help-popover dt {
+  font-family: ui-monospace, monospace;
+  font-weight: 600;
+  color: #333;
+}
+
+.cs-help-popover dd {
+  margin: 0.1rem 0 0;
+  color: #666;
 }
 
 .cs-hint {

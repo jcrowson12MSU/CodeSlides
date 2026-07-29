@@ -862,6 +862,30 @@ reshape the plan below and are called out explicitly where they apply:
   pinned after scrolling. No backend changes; frontend build/oxlint
   clean.
 
+  **Follow-up (same task): the user reported the connection info
+  wasn't actually showing.** Root cause was the delivery mechanism, not
+  missing data: a native `title` attribute only shows on hover, slowly,
+  with no visible affordance that anything is even there -- easy to
+  read as "broken" rather than "you have to hover and wait." Asked the
+  user whether the connection status mattered enough to fix properly
+  (a real click-to-open popover) versus dropping it -- confirmed it
+  doesn't matter day to day, so removed it entirely rather than
+  patching the tooltip. Repurposed the same `?` button as a genuine
+  help popover instead, opened on click (closes on outside click or
+  Escape): lists all three keyboard shortcuts -- Shift+Enter/Mod+Shift+
+  Enter (previously only ever shown as inline hint text in Cells view,
+  invisible in Slides view) and Cmd+Control+Left/Right for slide
+  navigation (previously had no visible hint anywhere at all). Dropped
+  the now-fully-unused `connected` destructure from `App.tsx` along
+  with the old tooltip/color-coding CSS.
+
+  Verified in a real browser via Playwright in both views: popover
+  starts closed, opens on click showing all three shortcuts, closes on
+  an outside click and separately on Escape, and confirmed zero
+  remaining "Websocket" text anywhere on the page. Screenshots confirm
+  correct rendering in both the Cells and Slides views. No backend
+  changes; frontend build/oxlint clean.
+
 - [ ] **28. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example

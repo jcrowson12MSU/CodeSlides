@@ -32,6 +32,15 @@ function initialViewMode(): ViewMode {
 function App() {
   const [deck, setDeck] = useState<DeckSummary | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode)
+  // The header's "?" button (TODO.md #27, revised): the websocket
+  // connection status it originally showed turned out not to matter day
+  // to day (confirmed with the user), so it's now a real help popover
+  // listing the keyboard shortcuts instead -- both the Cells-view-only
+  // run shortcuts and the Slides-view-only navigation shortcut, since
+  // there was previously no single place a user could see all of them
+  // (the Cells-view hint text disappeared entirely in Slides view).
+  const [helpOpen, setHelpOpen] = useState(false)
+  const helpRef = useRef<HTMLDivElement | null>(null)
   // Feedback for the last save_deck round-trip (TODO.md #11). Cleared on
   // the next save attempt; not persisted -- purely a transient toast.
   // `saving` gates which `error` messages count as save feedback -- errors
@@ -68,7 +77,7 @@ function App() {
   // panel only shows the error that's actually about it. Cleared on the
   // next edit-panel action for that cell.
   const [editErrors, setEditErrors] = useState<Record<string, string>>({})
-  const { sessionId, connected, messages, send } = useCodeSlidesSocket()
+  const { sessionId, messages, send } = useCodeSlidesSocket()
   const cellState = useDeckState(messages)
 
   useEffect(() => {
@@ -77,6 +86,24 @@ function App() {
       .then(setDeck)
       .catch(() => setDeck(null))
   }, [])
+
+  useEffect(() => {
+    if (!helpOpen) return
+    function handlePointerDown(event: PointerEvent) {
+      if (helpRef.current && !helpRef.current.contains(event.target as Node)) {
+        setHelpOpen(false)
+      }
+    }
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === 'Escape') setHelpOpen(false)
+    }
+    window.addEventListener('pointerdown', handlePointerDown)
+    window.addEventListener('keydown', handleKey)
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown)
+      window.removeEventListener('keydown', handleKey)
+    }
+  }, [helpOpen])
 
   useEffect(() => {
     if (sessionId) {
@@ -336,14 +363,31 @@ function App() {
               </button>
             </>
           )}
-          <button
-            type="button"
-            className={`cs-ws-status-button ${connected ? 'cs-ws-status-connected' : 'cs-ws-status-connecting'}`}
-            title={connected ? `Websocket: connected (${sessionId ?? '...'})` : 'Websocket: connecting...'}
-            aria-label={connected ? `Websocket connected, session ${sessionId ?? 'unknown'}` : 'Websocket connecting'}
-          >
-            ?
-          </button>
+          <div className="cs-help" ref={helpRef}>
+            <button
+              type="button"
+              className="cs-help-button"
+              aria-haspopup="dialog"
+              aria-expanded={helpOpen}
+              aria-label="Keyboard shortcuts"
+              onClick={() => setHelpOpen((prev) => !prev)}
+            >
+              ?
+            </button>
+            {helpOpen && (
+              <div className="cs-help-popover" role="dialog" aria-label="Keyboard shortcuts">
+                <h3>Keyboard shortcuts</h3>
+                <dl>
+                  <dt>Shift+Enter</dt>
+                  <dd>Run the current cell</dd>
+                  <dt>Mod+Shift+Enter</dt>
+                  <dd>Run every cell</dd>
+                  <dt>Cmd+Control+Left/Right</dt>
+                  <dd>Previous/next slide (Slides view)</dd>
+                </dl>
+              </div>
+            )}
+          </div>
         </div>
       </div>
       {deck && (
