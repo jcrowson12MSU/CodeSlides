@@ -555,6 +555,20 @@ body.cs-resizing {
   line-height: 1.4;
 }
 
+.cs-notes-rendered h1,
+.cs-notes-rendered h2,
+.cs-notes-rendered h3,
+.cs-notes-rendered h4,
+.cs-notes-rendered h5,
+.cs-notes-rendered h6 {
+  /* Notes are a small sidebar viewer, not a document -- the browser's
+     default heading sizes/margins (up to 2em with a matching margin)
+     were designed for full-page reading, not a title sitting a few
+     lines above a couple sentences of body text. */
+  font-size: 1rem;
+  margin: 0 0 0.15rem;
+}
+
 .cs-notes-rendered :first-child {
   margin-top: 0;
 }
