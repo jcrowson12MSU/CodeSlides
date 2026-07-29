@@ -349,14 +349,18 @@ def define_cell(
     """Compile the cell named `cell_name`'s function and bind it into
     `session.namespace` under its own name -- exactly like `execute_cell`
     already does -- but never actually *call* it. Used instead of
-    `execute_cell` for a cell that has a `tests` element attached
-    (`_run_cells`): that cell's own top-level body is never auto-run with
-    no arguments the way a plain cell's is; only the test (which calls
-    the function itself, with whatever arguments it chooses) exercises
-    it. `markCorners(cells, t)` having no input elements bound to
-    `cells`/`t` used to mean it was always called as `markCorners()`,
-    both parameters defaulting to `None` -- this sidesteps that
-    entirely, since the function is simply never invoked on its own.
+    `execute_cell` (`_run_cells`) for a cell that has a `tests` element
+    attached, or has an unbound required parameter (no default, not
+    matched by an input element): that cell's own top-level body is
+    never auto-run with no arguments the way a plain cell's is; only a
+    `tests` element (calling the function itself, with whatever
+    arguments it chooses) or another cell's own code exercises it.
+    `drawLineSegment(t, p1, p2, p3, p4)`/`markCorners(cells, t)` having
+    no input elements bound to any parameter used to mean either was
+    always called as e.g. `markCorners()`, every parameter defaulting to
+    `None` if given one, or a guaranteed `TypeError` if not -- this
+    sidesteps that entirely, since the function is simply never invoked
+    on its own.
 
     Never writes a `return`-named value into the namespace (nothing ran
     to produce one) -- a cell relying on another *tested* cell's return
@@ -387,6 +391,50 @@ def _find_tests_element(elements: list[Element]) -> str | None:
     well-defined to go if more than one `tests` element is attached."""
     test_elements = [e.name for e in elements if e.kind == "tests"]
     return test_elements[0] if len(test_elements) == 1 else None
+
+
+def _has_unbound_required_param(source: str, elements: list[Element]) -> bool:
+    """True if the cell's function has at least one parameter with no
+    default value that isn't also bound by a matching input element
+    (`ui.slider`/`ui.button`/`ui.text_input`, etc. -- anything whose
+    name appears as an element in `elements`, same "element name ==
+    parameter name" binding `execute_cell` itself uses).
+
+    A required parameter with nothing to supply it would otherwise
+    always be auto-called with that argument simply missing the moment
+    `run_all`/`_run_cells` runs the cell with no arguments at all --
+    `TypeError: missing N required positional arguments` -- exactly the
+    same class of problem TODO.md #43 already solved for a `tests`-
+    element cell like `markCorners(cells, t)`. This generalizes that
+    fix: a cell meant to be called *only* by another cell's code (e.g.
+    `drawLineSegment(t, p1, p2, p3, p4)`, no defaults on any parameter,
+    no `tests` element either) should be just as safe -- requiring a
+    `ui.tests(...)` element purely to suppress the auto-call, or
+    otherwise forcing every parameter to fake a default (`=None`), was
+    never really optional, just an awkward workaround.
+
+    Parses `source` directly via `ast` rather than compiling/calling it
+    -- this only needs the function's own argument list and defaults,
+    computed the same way `_run_cells` needs to decide *before* choosing
+    between `execute_cell` (calls it) and `define_cell` (never calls
+    it), so it must not itself execute anything. Returns `False` (safe
+    to call) if `source` doesn't even parse as a single function --
+    that's `execute_cell`'s own error to raise, not this check's."""
+    try:
+        tree = ast.parse(textwrap.dedent(source))
+    except SyntaxError:
+        return False
+    func_defs = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    if len(func_defs) != 1:
+        return False
+    func = func_defs[0]
+
+    element_names = {e.name for e in elements}
+    args = func.args.posonlyargs + func.args.args
+    positional_required = args[: len(args) - len(func.args.defaults)]
+    kwonly_required = [a for a, default in zip(func.args.kwonlyargs, func.args.kw_defaults) if default is None]
+
+    return any(a.arg not in element_names for a in (*positional_required, *kwonly_required))
 
 
 def run_tests(
@@ -1044,7 +1092,18 @@ class Kernel:
         otherwise always be called as `markCorners()`, both defaulting to
         `None` regardless of what the test box passes -- this makes that
         entire class of "cell auto-ran with placeholder Nones" error
-        impossible for a tested cell, not just harder to trigger."""
+        impossible for a tested cell, not just harder to trigger.
+
+        The same "define, don't call" treatment applies to any cell
+        with an unbound required parameter (no default value, and no
+        matching input element), `tests` element or not
+        (`_has_unbound_required_param`) -- a helper cell meant only to
+        be called by another cell's code, like `drawLineSegment(t, p1,
+        p2, p3, p4)`, is just as safe from an auto-call as a tested
+        cell already was; it should never have to fake a `=None`
+        default on every parameter, or add a `tests` element it
+        doesn't actually want, purely to avoid a guaranteed `TypeError`
+        the moment `run_all` reaches it."""
         results: dict[str, ExecutionResult] = {}
         for name in names:
             source = session.source_overrides.get(name, self.deck.cells[name].source)
@@ -1052,7 +1111,7 @@ class Kernel:
             instance.status = "running"
             elements = self.deck.cells[name].elements
             tests_element = _find_tests_element(elements)
-            if tests_element is not None:
+            if tests_element is not None or _has_unbound_required_param(source, elements):
                 result = define_cell(name, source, session, deck_imports=self.deck.imports)
             else:
                 result = execute_cell(name, source, session, elements=elements, deck_imports=self.deck.imports)

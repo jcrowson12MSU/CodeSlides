@@ -2241,6 +2241,59 @@ reshape the plan below and are called out explicitly where they apply:
   `ui.tests(...)` box) that `assert midpoint((2, 6), (10, 8)) == (6, 7)`
   runs `PASS`.
 
+- [x] **51. Allow a cell function to have required (no-default) parameters without forcing every parameter to fake `=None`, even with no `tests` element attached.**
+  User's own explicit ask, from `examples/marchingSquares.py`'s
+  `drawLineSegment`: they wanted `def drawLineSegment(t, p1, p2, p3,
+  p4):` -- no default values on any parameter -- to just work, the way
+  it would in plain Python for a helper function meant to be called by
+  other code, not auto-invoked standalone.
+
+  Root cause: `_run_cells` only ever skipped auto-calling a cell (via
+  `define_cell` instead of `execute_cell`) when it had a `ui.tests(...)`
+  element attached (TODO.md #43's fix for exactly this class of
+  problem, `markCorners(cells, t)`). A cell with required parameters
+  and *no* `tests` element had no such protection: `run_all` always
+  calls it standalone, with zero arguments, guaranteeing `TypeError:
+  missing N required positional arguments` -- the only ways around it
+  were adding a fake `=None` default to every parameter, or adding a
+  `tests` element purely to suppress the auto-call, neither of which is
+  what "I want a function with real required parameters" should
+  require.
+
+  Added `_has_unbound_required_param(source, elements)`: parses the
+  cell's own function signature via `ast` (mirroring `_extract_return_names`'s
+  own parse-don't-call approach) and checks whether any parameter with
+  no default value also has no matching input element bound to it
+  (same "element name == parameter name" binding rule `execute_cell`
+  itself already uses for sliders/buttons/etc). `_run_cells` now routes
+  a cell through `define_cell` (defined, never auto-called) whenever
+  *either* it has a `tests` element *or* this check is true -- a
+  required parameter that *is* bound by a matching element (the
+  ordinary slider case) is unaffected and still auto-called normally.
+
+  This is a real behavior change, not just a new capability: previously,
+  removing an element that a required parameter depended on (e.g.
+  `remove_element`'s test in `test_kernel.py`) made the cell error at
+  its next auto-run; now it's safely defined-but-not-called instead,
+  since there's genuinely nothing to call it with. Updated the two
+  existing tests whose premise relied on the old error-on-missing-
+  argument behavior (`test_remove_element_updates_disk_kernel_and_session`,
+  now asserting `idle` instead of `error`; `test_a_callee_cells_failed_run_does_not_update_its_bound_callable`,
+  switched to a genuine runtime error -- division by zero -- as its
+  failure trigger instead of an unbound parameter, since that no longer
+  produces one).
+
+  Verified with 2 new tests (a `drawLineSegment`-shaped cell with no
+  defaults and no `tests` element defines cleanly and is directly
+  callable by another cell with a real turtle canvas; a required
+  parameter that *is* bound by a matching slider element is still
+  auto-called normally) -- full suite: 301 passed, 2 skipped. Verified
+  in a real running server via Playwright: a `drawLineSegment(t, p1,
+  p2, p3, p4)` cell (zero defaults, no tests element) loads with
+  `idle` status and no traceback; a second cell with its own turtle
+  canvas calls it via a `ui.tests(...)` box and the line segment draws
+  correctly with the test showing `PASS`.
+
 - [ ] **48. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local

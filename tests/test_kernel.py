@@ -631,27 +631,85 @@ def test_a_callee_cells_failed_run_does_not_update_its_bound_callable():
     """Same all-or-nothing guarantee that already applies to return-named
     values (a failed cell never partially updates the namespace) must also
     hold for the cell's own callable binding: if `drawSquare` fails to run
-    standalone (e.g. an edit removes the default its own slider/run_all
-    path needs), `session.namespace["drawSquare"]` must keep the last
-    *successful* version rather than being cleared or left half-updated --
-    otherwise a caller like `drawSquares` would see a stale-but-consistent
-    function, or worse, no function at all."""
+    standalone (e.g. an edit makes its own body raise), `session.namespace
+    ["drawSquare"]` must keep the last *successful* version rather than
+    being cleared or left half-updated -- otherwise a caller like
+    `drawSquares` would see a stale-but-consistent function, or worse, no
+    function at all."""
     app = _build_cross_cell_call_deck()
     kernel = Kernel(app.deck)
     session = Session(deck=app.deck)
     kernel.run_all(session)
     original_fn = session.namespace["drawSquare"]
 
-    # remove the default -- drawSquare can no longer run standalone with
-    # no bound `step`, so its own cell run fails
+    # `step` keeps its default (still auto-called standalone), but the
+    # body now raises at call time -- a genuine runtime failure, not
+    # just an unbound-required-parameter case that would otherwise be
+    # safely define-only'd instead of erroring.
     results = kernel.on_cell_edited(
-        "drawSquare", "def drawSquare(step):\n    result = step * 10\n    return result\n", session
+        "drawSquare", "def drawSquare(step=1):\n    result = 1 / 0\n    return result\n", session
     )
 
     assert results["drawSquare"].status == "error"
     # the stale-but-working callable is still there, untouched
     assert session.namespace["drawSquare"] is original_fn
     assert session.namespace["results"] == [2, 4, 6]
+
+
+def test_a_cell_with_no_default_parameters_and_no_tests_element_is_never_auto_called():
+    """The user's own request: `def drawLineSegment(t, p1, p2, p3, p4):`
+    (no defaults on any parameter, no ui.tests(...) element either)
+    should not have to fake `=None` defaults or add a tests element it
+    doesn't want, purely to avoid a guaranteed TypeError -- it's safely
+    defined-but-not-called instead, exactly like a tested cell already
+    was (TODO.md #43), and remains directly callable by another cell."""
+    app = App()
+
+    @app.cell(elements=[ui.turtle_canvas("Canvas")])
+    def drawLineSegment(t, p1, p2, p3, p4):
+        t.goto(p1[0], p1[1])
+        t.goto(p4[0], p4[1])
+
+    @app.cell(elements=[ui.turtle_canvas("Canvas2")])
+    def caller():
+        import codeslides.turtle as turtle_module
+
+        t = turtle_module.Turtle()
+        drawLineSegment(t, (0, 0), (1, 1), (2, 2), (3, 3))
+        done = True
+        return done
+
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+
+    # never auto-called with missing arguments -- defined, not errored
+    assert session.instances["drawLineSegment"].status == "idle"
+    assert callable(session.namespace["drawLineSegment"])
+    # and genuinely usable by another cell's real call
+    assert session.instances["caller"].status == "idle"
+    assert session.namespace["done"] is True
+
+
+def test_a_required_parameter_bound_by_a_matching_element_is_still_auto_called():
+    """The other half of the same check: a required (no-default)
+    parameter that *is* bound by a matching input element (the ordinary
+    slider/button case) must still be auto-called normally -- only a
+    parameter with genuinely nothing to supply it should be treated as
+    unsafe to call."""
+    app = App()
+
+    @app.cell(elements=[ui.slider("speed", min=1, max=10, default=3)])
+    def live_demo(speed):
+        result = speed * 2
+        return result
+
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+
+    assert session.instances["live_demo"].status == "idle"
+    assert session.namespace["result"] == 6
 
 
 def _write_deck_file(tmp_path, source):
@@ -960,7 +1018,11 @@ def test_remove_element_updates_disk_kernel_and_session(tmp_path):
     cell, result = kernel.remove_element(session, "live_demo", "speed")
 
     assert cell.elements == []
-    assert result.status == "error"  # live_demo's body still reads `speed`, now unbound
+    # `speed` has no default and, with its slider gone, no matching
+    # element either -- an unbound required parameter, so the cell is
+    # safely defined-but-not-called (_has_unbound_required_param)
+    # rather than auto-called with `speed` missing entirely.
+    assert result.status == "idle"
     assert "speed" not in session.instances["live_demo"].elements
     assert "ui.slider" not in path.read_text()
 
