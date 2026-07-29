@@ -19,6 +19,7 @@ from codeslides.serialization import (
     save_edits,
     set_element_config,
     set_notes_docstring,
+    set_tests_default,
 )
 
 DECK_SOURCE = '''"""A tiny demo deck with a comment worth preserving."""
@@ -642,3 +643,54 @@ def test_set_element_config_raises_if_the_element_does_not_exist(deck_file):
 def test_set_element_config_raises_if_the_cell_does_not_exist(deck_file):
     with pytest.raises(SaveConflictError):
         set_element_config(str(deck_file), "does_not_exist", "speed", {})
+
+
+def test_set_tests_default_updates_the_source():
+    source = (
+        '@app.cell(elements=[ui.tests("unit", default="assert 1 == 1")])\n'
+        "def cell_with_test():\n    return 1\n"
+    )
+    updated = set_tests_default(source, "unit", "assert cell_with_test() == 1")
+    assert "assert cell_with_test() == 1" in updated
+    assert "assert 1 == 1" not in updated
+    # the cell's own body is untouched
+    assert "def cell_with_test():" in updated
+    assert "return 1" in updated
+
+
+def test_set_tests_default_preserves_other_elements_and_their_config():
+    source = (
+        '@app.cell(instance="editable", elements=[\n'
+        '    ui.slider("speed", min=1, max=10, default=3),\n'
+        '    ui.tests("unit", default="assert 1 == 1"),\n'
+        "])\n"
+        "def live_demo(speed):\n    return speed\n"
+    )
+    updated = set_tests_default(source, "unit", "assert live_demo(3) == 3")
+    assert "assert live_demo(3) == 3" in updated
+    assert 'ui.slider(\'speed\', min=1, max=10, default=3)' in updated
+    assert 'instance=\'editable\'' in updated
+
+
+def test_set_tests_default_preserves_hide_def():
+    source = (
+        '@app.cell(hide_def=True, elements=[ui.tests("unit", default="assert 1 == 1")])\n'
+        "def cell_with_test():\n    return 1\n"
+    )
+    updated = set_tests_default(source, "unit", "assert cell_with_test() == 1")
+    assert "hide_def=True" in updated
+
+
+def test_set_tests_default_raises_if_the_element_does_not_exist():
+    source = '@app.cell(elements=[ui.tests("unit", default="assert 1 == 1")])\ndef cell():\n    return 1\n'
+    with pytest.raises(SaveConflictError):
+        set_tests_default(source, "does_not_exist", "assert 1 == 1")
+
+
+def test_set_tests_default_raises_if_the_named_element_is_not_a_tests_element():
+    source = (
+        '@app.cell(elements=[ui.slider("speed", min=1, max=10, default=3)])\n'
+        "def cell():\n    return 1\n"
+    )
+    with pytest.raises(SaveConflictError):
+        set_tests_default(source, "speed", "assert 1 == 1")

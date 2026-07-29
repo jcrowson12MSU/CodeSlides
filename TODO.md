@@ -2025,19 +2025,54 @@ reshape the plan below and are called out explicitly where they apply:
 
 - [ ] **46. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
 
-- [ ] **47. Persist a `tests` element's edited source when Save is clicked -- it currently only lives in memory.**
+- [x] **47. Persist a `tests` element's edited source when Save is clicked -- it currently only lives in memory.**
   Discovered while fixing #43: unlike a code edit or a notes edit (both
   of which fold into `session.source_overrides`, later written by
-  `save_edits`), `on_tests_edited` only ever writes
+  `save_edits`), `on_tests_edited` only ever wrote
   `instance.elements[element_name].value` -- pure in-memory `Session`
-  state. Clicking Save never touches it, so a test box's content
-  reverts to the deck file's original `ui.tests(name, default="...")`
-  the moment the page reloads or a new Session connects. Needs its own
-  fold-into-`source_overrides` treatment (likely regenerating the
-  cell's `elements=[...]` list with the new `default=`, the same shape
-  `add_element`/`set_element_config` already produce on disk, just
-  routed through the Save button's existing mechanism instead of
-  writing immediately).
+  state. Clicking Save never touched it, so a test box's content
+  reverted to the deck file's original `ui.tests(name, default="...")`
+  the moment the page reloaded or a new Session connected.
+
+  Added `serialization.py`'s `set_tests_default(current_full_source,
+  element_name, default_text)`: same shape as `set_notes_docstring`
+  (full cell source in, full cell source out, no immediate on-disk
+  write) rather than `set_element_config`'s "write to the file
+  immediately" version of "replace one element's config" -- the user
+  explicitly wants Save-button semantics here, matching notes, not
+  immediate persistence like an iframe URL edit. Reuses the exact same
+  parse-elements-then-`rebuild_cell_source` machinery
+  `add_element`/`remove_element`/`set_element_config` already share
+  (`_existing_elements`, the same `instance="editable"`/`hide_def=True`
+  AST-detection those functions already do), just operating on an
+  in-memory source string instead of a file on disk, and only ever
+  replacing the named element's own `default` key, nothing else about
+  its config, name, or position. `Kernel.on_tests_edited` now folds the
+  result into `session.source_overrides` the same way
+  `on_notes_edited` already does, with the same graceful-failure guard
+  (an unparseable *current* source silently skips the
+  `source_overrides` update -- the in-memory value/test-run-result
+  update always happens regardless, so the editor never appears to
+  reject or lose what was typed).
+
+  Verified with both automated tests and a real running server. Added
+  5 new `test_serialization.py` unit tests for `set_tests_default`
+  (updates the source; preserves other elements/their config
+  untouched; preserves `hide_def=True`; raises `SaveConflictError` for
+  a missing element name or a name that exists but isn't a `tests`
+  element) and 2 new end-to-end `test_cell_tests_element.py` tests
+  (the edit round-trips through `source_overrides`/`save_edits` and
+  survives an actual reload from disk; an unparseable current source
+  is skipped gracefully, same as the notes precedent). Full suite: 288
+  passed, 2 skipped (7 new). In a real browser via Playwright: edited a
+  test box's assertion, ran it (`PASS`), clicked Save, confirmed the
+  saved `.py` file's `ui.tests('unit', default='...')` now holds the
+  new assertion text with the cell's own body completely untouched,
+  and confirmed a full page reload still shows the new assertion text
+  and still runs `PASS` -- the exact persistence gap, resolved
+  end-to-end. No frontend changes needed -- purely a backend
+  serialization/kernel change, following the same Save-button
+  precedent as notes.
 
 - [ ] **48. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,

@@ -26,7 +26,7 @@ from codeslides import cs, turtle
 from codeslides.deck import Cell, Deck, Element
 from codeslides.graph import DependencyGraph, build_graph
 from codeslides.output import resolve_output, wire_safe_value
-from codeslides.serialization import reattach_decorator, set_notes_docstring
+from codeslides.serialization import reattach_decorator, set_notes_docstring, set_tests_default
 from codeslides.session import CellInstance, Session
 
 _NESTED_SCOPE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
@@ -659,13 +659,36 @@ class Kernel:
         print-only test box (no assertions at all, just e.g.
         `print(createMatrix(3, 4))` to show a sample input/output) needs
         its printed text here, not just in the auto-run-after-a-cell-edit
-        path."""
+        path.
+
+        Also folds the edit into `session.source_overrides` as a
+        regenerated whole-cell source (`set_tests_default`, replacing
+        this element's own `default=` on the decorator) -- the same slot
+        a code or notes edit already uses, so the existing Save button/
+        `save_edits` path persists it with no separate save mechanism.
+        Previously this test source lived *only* in
+        `instance.elements[element_name].value`, in-memory -- Save never
+        touched it at all, so a test box's content silently reverted to
+        the deck file's original `default=` on the next reload or fresh
+        Session. Same graceful-failure guard as `on_notes_edited`: an
+        unparseable *current* source (this cell's own code is mid-edit
+        with invalid syntax elsewhere in the same session) means there's
+        nowhere reliable to update the decorator -- silently skip
+        updating `source_overrides` in that case; the in-memory
+        `instance.value`/test-run result above still always happens
+        regardless, so the editor never appears to reject or lose what
+        was typed."""
         instance = session.instances[cell_name]
         elements = self.deck.cells[cell_name].elements
         instance.elements[element_name].value = source
         result = _run_and_apply_test(
             instance, element_name, session.namespace, elements, deck_imports=self.deck.imports
         )
+        current = session.source_overrides.get(cell_name, self.deck.cells[cell_name].source)
+        try:
+            session.source_overrides[cell_name] = set_tests_default(current, element_name, source)
+        except (SyntaxError, ValueError):
+            pass
         return {
             "status": result["status"],
             "message": result["message"],

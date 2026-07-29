@@ -750,3 +750,58 @@ def _existing_elements(func: ast.FunctionDef) -> list[Element]:
                 for call in kw.value.elts
             ]
     return []
+
+
+def set_tests_default(current_full_source: str, element_name: str, default_text: str) -> str:
+    """Regenerate a cell's full source with a `tests` element's own
+    `default=` updated to `default_text` -- a test box's edited source,
+    saved via the ordinary Save button/`save_edits` path, the same
+    `session.source_overrides` slot a code or notes edit already uses
+    (`kernel.py`'s `on_notes_edited` is the direct precedent for this
+    shape: full source in, full source out, no separate save mechanism
+    or immediate on-disk write like `set_element_config`'s own
+    `_replace_elements`-based version of this same idea).
+
+    Reuses `_existing_elements`/`rebuild_cell_source` -- the exact same
+    parse-elements-then-regenerate-the-decorator machinery
+    `add_element`/`remove_element`/`set_element_config` already share,
+    just operating on an in-memory source string instead of a file on
+    disk, and only ever changing one element's `default`, never its
+    other config keys, name, or position.
+
+    Raises `SaveConflictError` if `element_name` doesn't name an
+    existing `tests` element on this cell -- mirrors the exact-shape
+    precedent every other named-element lookup in this module already
+    follows (`set_element_config`, `remove_element`)."""
+    tree = ast.parse(textwrap.dedent(current_full_source))
+    func_defs = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    func = func_defs[0]
+    existing = _existing_elements(func)
+    if not any(e.name == element_name and e.kind == "tests" for e in existing):
+        raise SaveConflictError(f"no tests element named {element_name!r} on this cell")
+
+    new_elements = [
+        Element(name=e.name, kind=e.kind, config={**e.config, "default": default_text})
+        if e.name == element_name
+        else e
+        for e in existing
+    ]
+
+    is_editable = any(
+        isinstance(dec, ast.Call)
+        and any(kw.arg == "instance" and ast.literal_eval(kw.value) == "editable" for kw in dec.keywords)
+        for dec in func.decorator_list
+    )
+    hide_def = any(
+        isinstance(dec, ast.Call)
+        and any(kw.arg == "hide_def" and ast.literal_eval(kw.value) is True for kw in dec.keywords)
+        for dec in func.decorator_list
+    )
+
+    return rebuild_cell_source(
+        func.name,
+        "editable" if is_editable else "static",
+        new_elements,
+        current_full_source,
+        hide_def=hide_def,
+    )

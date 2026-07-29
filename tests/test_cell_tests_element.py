@@ -205,6 +205,64 @@ def test_on_tests_edited_reruns_the_test_without_rerunning_the_cell():
     assert session.namespace == namespace_before
 
 
+def test_on_tests_edited_folds_the_edit_into_source_overrides_and_it_saves(tmp_path):
+    """The actual persistence gap this fixes: a tests element's edited
+    source previously lived only in instance.elements[...].value --
+    in-memory, never touched by Save at all. Confirms the edit now
+    round-trips through session.source_overrides/save_edits, the same
+    slot a code or notes edit already uses, and survives an actual
+    reload from disk."""
+    path = tmp_path / "deck.py"
+    path.write_text(
+        "from codeslides import App, ui\n\napp = App()\n\n"
+        '@app.cell(elements=[ui.tests("unit", default="assert 1 == 1")])\n'
+        "def cell_with_test():\n    return 1\n"
+    )
+    from codeslides.loader import load_deck
+    from codeslides.serialization import save_edits
+
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+
+    kernel.on_tests_edited("cell_with_test", "unit", "assert cell_with_test() == 1", session)
+
+    assert "cell_with_test" in session.source_overrides
+    assert "assert cell_with_test() == 1" in session.source_overrides["cell_with_test"]
+
+    save_edits(str(path), session.source_overrides)
+    reloaded = load_deck(str(path))
+    unit = next(e for e in reloaded.cells["cell_with_test"].elements if e.name == "unit")
+    assert unit.config["default"] == "assert cell_with_test() == 1"
+
+
+def test_on_tests_edited_skips_source_overrides_if_the_cells_code_is_unparseable(tmp_path):
+    path = tmp_path / "deck.py"
+    path.write_text(
+        "from codeslides import App, ui\n\napp = App()\n\n"
+        '@app.cell(elements=[ui.tests("unit", default="assert 1 == 1")])\n'
+        "def cell_with_test():\n    return 1\n"
+    )
+    from codeslides.loader import load_deck
+
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+
+    # simulate mid-keystroke invalid code sitting in this cell's own
+    # override, from a concurrent code edit in the same session
+    session.source_overrides["cell_with_test"] = "def cell_with_test(:\n    return 1\n"
+
+    kernel.on_tests_edited("cell_with_test", "unit", "assert cell_with_test() == 1", session)
+
+    # the in-memory value/result still update (the test box keeps
+    # showing what was typed and its own run result)...
+    assert session.instances["cell_with_test"].elements["unit"].value == "assert cell_with_test() == 1"
+    # ...but the unparseable override is left alone rather than crashing
+    # or silently discarding the pending (invalid) code edit
+    assert session.source_overrides["cell_with_test"] == "def cell_with_test(:\n    return 1\n"
+
+
 def test_tests_element_value_is_seeded_from_default():
     app = _build_deck("assert live_demo(3) == 15")
     session = Session(deck=app.deck)
