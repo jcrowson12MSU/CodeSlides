@@ -977,6 +977,30 @@ reshape the plan below and are called out explicitly where they apply:
   Slides-view scroll lock (`scrollY: 0`) is still intact. No backend
   changes; frontend build/oxlint clean.
 
+  **Follow-up (same task): the user reported code editors overflowing
+  into the right column.** Root cause: making the height-stretch chain
+  work required turning `.cs-code-editor` and `.cm-editor` themselves
+  into flex items (`display: flex`/`flex: 1 1 auto`), and neither got
+  a `min-width: 0` -- the exact same "flex child won't shrink below its
+  content's intrinsic size" gotcha called out for the *height* axis in
+  the original writeup above, just unnoticed on the *width* axis since
+  it only shows up with unwrapped code lines long enough to matter.
+  Measured it directly: `.cm-editor` was rendering up to ~809px wide
+  inside a 576px-wide `.cs-cell-code` container, spilling into
+  `.cs-cell-side`'s space regardless of the resizable divider's own
+  split. Fixed by adding `min-width: 0` to both `.cs-code-editor` and
+  `.cs-code-editor .cm-editor`.
+
+  Verified in a real browser via Playwright: re-measured every cell in
+  both views and confirmed `.cm-editor`'s rendered width now exactly
+  equals its `.cs-cell-code` container's width (previously off by
+  ~200px on cells with long lines); confirmed `.cs-cell-code`'s right
+  edge no longer overlaps `.cs-cell-side`'s left edge; confirmed the
+  resizable divider still works and the code editor's width still
+  tracks a horizontal drag correctly; and confirmed the narrow-viewport
+  stacked layout (700px, item 20's `@media` breakpoint) is unaffected.
+  No backend changes; frontend build/oxlint clean.
+
 - [ ] **30. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example

@@ -256,6 +256,7 @@ body.cs-resizing {
 .cs-code-editor {
   margin: 0;
   min-height: 0;
+  min-width: 0;
   flex: 1 1 auto;
   display: flex;
 }
@@ -267,12 +268,20 @@ body.cs-resizing {
    actually respect a height smaller than its content wants -- without
    it, `height: 100%` is silently ignored and the editor grows to fit
    all its lines regardless, same classic flexbox gotcha the resizable
-   divider (item 20) already had to work around for width. A 100px
-   floor keeps a one-line cell from being squashed illegibly thin next
-   to an empty elements column. */
+   divider (item 20) already had to work around for width -- and
+   turning both `.cs-code-editor` and `.cm-editor` themselves into flex
+   items (needed for that height-stretch to propagate) reintroduced
+   that exact width-side gotcha on top of it: without `min-width: 0`
+   here too, they refused to shrink below CodeMirror's unwrapped-line
+   content width and spilled ~200px into `.cs-cell-side` regardless of
+   the resizable divider's own width split (reported bug: code editors
+   overflowing into the right column). A 100px floor keeps a one-line
+   cell from being squashed illegibly thin next to an empty elements
+   column. */
 .cs-code-editor .cm-editor {
   height: 100%;
   min-height: 100px;
+  min-width: 0;
   flex: 1 1 auto;
 }
 
