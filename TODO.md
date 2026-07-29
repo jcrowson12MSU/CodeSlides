@@ -1395,6 +1395,37 @@ reshape the plan below and are called out explicitly where they apply:
   scroll lock both still work. No backend changes; frontend build/
   oxlint clean.
 
+  **Follow-up (same task): the user reported the individual view
+  items on the right should still be collapsable in Slides view.**
+  Traced this before touching anything: `.cs-minimize-toggle` (the
+  per-element "▾" collapse button, `ViewerElementWidget.tsx`) was
+  never actually removed or broken -- clicking it in Slides view still
+  correctly collapsed/restored the element every time. The real
+  problem was visibility: the toggle is deliberately subtle in Cells
+  view (pale `#aaa`, no border, `0.75rem`) because it's one of several
+  small controls in an already-busy per-cell header row there. Once
+  this same task's own change above removed Slides view's cell header
+  entirely, that toggle became one of the only interactive affordances
+  left on an otherwise minimal layout -- the same subtlety that blended
+  in among peers in Cells view now just looked like nothing was there.
+  Confirmed this diagnosis with the user (visibility, not a functional
+  bug) before styling anything. Added a `.cs-slide .cs-minimize-toggle`
+  override -- a small round bordered button (matching the visual
+  language `.cs-help-button`/`.cs-header-collapse-toggle` already use
+  elsewhere in the app, just smaller to fit inline next to a slider or
+  image rather than a full header row) -- scoped to Slides view only so
+  Cells view's own, intentionally-quieter styling is untouched.
+
+  Verified in a real browser via Playwright: confirmed clicking the
+  toggle in Slides view (both before and after this styling change)
+  correctly collapses the element to just its label and restores it on
+  a second click; confirmed the now-visible round button renders
+  clearly against the row for a slider, a turtle canvas, and a notes
+  element; confirmed Cells view's toggle computed style is byte-
+  identical to before (`0px none` border, transparent background,
+  original `15.8x17px` footprint) -- no scoping leak. No backend
+  changes; frontend build/oxlint clean.
+
 - [x] **35. Add a text box to set an iframe element's height, if the cell has one.**
   `ui.iframe(name, *, src="")` had no way to control its rendered
   height -- `.cs-iframe-viewer` was a fixed `240px` in CSS, the same
