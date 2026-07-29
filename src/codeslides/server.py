@@ -17,6 +17,7 @@ from watchfiles import Change, awatch
 from codeslides.deck import Deck
 from codeslides.kernel import Kernel
 from codeslides.protocol import ErrorMessage, SessionCreated, decode_client_message, encode
+from codeslides.serialization import display_source
 from codeslides.ws_handler import SessionRegistry, handle_message
 
 FRONTEND_DIST = Path(__file__).parent / "static"
@@ -82,7 +83,7 @@ def create_app(deck: Deck | None = None, deck_path: str | None = None) -> FastAP
             "cells": {
                 name: {
                     "instance": cell.instance,
-                    "source": cell.source,
+                    "source": display_source(cell.source),
                     "elements": [
                         {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                     ],

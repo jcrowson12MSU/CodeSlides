@@ -8,7 +8,9 @@ from codeslides.serialization import (
     add_element,
     append_cell,
     blank_cell_source,
+    display_source,
     new_cell_name,
+    reattach_decorator,
     remove_element,
     rename_cell,
     reorder_elements,
@@ -155,6 +157,46 @@ def test_blank_cell_source_is_editable_and_parses_standalone():
     assert 'instance="editable"' in source
     assert "def cell_1():" in source
     ast.parse(source)  # must be valid Python on its own
+
+
+def test_display_source_strips_a_single_line_decorator():
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    assert display_source(source) == "def setup():\n    base = 5\n    return base\n"
+
+
+def test_display_source_strips_a_multi_line_decorator():
+    source = (
+        '@app.cell(\n    instance="editable",\n    elements=[\n        ui.slider("speed"),\n    ],\n)\n'
+        "def live_demo(speed):\n    return speed\n"
+    )
+    assert display_source(source) == "def live_demo(speed):\n    return speed\n"
+
+
+def test_reattach_decorator_reunites_an_edited_body_with_its_original_decorator():
+    current = '@app.cell(instance="editable")\ndef live_demo():\n    return 1\n'
+    edited_display_source = "def live_demo():\n    return 2\n"
+    assert (
+        reattach_decorator(current, edited_display_source)
+        == '@app.cell(instance="editable")\ndef live_demo():\n    return 2\n'
+    )
+
+
+def test_reattach_decorator_round_trips_through_display_source():
+    # display_source then reattach_decorator must be a no-op round trip --
+    # this is exactly what a Save does if the user never actually edited
+    # anything (on_cell_edited still re-sends the whole editor doc).
+    original = (
+        '@app.cell(instance="editable", elements=[ui.slider("speed", min=1, max=10, default=3)])\n'
+        "def live_demo(speed):\n    result = base * speed\n    return result\n"
+    )
+    assert reattach_decorator(original, display_source(original)) == original
+
+
+def test_reattach_decorator_tolerates_a_cell_with_no_decorator():
+    # blank_cell_source-style cells always carry one in practice, but this
+    # shouldn't crash if it somehow didn't.
+    current = "def plain():\n    return 1\n"
+    assert reattach_decorator(current, "def plain():\n    return 2\n") == "def plain():\n    return 2\n"
 
 
 def test_append_cell_writes_a_new_blank_cell_to_disk(deck_file):

@@ -44,7 +44,7 @@ from codeslides.protocol import (
     SetTestSource,
     SetUiState,
 )
-from codeslides.serialization import InvalidSourceError, SaveConflictError, save_edits
+from codeslides.serialization import InvalidSourceError, SaveConflictError, display_source, save_edits
 from codeslides.session import Session
 
 
@@ -392,7 +392,7 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 session_id=message.session_id,
                 cell_id=cell.name,
                 instance=cell.instance,
-                source=cell.source,
+                source=display_source(cell.source),
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],

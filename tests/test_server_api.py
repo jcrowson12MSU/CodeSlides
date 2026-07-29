@@ -39,6 +39,10 @@ def test_deck_endpoint_reports_cell_instance_source_and_elements():
     assert body["cells"]["setup"]["instance"] == "static"
     assert body["cells"]["setup"]["elements"] == []
     assert "def setup" in body["cells"]["setup"]["source"]
+    # the @app.cell decorator is Deck-authoring boilerplate, not something
+    # a user should ever see in a cell's code editor -- server.py strips
+    # it via display_source before it reaches the browser.
+    assert "@app.cell" not in body["cells"]["setup"]["source"]
 
     live_demo_meta = body["cells"]["live_demo"]
     assert live_demo_meta["instance"] == "editable"
@@ -46,3 +50,4 @@ def test_deck_endpoint_reports_cell_instance_source_and_elements():
         {"name": "speed", "kind": "slider", "config": {"min": 1, "max": 10, "default": 3}}
     ]
     assert "def live_demo(speed)" in live_demo_meta["source"]
+    assert "@app.cell" not in live_demo_meta["source"]

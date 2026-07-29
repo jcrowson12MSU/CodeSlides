@@ -329,7 +329,13 @@ def test_on_cell_edited_with_a_syntax_error_reports_a_cell_error_not_a_crash():
     results = kernel.on_cell_edited("live_demo", "def live_demo(speed):\n    result = (\n", session)
 
     assert results["live_demo"].status == "error"
-    assert session.source_overrides["live_demo"] == "def live_demo(speed):\n    result = (\n"
+    # `source` is the browser's decorator-free display shape -- on_cell_edited
+    # reattaches live_demo's existing decorator before recording the override,
+    # so a later save_deck doesn't silently drop it from the file.
+    assert session.source_overrides["live_demo"] == (
+        '@app.cell(instance="editable", elements=[ui.slider("speed", min=1, max=10, default=3)])\n'
+        "def live_demo(speed):\n    result = (\n"
+    )
     # other cells/namespace are untouched
     assert session.namespace["base"] == 5
 
@@ -345,7 +351,10 @@ def test_on_element_changed_tolerates_an_unrelated_cells_broken_override():
     kernel.run_all(session)
 
     kernel.on_cell_edited("live_demo", "def live_demo(speed):\n    result = (\n", session)
-    assert session.source_overrides["live_demo"] == "def live_demo(speed):\n    result = (\n"
+    assert session.source_overrides["live_demo"] == (
+        '@app.cell(instance="editable", elements=[ui.slider("speed", min=1, max=10, default=3)])\n'
+        "def live_demo(speed):\n    result = (\n"
+    )
 
     results = kernel.on_element_changed("live_demo", "speed", 7, session)
 

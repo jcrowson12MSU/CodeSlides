@@ -1220,7 +1220,67 @@ reshape the plan below and are called out explicitly where they apply:
   rgb(221, 221, 221)`) -- no scoping leak. No backend changes; frontend
   build/oxlint clean.
 
-- [ ] **33. Write example decks for teaching scenarios**
+- [x] **33. Hide the `@app.cell` decorator from a cell's code editor, in both Cells and Slides view.**
+  `Cell.source` (`inspect.getsource` on the still-decorated function,
+  `deck.py`) has always included the `@app.cell(...)` decorator line(s)
+  -- the code editor showed it verbatim in both views since `CodeEditor.
+  tsx` just renders whatever `source` string it's given. Added
+  `display_source()` (`serialization.py`), which reuses the existing
+  `_split_cell_source` AST-based decorator-stripping logic (previously
+  only used internally by `rename_cell`/`add_element`/`remove_element`)
+  and applied it at the two places raw `Cell.source` reaches the
+  browser: `server.py`'s `/api/deck` and `ws_handler.py`'s `CellAdded`
+  (sent by "+ Add cell"). `Cell.source` itself is untouched -- execution
+  already discards whatever decorator is present before `exec` (kernel.
+  py's `_compile_cell_function`, `func.decorator_list = []`), the
+  dependency graph only ever looks at `func.body` (graph.py), and the
+  on-disk `.py` file still needs the decorator for `save_edits`'s raw
+  line-span text substitution -- so display is the only layer that
+  changed.
+
+  That last point uncovered a real bug while implementing this, not
+  just a display nit: a live code edit (`EditCell`/`on_cell_edited`)
+  records the browser's current editor content verbatim into
+  `session.source_overrides`, and `save_edits` substitutes that text
+  directly into the file's decorator-through-body line span. Once the
+  editor stopped showing the decorator, an instructor who edited a cell
+  and clicked Save would have had the `@app.cell(...)` line silently
+  deleted from the deck's `.py` file -- caught by reasoning through the
+  save path before it shipped, not by a test failure. Fixed by adding
+  `reattach_decorator()` (`serialization.py`): `on_cell_edited`
+  (`kernel.py`) now reunites an incoming decorator-free edit with
+  whatever decorator currently applies to that cell (this Session's own
+  prior override if one exists, else the Deck's baseline) before
+  recording it, so `session.source_overrides` stays the full shape
+  `save_edits`/`_apply_overrides` have always assumed. A plain code
+  edit never touches the decorator itself -- only add_element/
+  remove_element/rename_cell do, and those already go through a
+  separate path (`rebuild_cell_source`) that regenerates the decorator
+  correctly, untouched by this change.
+
+  Verified with both automated tests and a real browser. Added 5 new
+  `serialization.py` unit tests (`display_source` on single- and
+  multi-line decorators, `reattach_decorator` reuniting an edit with
+  its decorator, a round-trip identity check, and a no-decorator
+  tolerance case) plus decorator-absence assertions in the existing
+  `/api/deck` and `CellAdded` tests; updated 5 pre-existing
+  `on_cell_edited`/`save_deck` tests whose fixtures had been
+  constructing `EditCell.source` payloads *with* a decorator already
+  attached (simulating the old, now-incorrect wire format) to send
+  decorator-free source instead, matching what the real frontend now
+  actually sends. Full suite: 226 passed, 2 skipped (5 new). In a real
+  browser via Playwright: confirmed no cell's editor shows `@app.cell`
+  in either Cells or Slides view, across four cells including one with
+  a multi-line `elements=[...]` decorator; live-edited the multi-line-
+  decorator cell's body, ran it (Shift+Enter), saved, and confirmed the
+  on-disk file kept its full original decorator intact (including its
+  `elements=[...]` list) with only the edited body changed, still
+  valid Python (`ast.parse` succeeds); confirmed the edit persisted and
+  the editor stayed decorator-free after a full page reload. No
+  frontend changes; frontend build/oxlint clean (unchanged, verifying
+  nothing broke).
+
+- [ ] **34. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that
@@ -1229,7 +1289,7 @@ reshape the plan below and are called out explicitly where they apply:
   elements — to validate the tool end-to-end and serve as templates for
   instructors.
 
-- [ ] **34. Add tests for kernel & dependency graph**
+- [ ] **35. Add tests for kernel & dependency graph**
   Unit tests for `ast`-based variable extraction, dependency graph
   construction/cycle detection, minimal-rerun-set computation, and
   integration tests that run a sample deck through the kernel and assert
@@ -1237,9 +1297,9 @@ reshape the plan below and are called out explicitly where they apply:
   specifically clones a cell/editor instance and asserts the two instances'
   namespaces and outputs never cross-contaminate.
 
-- [ ] **35. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
+- [ ] **36. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
 
-- [ ] **36. Polish, README, and packaging**
+- [ ] **37. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
   `pip install` (editable) / eventual PyPI packaging.

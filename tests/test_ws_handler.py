@@ -465,13 +465,19 @@ def _build_file_backed_registry(tmp_path):
 def test_save_deck_writes_the_override_and_clears_it(tmp_path):
     registry, path = _build_file_backed_registry(tmp_path)
     session = registry.create()
-    new_source = (
-        '@app.cell(instance="editable", elements=[ui.slider("speed", min=1, max=10, default=3)])\n'
+    # The browser's editor only ever shows/edits the decorator-free shape
+    # (display_source) -- on_cell_edited reattaches live_demo's existing
+    # decorator before recording the override.
+    edited_body = (
         "def live_demo(speed):\n"
         "    result = base * speed * 10  # noqa: F821\n"
         "    return result\n"
     )
-    handle_message(registry, EditCell(session_id=session.session_id, cell_id="live_demo", source=new_source))
+    handle_message(registry, EditCell(session_id=session.session_id, cell_id="live_demo", source=edited_body))
+    new_source = (
+        '@app.cell(instance="editable", elements=[ui.slider("speed", min=1, max=10, default=3)])\n'
+        + edited_body
+    )
     assert session.source_overrides["live_demo"] == new_source
 
     messages = handle_message(registry, SaveDeck(session_id=session.session_id))
@@ -533,7 +539,14 @@ def test_save_deck_with_an_unparseable_override_errors_without_writing(tmp_path)
             source="def live_demo(speed):\n    result = (\n",
         ),
     )
-    assert session.source_overrides["live_demo"] == "def live_demo(speed):\n    result = (\n"
+    # decorator-free `source` in (matches the browser's display shape) --
+    # on_cell_edited reattaches live_demo's existing decorator before
+    # recording the override.
+    expected_override = (
+        '@app.cell(instance="editable", elements=[ui.slider("speed", min=1, max=10, default=3)])\n'
+        "def live_demo(speed):\n    result = (\n"
+    )
+    assert session.source_overrides["live_demo"] == expected_override
 
     messages = handle_message(registry, SaveDeck(session_id=session.session_id))
 
@@ -542,7 +555,7 @@ def test_save_deck_with_an_unparseable_override_errors_without_writing(tmp_path)
     # nothing was written, and the override is still there for the
     # instructor to keep fixing
     assert path.read_text() == before
-    assert session.source_overrides["live_demo"] == "def live_demo(speed):\n    result = (\n"
+    assert session.source_overrides["live_demo"] == expected_override
 
 
 def test_save_deck_unknown_session_produces_error_not_crash(tmp_path):
@@ -562,27 +575,20 @@ def test_save_deck_only_affects_the_saving_sessions_overrides(tmp_path):
     session_a = registry.create()
     session_b = registry.create()
 
-    source_a = (
-        '@app.cell(instance="editable", elements=[ui.slider("speed", min=1, max=10, default=3)])\n'
-        "def live_demo(speed):\n"
-        "    result = base * speed * 100  # noqa: F821\n"
-        "    return result\n"
-    )
-    source_b = (
-        '@app.cell(instance="editable", elements=[ui.slider("speed", min=1, max=10, default=3)])\n'
-        "def live_demo(speed):\n"
-        "    result = base * speed * 200  # noqa: F821\n"
-        "    return result\n"
-    )
-    handle_message(registry, EditCell(session_id=session_a.session_id, cell_id="live_demo", source=source_a))
-    handle_message(registry, EditCell(session_id=session_b.session_id, cell_id="live_demo", source=source_b))
+    # decorator-free `source` (matches the browser's display shape) --
+    # on_cell_edited reattaches live_demo's existing decorator.
+    decorator = '@app.cell(instance="editable", elements=[ui.slider("speed", min=1, max=10, default=3)])\n'
+    body_a = "def live_demo(speed):\n    result = base * speed * 100  # noqa: F821\n    return result\n"
+    body_b = "def live_demo(speed):\n    result = base * speed * 200  # noqa: F821\n    return result\n"
+    handle_message(registry, EditCell(session_id=session_a.session_id, cell_id="live_demo", source=body_a))
+    handle_message(registry, EditCell(session_id=session_b.session_id, cell_id="live_demo", source=body_b))
 
     handle_message(registry, SaveDeck(session_id=session_a.session_id))
 
     assert "base * speed * 100" in path.read_text()
     assert session_a.source_overrides == {}
     # session_b's own override is untouched by session_a's save
-    assert session_b.source_overrides["live_demo"] == source_b
+    assert session_b.source_overrides["live_demo"] == decorator + body_b
 
 
 def test_add_cell_emits_cell_added_and_writes_to_disk(tmp_path):
@@ -596,9 +602,13 @@ def test_add_cell_emits_cell_added_and_writes_to_disk(tmp_path):
     assert added.session_id == session.session_id
     assert added.instance == "editable"
     assert "def cell_1():" in added.source
+    # the @app.cell decorator is stripped before it reaches the browser
+    # (display_source), same as /api/deck -- the on-disk file still has it.
+    assert "@app.cell" not in added.source
     assert added.elements == []
     # written to disk immediately -- no separate save_deck needed
     assert "def cell_1():" in path.read_text()
+    assert "@app.cell" in path.read_text()
     # and the Kernel's own baseline picked it up synchronously
     assert added.cell_id in registry.kernel.deck.cells
     # the requesting session's own instances were backfilled so a

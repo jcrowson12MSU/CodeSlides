@@ -26,6 +26,7 @@ from codeslides import cs, turtle
 from codeslides.deck import Cell, Deck, Element
 from codeslides.graph import DependencyGraph, build_graph
 from codeslides.output import resolve_output, wire_safe_value
+from codeslides.serialization import reattach_decorator
 from codeslides.session import CellInstance, Session
 
 _NESTED_SCOPE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
@@ -431,8 +432,17 @@ class Kernel:
         cell would be -- it must not crash the edit_cell round trip or
         leave `session.source_overrides` silently unset. The invalid
         source is still recorded as the override (so the editor keeps
-        showing what the user typed) and no other cell is touched."""
-        session.source_overrides[cell_name] = source
+        showing what the user typed) and no other cell is touched.
+
+        `source` is decorator-free (the browser's editor only ever shows/
+        edits `display_source`'s output) -- `reattach_decorator` reunites
+        it with whatever decorator currently applies to this cell (this
+        Session's own prior override if one exists, else the Deck's
+        baseline) before it's recorded, so `session.source_overrides`
+        stays the full shape `save_edits`/`_apply_overrides` expect and a
+        later Save doesn't silently drop the decorator from the file."""
+        current = session.source_overrides.get(cell_name, self.deck.cells[cell_name].source)
+        session.source_overrides[cell_name] = reattach_decorator(current, source)
         try:
             graph = self._effective_graph(session)
         except (SyntaxError, ValueError) as exc:
