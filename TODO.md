@@ -805,7 +805,32 @@ reshape the plan below and are called out explicitly where they apply:
   highlighted-Slides states. No backend changes; frontend build/oxlint
   clean.
 
-- [ ] **26. Write example decks for teaching scenarios**
+- [x] **26. Structure3.**
+  Move the buttons for "cells/slides" and "save" to the top right in
+  both views.
+
+  Wrapped the title and a new `.cs-header-controls` group (the item 25
+  Cells/Slides switch + the Save button) in one `.cs-app-header` flex
+  row -- title left, controls right, `justify-content: space-between`.
+  Confirmed with the user first that this row should also be sticky
+  (not just repositioned), so the whole header -- not only the title --
+  stays pinned while scrolling, consistent with item 24's precedent;
+  `.cs-app-header` now carries the `position: sticky; top: 0` that used
+  to live on `.cs-app-title` alone. "+ Add cell" and the websocket
+  connection status stay exactly where they were -- the item only names
+  "cells/slides" and "save," and moving the websocket status is
+  explicitly item 27's own scope, not this one.
+
+  Verified in a real browser via Playwright in both views: confirmed
+  the switch and Save button's bounding boxes sit to the right of and
+  roughly level with the title (same row), with "+ Add cell" in its own
+  separate row below, unmoved; confirmed the whole header row stays
+  pinned at the viewport's top edge after scrolling 600px down a long
+  Cells-view deck; confirmed the same layout holds after switching to
+  the Slides view. Screenshots confirm no visual regressions. No
+  backend changes; frontend build/oxlint clean.
+
+- [ ] **27. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that

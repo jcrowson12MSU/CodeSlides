@@ -7,21 +7,45 @@
   box-sizing: border-box;
 }
 
-/* TODO.md #24: locked to the top-left of the screen in both views (Cells
-   and Slides share this same top-level layout) -- previously scrolled
-   away with the rest of the page the moment a deck had enough content
-   to scroll, losing the one persistent orientation cue ("what app is
-   this") along with the connection status and view toggle. `position:
-   sticky` keeps it pinned to the viewport's top edge while the page
-   scrolls underneath; the background/z-index keep cell content from
-   visibly scrolling up through it. */
-.cs-app-title {
+/* TODO.md #24/#26: the title stays locked to the top-left of the screen
+   in both views (Cells and Slides share this same top-level layout) --
+   previously scrolled away with the rest of the page the moment a deck
+   had enough content to scroll. TODO.md #26 moved the Cells/Slides
+   toggle and Save button into this same row, pinned top-right, so the
+   whole header (not just the title) stays visible while scrolling --
+   `position: sticky` on the row keeps it pinned to the viewport's top
+   edge; the background/z-index keep cell content from visibly scrolling
+   up through it. */
+.cs-app-header {
   position: sticky;
   top: 0;
   z-index: 10;
   background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
   padding-top: 1rem;
   margin-top: -1rem;
+}
+
+.cs-app-title {
+  margin: 32px 0;
+}
+
+.cs-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.cs-header-controls button {
+  border: 1px solid #ccc;
+  background: white;
+  border-radius: 4px;
+  padding: 0.3rem 0.8rem;
+  font-size: 0.85rem;
+  cursor: pointer;
 }
 
 .cs-hint {
