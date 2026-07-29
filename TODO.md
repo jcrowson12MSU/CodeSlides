@@ -2148,6 +2148,99 @@ reshape the plan below and are called out explicitly where they apply:
   test box themselves; no further framework changes are needed for
   that to work.
 
+- [x] **50. Fix three bugs reported together from one real editing session (screenshot): renaming a new cell silently didn't work, a computed-expression `return` was rejected, and it looked like markdown notes weren't saving.**
+  All three surfaced from one real "add a cell, write `midpoint(p1, p2):
+  return (x1+x2)/2, (y1+y2)/2`, add notes, rename it" session. Root
+  causes turned out to be two separate, unrelated bugs (rename) plus one
+  deliberate-but-too-strict restriction (computed return) -- notes
+  saving itself was never actually broken, see below.
+
+  **Rename silently reverting itself on Save.** Reproduced precisely
+  with a direct kernel-level script: `Kernel.rename_cell` correctly
+  renames the cell on disk and remaps `session.source_overrides`' dict
+  key from `old_name` to `new_name` -- but only the *key*. The *value*
+  (a full cell-source string recorded by an earlier, still-unsaved
+  `on_cell_edited`/`on_notes_edited` call) was moved verbatim, so it
+  still literally read `def old_name(...)`. Clicking Save later spliced
+  that stale text back onto the file, silently reintroducing the old
+  name -- from the user's perspective, "the browser said it renamed,
+  but saving undid it," which reads exactly like "renaming doesn't
+  work." Fixed by having `rename_cell` regenerate the moved override's
+  own decorator/`def` line via `rebuild_cell_source` (reusing the exact
+  machinery `_replace_elements` already uses), keeping the edited body
+  byte-identical. The same class of bug existed in `add_element`/
+  `remove_element`/`reorder_elements`/`set_element_config` too (none of
+  them touch `session.source_overrides` at all, so a pending edit's
+  decorator silently goes stale relative to whatever they just wrote to
+  disk) -- fixed with one shared `Kernel._resync_stale_override` helper
+  called from all four.
+
+  A second, compounding bug sat right on top of the first: `ws_handler.py`'s
+  `RenameCell`/`AddElement`/`RemoveElement`/`ReorderElements`/
+  `SetElementConfig` handlers all sent `display_source(cell.source, ...)`
+  -- the fresh on-disk truth -- as their response's `source` field,
+  never checking `session.source_overrides` at all. Even with the
+  Kernel-level fix above, the *browser* would still have shown the
+  edit reverting immediately after any of these five operations. Fixed
+  with a shared `_effective_display_source(session, cell)` helper
+  (session override if one exists, else disk truth) used at all five
+  call sites (`AddCell` intentionally left alone -- a brand-new cell
+  can't yet have a pending override).
+
+  **Computed-expression `return` rejected.** `kernel.py`'s
+  `_extract_return_names` required a `return` to name an existing local
+  variable or tuple of them, raising `CellDefinitionError` for anything
+  else (exactly the traceback in the user's screenshot for `return (x1 +
+  x2) / 2, (y1 + y2) / 2`). Investigated `graph.py`'s dependency graph
+  and confirmed it's built entirely from ordinary top-level assignments
+  and never inspects `return` at all -- the restriction existed purely
+  because `execute_cell` needs *some* name to bind the returned value(s)
+  under for other cells to read by name, and a computed expression has
+  none. Relaxed `_extract_return_names` to return `[]` (same as no
+  `return` at all) instead of raising: the cell's own displayed output
+  still shows the real value regardless of `return_names`
+  (`ExecutionResult.value` is set unconditionally), and the cell's own
+  name is still bound to its function after a successful run
+  (ARCHITECTURE.md section 3's "a cell's own name is itself an implicit
+  write"), so a helper cell like `midpoint` remains fully usable via a
+  direct call from another cell (`mx, my = midpoint(p1, p2)`) -- only an
+  *implicit*, graph-level name for the unnamed value is unavailable,
+  which was never possible anyway. Documented this in ARCHITECTURE.md
+  section 3 alongside the existing cross-cell-call paragraph.
+
+  **Notes not saving.** Reproduced the exact add-notes-element/edit/Save
+  sequence directly and found `on_notes_edited`/`set_notes_docstring`
+  already worked correctly end-to-end (docstring round-trips through
+  `session.source_overrides`/`save_edits` and survives a reload, same as
+  verified for TODO.md #36-38). The reported symptom was a side effect
+  of the rename bug above: in the exact combined sequence from the
+  screenshot (edit code, edit notes, then rename), the stale-override
+  bug reverted the *entire* cell -- name, body, and notes together --
+  the moment Save ran, which reads indistinguishably from "my notes
+  didn't save." No separate notes-specific fix was needed; fixing
+  rename's stale-override bug fixes this symptom too.
+
+  Verified with 4 new regression tests (2 in `test_kernel.py` for the
+  Kernel-level stale-override fix on rename/add_element, exercising the
+  full rename-then-save and add_element-then-save round trip via
+  `save_edits`; 2 in `test_ws_handler.py` asserting the websocket
+  response's own `source` field reflects the pending edit, not disk
+  truth, for both `RenameCell` and `AddElement`) plus one existing test
+  rewritten (`test_return_of_a_computed_expression_...`, previously
+  asserting the old rejecting behavior) and one existing test adjusted
+  to use a different bad-definition trigger (multiple `return`
+  statements, since a computed-expression return no longer qualifies).
+  Full suite: 299 passed, 2 skipped. Verified in a real running server
+  via Playwright, reproducing the user's exact sequence end-to-end: add
+  a cell, add a notes element, edit the code to a `midpoint(p1, p2)`
+  function with a computed tuple return (previously an immediate
+  `CellDefinitionError`, now runs `idle` with no error), edit its notes,
+  rename it to `midpoint`, click Save -- confirmed the saved file
+  correctly shows `def midpoint(p1, p2):` with the edited body *and*
+  the notes docstring both intact, and separately confirmed (with a
+  `ui.tests(...)` box) that `assert midpoint((2, 6), (10, 8)) == (6, 7)`
+  runs `PASS`.
+
 - [ ] **48. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local

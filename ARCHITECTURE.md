@@ -194,6 +194,19 @@ canvas the callee cell may separately declare for its own standalone use)
 — see `examples/live_demo1.py`'s `drawSquares`/`drawSquare` for a worked
 example.
 
+**A `return`ed computed expression publishes no implicit name, but is
+still usable.** `return name` and `return a, b` expose `name`/`a`/`b` as
+graph-level names other cells can read from the Session namespace; a
+computed expression (`return (x1 + x2) / 2, (y1 + y2) / 2`) has no
+existing name to publish under, so it exposes none — not an error,
+since the graph is built entirely from ordinary top-level assignments
+and never inspects `return` at all. The cell's own displayed output
+still shows the real value, and the cell's own name still resolves to
+its function (the paragraph above), so a helper cell like `midpoint`
+remains fully usable via a direct call (`mx, my = midpoint(p1, p2)`) —
+only the "another cell reads this by an implicit name" path is
+unavailable, which was never possible for an unnamed expression anyway.
+
 ## 3a. Element reactivity (R4)
 
 Elements attach to the dependency graph at the Cell level, not as separate

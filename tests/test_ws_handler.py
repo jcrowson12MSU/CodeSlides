@@ -694,6 +694,39 @@ def test_rename_cell_emits_cell_renamed_and_writes_to_disk(tmp_path):
     assert "def coding_demo(speed):" in renamed.source
 
 
+def test_rename_cell_after_an_unsaved_edit_reflects_the_edit_and_saves_correctly(tmp_path):
+    """Regression test for the reported "renaming a cell doesn't work"
+    bug: an unsaved code edit sitting in session.source_overrides at
+    rename time must (a) show up correctly in the CellRenamed message's
+    own `source` (previously always sent the stale on-disk truth,
+    discarding the edit from the display) and (b) still be exactly what
+    Save writes to disk under the *new* name (previously the override's
+    own text still said `def live_demo(...)`, so Save silently
+    reintroduced the old name even though the rename itself had already
+    correctly landed on disk and in the Kernel's baseline)."""
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    edited_body = "def live_demo(speed):\n    result = speed * 99\n    return result\n"
+    handle_message(registry, EditCell(session_id=session.session_id, cell_id="live_demo", source=edited_body))
+
+    messages = handle_message(
+        registry, RenameCell(session_id=session.session_id, cell_id="live_demo", new_name="coding_demo")
+    )
+
+    assert isinstance(messages[0], CellRenamed)
+    renamed = messages[0]
+    assert "def coding_demo(speed):" in renamed.source
+    assert "speed * 99" in renamed.source
+    assert "def live_demo" not in renamed.source
+
+    handle_message(registry, SaveDeck(session_id=session.session_id))
+    saved = path.read_text()
+    assert "def coding_demo(speed):" in saved
+    assert "speed * 99" in saved
+    assert "def live_demo" not in saved
+
+
 def test_rename_cell_unknown_session_produces_error_not_crash(tmp_path):
     registry, _ = _build_file_backed_registry(tmp_path)
 
@@ -749,6 +782,39 @@ def test_add_element_emits_element_added_and_writes_to_disk(tmp_path):
     # Regression guard: same decorator-free shape display_source already
     # gives every other cell-source-carrying message.
     assert "@app.cell" not in added.source
+
+
+def test_add_element_after_an_unsaved_edit_reflects_the_edit_and_saves_correctly(tmp_path):
+    """Regression test: an unsaved code edit sitting in
+    session.source_overrides["setup"] must not get its decorator
+    silently reverted to the pre-add_element `elements=[...]` list by a
+    later Save -- add_element must resync that pending override with
+    the new element, same as rename_cell's own regression test above."""
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    edited_body = "def setup():\n    base = 42\n    return base\n"
+    handle_message(registry, EditCell(session_id=session.session_id, cell_id="setup", source=edited_body))
+
+    messages = handle_message(
+        registry,
+        AddElement(
+            session_id=session.session_id,
+            cell_id="setup",
+            element_name="multiplier",
+            kind="slider",
+            config={"min": 1, "max": 5, "default": 2},
+        ),
+    )
+
+    assert isinstance(messages[0], ElementAdded)
+    added = messages[0]
+    assert "base = 42" in added.source
+
+    handle_message(registry, SaveDeck(session_id=session.session_id))
+    saved = path.read_text()
+    assert "ui.slider('multiplier'" in saved
+    assert "base = 42" in saved
 
 
 def test_add_element_unknown_session_produces_error_not_crash(tmp_path):

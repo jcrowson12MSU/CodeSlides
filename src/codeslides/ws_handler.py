@@ -75,6 +75,24 @@ class SessionRegistry:
         return clone
 
 
+def _effective_display_source(session: Session, cell) -> str:
+    """The source text to show the browser for `cell` in *this* session:
+    its pending, unsaved `session.source_overrides` entry if one exists,
+    else the fresh on-disk truth -- same "session's effective source"
+    preference `_run_cells`/`_effective_graph`/`on_cell_edited` already
+    apply everywhere else. `RenameCell`/`AddElement`/`RemoveElement`/
+    `ReorderElements`/`SetElementConfig` all write straight to disk and
+    reload before building their response; without this, they'd
+    unconditionally send `cell.source` (the reloaded Deck's own text),
+    silently discarding whatever unsaved edit this session had for the
+    same cell from the browser's displayed view -- even though the
+    Kernel-side override itself (`Kernel._resync_stale_override`/
+    `rename_cell`'s own remap) is kept correct and would still be what
+    Save actually writes."""
+    override = session.source_overrides.get(cell.name)
+    return display_source(override if override is not None else cell.source, hide_def=cell.hide_def)
+
+
 def _results_to_messages(session_id: str, results: dict[str, ExecutionResult]) -> list[ServerMessage]:
     """Translate a Kernel run's per-cell ExecutionResults into the
     cell_status/cell_output messages ARCHITECTURE.md section 5 defines.
@@ -424,7 +442,7 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 old_cell_id=message.cell_id,
                 cell_id=cell.name,
                 instance=cell.instance,
-                source=display_source(cell.source, hide_def=cell.hide_def),
+                source=_effective_display_source(session, cell),
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
@@ -448,7 +466,7 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 session_id=message.session_id,
                 cell_id=cell.name,
                 instance=cell.instance,
-                source=display_source(cell.source, hide_def=cell.hide_def),
+                source=_effective_display_source(session, cell),
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
@@ -471,7 +489,7 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 session_id=message.session_id,
                 cell_id=cell.name,
                 instance=cell.instance,
-                source=display_source(cell.source, hide_def=cell.hide_def),
+                source=_effective_display_source(session, cell),
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
@@ -493,7 +511,7 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 session_id=message.session_id,
                 cell_id=cell.name,
                 instance=cell.instance,
-                source=display_source(cell.source, hide_def=cell.hide_def),
+                source=_effective_display_source(session, cell),
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
@@ -515,7 +533,7 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 session_id=message.session_id,
                 cell_id=cell.name,
                 instance=cell.instance,
-                source=display_source(cell.source, hide_def=cell.hide_def),
+                source=_effective_display_source(session, cell),
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],

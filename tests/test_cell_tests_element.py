@@ -171,13 +171,19 @@ def test_tests_element_does_not_run_when_the_cell_itself_fails_to_define():
     assert session.instances["live_demo"].elements["unit"].content["status"] == "pass"
 
     # break the cell's own *definition* -- a bad return shape
-    # (CellDefinitionError), not just a bad call -- since defining (not
-    # calling) is what a tested cell can now fail at. A plain
-    # SyntaxError from a mid-edit is a separate, pre-existing early-
-    # return path in on_cell_edited (before _run_cells is ever reached
-    # at all), so it wouldn't exercise the "cell errored -> mark test
-    # error" branch this test is actually checking.
-    kernel.on_cell_edited("live_demo", "def live_demo(speed):\n    return speed + 1\n", session)
+    # (CellDefinitionError: multiple return statements), not just a bad
+    # call -- since defining (not calling) is what a tested cell can now
+    # fail at. A plain SyntaxError from a mid-edit is a separate,
+    # pre-existing early-return path in on_cell_edited (before
+    # _run_cells is ever reached at all), so it wouldn't exercise the
+    # "cell errored -> mark test error" branch this test is actually
+    # checking. (A computed-expression return, e.g. `return speed + 1`,
+    # no longer counts as a bad definition -- see kernel.py's
+    # `_extract_return_names` -- so multiple `return`s is the remaining
+    # way to trigger this.)
+    kernel.on_cell_edited(
+        "live_demo", "def live_demo(speed):\n    if speed > 0:\n        return speed\n    return 0\n", session
+    )
 
     assert session.instances["live_demo"].status == "error"
     assert session.instances["live_demo"].elements["unit"].content["status"] == "error"

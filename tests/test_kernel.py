@@ -159,18 +159,69 @@ def test_multi_value_return_unpacks_by_name():
     assert session.namespace["c"] == 3
 
 
-def test_return_of_non_name_expression_is_rejected():
+def test_return_of_a_computed_expression_runs_fine_with_no_extra_namespace_binding():
+    """A `return`ed computed expression (not a bare name/tuple-of-names)
+    is not an error -- there's simply no existing name to publish it
+    under (graph.py never inspects `return` at all), so it's treated
+    like a bare `return` with no value: nothing extra is bound into
+    session.namespace. The cell's own displayed output still carries
+    the real computed value regardless."""
     from codeslides.deck import Cell, Deck
 
     deck = Deck()
-    deck.add_cell(Cell(name="bad", source="def bad():\n    x = 1\n    return x + 1\n"))
+    deck.add_cell(Cell(name="ok", source="def ok():\n    x = 1\n    return x + 1\n"))
 
     kernel = Kernel(deck)
     session = Session(deck=deck)
     kernel.run_all(session)
 
-    assert session.instances["bad"].status == "error"
-    assert "must `return` a name or tuple of names" in session.instances["bad"].error
+    assert session.instances["ok"].status == "idle"
+    assert session.instances["ok"].output["value"] == 2
+    assert "x" not in session.namespace
+
+
+def test_return_of_a_computed_tuple_expression_is_still_directly_callable_by_another_cell():
+    """The exact shape from the user's own report: a `midpoint`-style
+    helper cell returns a computed tuple with no intermediate named
+    variables to expose. It publishes no implicit graph-level name, but
+    another cell can still call it directly and get the real value --
+    same as any two ordinary Python functions.
+
+    `midpoint` needs its own `tests` element (empty default is fine) so
+    it's only ever *defined*, not auto-called with no arguments
+    (TODO.md #43/`_run_cells`) -- `p1`/`p2` have no defaults, so an
+    auto-call would fail before `result` ever got a chance to call it
+    itself with real arguments."""
+    from codeslides.deck import Cell, Deck
+
+    deck = Deck()
+    deck.add_cell(
+        Cell(
+            name="midpoint",
+            source=(
+                "def midpoint(p1, p2):\n"
+                "    x1, y1 = p1\n"
+                "    x2, y2 = p2\n"
+                "    return (x1 + x2) / 2, (y1 + y2) / 2\n"
+            ),
+            elements=[ui.tests("unit")],
+        )
+    )
+    deck.add_cell(
+        Cell(
+            name="result",
+            source="def result():\n    mx, my = midpoint((2, 6), (10, 8))\n    return mx, my\n",
+        )
+    )
+
+    kernel = Kernel(deck)
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    assert session.instances["midpoint"].status == "idle"
+    assert session.instances["result"].status == "idle"
+    assert session.namespace["mx"] == 6
+    assert session.namespace["my"] == 7
 
 
 def test_clone_isolation_holds_under_real_execution():
@@ -744,6 +795,45 @@ def test_rename_cell_remaps_the_requesting_sessions_state(tmp_path):
     kernel.run_all(session)
 
 
+def test_rename_cell_updates_the_def_line_inside_a_pending_source_override(tmp_path):
+    """Regression test: renaming a cell with an unsaved code edit sitting
+    in session.source_overrides must not just move the dict key -- the
+    override's own `def old_name(...)` text must become `def
+    new_name(...)` too, or a later Save would splice the stale text back
+    onto the file and silently undo the rename (reported as "renaming a
+    cell doesn't work")."""
+    from codeslides.loader import load_deck
+    from codeslides.serialization import save_edits
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    kernel.on_cell_edited(
+        "live_demo",
+        'def live_demo(speed):\n    result = speed * 3\n    return result\n',
+        session,
+    )
+    assert "def live_demo(speed):" in session.source_overrides["live_demo"]
+
+    kernel.rename_cell(session, "live_demo", "coding_demo")
+
+    assert "coding_demo" in session.source_overrides
+    assert "def coding_demo(speed):" in session.source_overrides["coding_demo"]
+    assert "def live_demo" not in session.source_overrides["coding_demo"]
+    # the edited body itself (speed * 3, not the original speed * 2)
+    # must have survived byte-identical through the rename
+    assert "speed * 3" in session.source_overrides["coding_demo"]
+
+    save_edits(str(path), session.source_overrides)
+    saved = path.read_text()
+    assert "def coding_demo(speed):" in saved
+    assert "def live_demo" not in saved
+    assert "speed * 3" in saved
+
+
 def test_rename_cell_does_not_affect_a_different_sessions_instances(tmp_path):
     from codeslides.loader import load_deck
 
@@ -808,6 +898,41 @@ def test_add_element_updates_disk_kernel_and_session(tmp_path):
     assert "multiplier" in kernel.deck.cells["setup"].elements[0].name
     assert "multiplier" in session.instances["setup"].elements
     assert "ui.slider('multiplier'" in path.read_text()
+
+
+def test_add_element_resyncs_a_pending_source_override(tmp_path):
+    """Regression test: adding an element writes the new `elements=[...]`
+    decorator to disk immediately, but a session's own pending, unsaved
+    code edit for the same cell (session.source_overrides) still carried
+    the *old* decorator -- left alone, a later Save would splice that
+    stale decorator back onto the file, silently reverting the just-
+    added element even though the browser had already shown it added."""
+    from codeslides.loader import load_deck
+    from codeslides.serialization import save_edits
+
+    path = _write_deck_file(tmp_path, _ADD_CELL_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    kernel.on_cell_edited(
+        "setup",
+        "def setup():\n    base = 9\n    return base\n",
+        session,
+    )
+    assert "elements=" not in session.source_overrides["setup"]
+
+    kernel.add_element(session, "setup", ui.slider("multiplier", min=1, max=5, default=2))
+
+    assert "ui.slider('multiplier'" in session.source_overrides["setup"]
+    # the edited body itself must have survived byte-identical
+    assert "base = 9" in session.source_overrides["setup"]
+
+    save_edits(str(path), session.source_overrides)
+    saved = path.read_text()
+    assert "ui.slider('multiplier'" in saved
+    assert "base = 9" in saved
 
 
 def test_add_element_raises_on_a_duplicate_element_name(tmp_path):

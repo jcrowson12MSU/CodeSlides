@@ -116,13 +116,33 @@ def _compile_cell_function(source: str, globals_dict: dict[str, object]):
 
 def _extract_return_names(func) -> list[str]:
     """Find the function's own `return` statement (if any) and return the
-    name(s) it exposes, in order. A bare `return name` yields `[name]`; a
-    `return a, b` yields `[a, b]`; no return yields `[]`. Any other return
-    shape (a computed expression, not a name/tuple-of-names) is rejected --
-    cells expose named bindings, not arbitrary expressions, per
-    ARCHITECTURE.md section 3. Returns nested inside an `if`/`for`/`with`
-    block still belong to `func`; returns inside a nested function/lambda
-    do not and are skipped."""
+    name(s) it exposes to the dependency graph, in order. A bare `return
+    name` yields `[name]`; a `return a, b` yields `[a, b]`; no return, or
+    any other return shape (a computed expression, e.g. `return (x1 +
+    x2) / 2, (y1 + y2) / 2`, not a bare name/tuple-of-names), yields
+    `[]` -- there's simply no existing name to publish a computed
+    expression's value under (`graph.py`'s dependency graph is built
+    entirely from ordinary top-level assignments, and never inspects
+    `return` at all), so it's treated the same as no return at all:
+    nothing extra gets bound into `session.namespace` for other cells to
+    read by name.
+
+    This does *not* make a computed-expression return unusable -- the
+    cell's own displayed output still shows the returned value regardless
+    of `return_names` (`ExecutionResult.value`/`resolve_output`, set from
+    the function's actual return value unconditionally), and the
+    function itself is still bound into `session.namespace` under its
+    own name after a successful call (ARCHITECTURE.md section 3's "a
+    cell's own name is itself an implicit write"), so another cell can
+    still get the real computed value by calling it directly, e.g.
+    `mx, my = midpoint(p1, p2)` -- exactly like calling any other
+    cell's function. Only an *implicit*, graph-level name for the
+    computed value is unavailable, which was never possible for an
+    unnamed expression anyway.
+
+    Returns nested inside an `if`/`for`/`with` block still belong to
+    `func`; returns inside a nested function/lambda do not and are
+    skipped."""
     returns = list(_own_returns(func.body))
     if not returns:
         return []
@@ -135,9 +155,7 @@ def _extract_return_names(func) -> list[str]:
         return [ret.value.id]
     if isinstance(ret.value, ast.Tuple) and all(isinstance(e, ast.Name) for e in ret.value.elts):
         return [e.id for e in ret.value.elts]
-    raise CellDefinitionError(
-        f"cell {func.name!r} must `return` a name or tuple of names, not a computed expression"
-    )
+    return []
 
 
 def _own_returns(stmts):
@@ -762,7 +780,20 @@ class Kernel:
         from `old_name` to `new_name` (same key, new name) so this
         session doesn't `KeyError` on its next run -- other already-open
         Sessions are unaffected until they reconnect, same scope as
-        `add_cell`."""
+        `add_cell`.
+
+        A `source_overrides` entry isn't just moved to the new key
+        as-is: its own `def old_name(...)` line (and decorator, if
+        stale) must be regenerated too, via `rebuild_cell_source` --
+        otherwise the override's *value* still literally reads `def
+        old_name(...)` even though it's now keyed under `new_name`, and
+        a later Save (`save_edits`) would splice that stale text back
+        onto the file verbatim, silently reintroducing the old name and
+        undoing the rename on disk the moment the user saves. Rebuilt
+        from the just-`reload_deck`-ed `Cell` (the fresh on-disk
+        instance/elements/hide_def), keeping the override's own edited
+        body byte-identical -- same shape `rebuild_cell_source`'s other
+        callers (`_replace_elements`) already use."""
         if self.deck_path is None:
             raise ValueError("cannot rename a cell: this Kernel was not started from a deck file")
         if old_name not in self.deck.cells:
@@ -792,7 +823,13 @@ class Kernel:
         if old_name in session.instances:
             session.instances[new_name] = session.instances.pop(old_name)
         if old_name in session.source_overrides:
-            session.source_overrides[new_name] = session.source_overrides.pop(old_name)
+            from codeslides.serialization import rebuild_cell_source
+
+            stale = session.source_overrides.pop(old_name)
+            new_cell = self.deck.cells[new_name]
+            session.source_overrides[new_name] = rebuild_cell_source(
+                new_name, new_cell.instance, new_cell.elements, stale, hide_def=new_cell.hide_def
+            )
         if old_name in session.namespace:
             del session.namespace[old_name]
 
@@ -809,7 +846,12 @@ class Kernel:
         `Session.seed_cell_instance`, safe to call again for an
         already-seeded cell -- it only fills in what's missing) and
         re-runs the cell once so its status/output reflect the change
-        immediately, same as a freshly-added cell does."""
+        immediately, same as a freshly-added cell does.
+
+        Also resyncs any pending, unsaved `session.source_overrides`
+        entry for this cell (`_resync_stale_override`) -- otherwise a
+        later Save would splice that override's now-stale `elements=[...]`
+        decorator back onto the file, silently reverting this add."""
         if self.deck_path is None:
             raise ValueError("cannot add an element: this Kernel was not started from a deck file")
         if cell_name not in self.deck.cells:
@@ -822,6 +864,7 @@ class Kernel:
         from codeslides.loader import load_deck
 
         self.reload_deck(load_deck(self.deck_path))
+        self._resync_stale_override(session, cell_name)
 
         cell = self.deck.cells[cell_name]
         session.seed_cell_instance(cell_name, cell)
@@ -836,7 +879,11 @@ class Kernel:
         Drops the element's now-stale `ElementInstance` from `session`'s
         own instance for this cell (a removed element's leftover value/
         content would otherwise linger in memory even though it's gone
-        from the Deck) and re-runs the cell once."""
+        from the Deck) and re-runs the cell once.
+
+        Also resyncs any pending, unsaved `session.source_overrides`
+        entry for this cell (`_resync_stale_override`), same reasoning
+        as `add_element`."""
         if self.deck_path is None:
             raise ValueError("cannot remove an element: this Kernel was not started from a deck file")
         if cell_name not in self.deck.cells:
@@ -849,6 +896,7 @@ class Kernel:
         from codeslides.loader import load_deck
 
         self.reload_deck(load_deck(self.deck_path))
+        self._resync_stale_override(session, cell_name)
 
         cell = self.deck.cells[cell_name]
         if cell_name in session.instances:
@@ -867,7 +915,11 @@ class Kernel:
         -- so unlike `add_element`/`remove_element` this doesn't re-run
         the cell; the caller's existing `session.instances[cell_name]`
         (status/output/every element's live state) stays exactly as it
-        was, keyed by name same as before."""
+        was, keyed by name same as before.
+
+        Also resyncs any pending, unsaved `session.source_overrides`
+        entry for this cell (`_resync_stale_override`), same reasoning
+        as `add_element`."""
         if self.deck_path is None:
             raise ValueError("cannot reorder elements: this Kernel was not started from a deck file")
         if cell_name not in self.deck.cells:
@@ -880,6 +932,7 @@ class Kernel:
         from codeslides.loader import load_deck
 
         self.reload_deck(load_deck(self.deck_path))
+        self._resync_stale_override(session, cell_name)
         return self.deck.cells[cell_name]
 
     def set_element_config(
@@ -898,7 +951,11 @@ class Kernel:
         actually show up in the browser unless the cell happened to
         re-run afterward. Other element kinds' `content` is left alone
         -- their config isn't rendered directly, only interpreted the
-        next time the owning cell runs."""
+        next time the owning cell runs.
+
+        Also resyncs any pending, unsaved `session.source_overrides`
+        entry for this cell (`_resync_stale_override`), same reasoning
+        as `add_element`."""
         if self.deck_path is None:
             raise ValueError("cannot set element config: this Kernel was not started from a deck file")
         if cell_name not in self.deck.cells:
@@ -911,6 +968,7 @@ class Kernel:
         from codeslides.loader import load_deck
 
         self.reload_deck(load_deck(self.deck_path))
+        self._resync_stale_override(session, cell_name)
 
         cell = self.deck.cells[cell_name]
         element = next((e for e in cell.elements if e.name == element_name), None)
@@ -919,6 +977,37 @@ class Kernel:
             if instance is not None:
                 instance.content = config.get("src", "")
         return cell
+
+    def _resync_stale_override(self, session: Session, cell_name: str) -> None:
+        """If `session` has a pending, unsaved `source_overrides` entry
+        for `cell_name`, regenerate its decorator/`def` line from the
+        just-`reload_deck`-ed `Cell` (this method must only be called
+        right after an on-disk write + `reload_deck`), keeping the
+        override's own edited body byte-identical.
+
+        `add_element`/`remove_element`/`reorder_elements`/
+        `set_element_config` all write a cell's `elements=[...]`
+        decorator to disk immediately, then reload -- but none of them
+        touch `session.source_overrides`, and `reload_deck` deliberately
+        leaves existing Sessions' overrides untouched (they must survive
+        a *file-watcher* reload unaffected). If this session also has an
+        in-flight, unsaved code edit for the same cell, that override's
+        own decorator now disagrees with the disk's fresh one (e.g. it
+        still says `elements=[slider1]` after `slider2` was just added on
+        disk) -- left alone, a later Save would splice that stale
+        decorator back onto the file verbatim, silently reverting the
+        very change the user just made through the element picker/
+        reorder/config UI, even though everything they saw on screen
+        already reflected it. Same fix shape as `rename_cell`'s own
+        stale-override problem, just without a key rename."""
+        if cell_name not in session.source_overrides:
+            return
+        from codeslides.serialization import rebuild_cell_source
+
+        cell = self.deck.cells[cell_name]
+        session.source_overrides[cell_name] = rebuild_cell_source(
+            cell_name, cell.instance, cell.elements, session.source_overrides[cell_name], hide_def=cell.hide_def
+        )
 
     def _effective_graph(self, session: Session) -> DependencyGraph:
         """The dependency graph as this Session currently sees it: the
