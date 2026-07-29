@@ -151,7 +151,11 @@ def _find_turtle_canvas(elements: list[Element]) -> str | None:
 
 
 def execute_cell(
-    cell_name: str, source: str, session: Session, elements: list[Element] | None = None
+    cell_name: str,
+    source: str,
+    session: Session,
+    elements: list[Element] | None = None,
+    deck_imports: dict[str, object] | None = None,
 ) -> ExecutionResult:
     """Call the cell named `cell_name`'s function (compiled fresh from
     `source`, which the caller has already resolved to this Session's
@@ -175,6 +179,11 @@ def execute_cell(
     element, if it has one, since `codeslides.turtle` calls
     (ARCHITECTURE.md section 7) have no way to name a target themselves
     without breaking stdlib `turtle` call syntax.
+
+    `deck_imports` is `Deck.imports` (`deck.py`) -- names a top-level
+    `import`/`from ... import` bound in the deck's own source file
+    (`loader.py`'s `load_deck`), so a cell body can use e.g. `numpy`
+    without its own repeated `import numpy` in every cell that needs it.
     """
     stdout, stderr = io.StringIO(), io.StringIO()
     turtle_element = _find_turtle_canvas(elements or [])
@@ -185,8 +194,11 @@ def execute_cell(
         # this a bare `cs.image(...)`/`turtle.forward(...)` call would
         # NameError even though the deck's source file imports them at
         # module scope (that import context isn't carried into the
-        # per-cell exec).
-        call_globals = {"cs": cs, "turtle": turtle, **session.namespace}
+        # per-cell exec). `deck_imports` follows right after for the same
+        # reason, for whatever else the deck's own file imports -- both
+        # come before `session.namespace` so a cell's own write always
+        # wins if a cell-level name ever happens to collide with either.
+        call_globals = {"cs": cs, "turtle": turtle, **(deck_imports or {}), **session.namespace}
         fn, return_names = _compile_cell_function(source, call_globals)
 
         # Only bind element values for elements that are also declared
@@ -281,7 +293,10 @@ def _find_tests_element(elements: list[Element]) -> str | None:
 
 
 def run_tests(
-    source: str, namespace: dict[str, object], elements: list[Element] | None = None
+    source: str,
+    namespace: dict[str, object],
+    elements: list[Element] | None = None,
+    deck_imports: dict[str, object] | None = None,
 ) -> dict[str, Any]:
     """Run a `tests` element's source (ARCHITECTURE.md section 3b) as
     plain Python statements -- ordinary `assert`s, not a
@@ -308,10 +323,11 @@ def run_tests(
       presence rather than an empty list being ambiguous with "no
       canvas at all."
 
-    `cs`/`turtle` are seeded into the exec globals exactly like a cell's
-    own execution does (kernel.py's execute_cell docstring) -- test code
-    is still ordinary Python, so it needs the same framework names
-    available without an explicit import, same as the code it's testing.
+    `cs`/`turtle`/`deck_imports` are seeded into the exec globals exactly
+    like a cell's own execution does (kernel.py's execute_cell docstring)
+    -- test code is still ordinary Python, so it needs the same
+    framework names and deck-level imports available without an explicit
+    import, same as the code it's testing.
 
     Runs in a *copy* of `namespace`, never the namespace itself -- test
     code must never be able to mutate a cell's actual results out from
@@ -329,7 +345,7 @@ def run_tests(
         return result
 
     stdout, stderr = io.StringIO(), io.StringIO()
-    test_globals = {"cs": cs, "turtle": turtle, **namespace}
+    test_globals = {"cs": cs, "turtle": turtle, **(deck_imports or {}), **namespace}
     try:
         with (
             redirect_stdout(stdout),
@@ -350,7 +366,11 @@ def run_tests(
 
 
 def _run_and_apply_test(
-    instance: CellInstance, tests_element: str, namespace: dict[str, object], elements: list[Element]
+    instance: CellInstance,
+    tests_element: str,
+    namespace: dict[str, object],
+    elements: list[Element],
+    deck_imports: dict[str, object] | None = None,
 ) -> dict[str, Any]:
     """Run `instance`'s `tests_element` and apply the result: the test's
     own `{"status", "message"}` onto the tests element's `content`
@@ -364,7 +384,7 @@ def _run_and_apply_test(
     unrelated leftover state. A subsequent run of the cell itself (an
     edit, a slider change) draws fresh and overwrites it right back."""
     test_source = instance.elements[tests_element].value or ""
-    result = run_tests(test_source, namespace, elements)
+    result = run_tests(test_source, namespace, elements, deck_imports=deck_imports)
     instance.elements[tests_element].content = {"status": result["status"], "message": result["message"]}
 
     turtle_element = _find_turtle_canvas(elements)
@@ -532,7 +552,9 @@ class Kernel:
         instance = session.instances[cell_name]
         elements = self.deck.cells[cell_name].elements
         instance.elements[element_name].value = source
-        result = _run_and_apply_test(instance, element_name, session.namespace, elements)
+        result = _run_and_apply_test(
+            instance, element_name, session.namespace, elements, deck_imports=self.deck.imports
+        )
         return {"status": result["status"], "message": result["message"]}
 
     def add_cell(self, session: Session) -> tuple[Cell, ExecutionResult]:
@@ -791,7 +813,7 @@ class Kernel:
             instance = session.instances[name]
             instance.status = "running"
             elements = self.deck.cells[name].elements
-            result = execute_cell(name, source, session, elements=elements)
+            result = execute_cell(name, source, session, elements=elements, deck_imports=self.deck.imports)
             instance.status = result.status
             resolved = resolve_output(result.value) if result.status == "idle" else None
             instance.output = {
@@ -814,7 +836,9 @@ class Kernel:
             tests_element = _find_tests_element(elements)
             if tests_element is not None:
                 if result.status == "idle":
-                    _run_and_apply_test(instance, tests_element, session.namespace, elements)
+                    _run_and_apply_test(
+                        instance, tests_element, session.namespace, elements, deck_imports=self.deck.imports
+                    )
                 else:
                     instance.elements[tests_element].content = {
                         "status": "error",

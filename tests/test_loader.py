@@ -81,3 +81,72 @@ def test_load_deck_does_not_write_a_pycache(tmp_path):
     load_deck(str(path))
 
     assert not (tmp_path / "__pycache__").exists()
+
+
+def test_load_deck_captures_a_plain_top_level_import(tmp_path):
+    path = tmp_path / "deck.py"
+    path.write_text(
+        "from codeslides import App\n\nimport math\n\napp = App()\n\n@app.cell\ndef setup():\n    return 1\n"
+    )
+
+    deck = load_deck(str(path))
+
+    assert deck.imports["math"] is __import__("math")
+
+
+def test_load_deck_captures_import_as(tmp_path):
+    path = tmp_path / "deck.py"
+    path.write_text(
+        "from codeslides import App\n\nimport math as m\n\napp = App()\n\n@app.cell\ndef setup():\n    return 1\n"
+    )
+
+    deck = load_deck(str(path))
+
+    assert "math" not in deck.imports
+    assert deck.imports["m"] is __import__("math")
+
+
+def test_load_deck_captures_from_import(tmp_path):
+    path = tmp_path / "deck.py"
+    path.write_text(
+        "from codeslides import App\n\nfrom math import sqrt, pi\n\n"
+        "app = App()\n\n@app.cell\ndef setup():\n    return 1\n"
+    )
+
+    deck = load_deck(str(path))
+
+    assert deck.imports["sqrt"] is __import__("math").sqrt
+    assert deck.imports["pi"] == __import__("math").pi
+
+
+def test_load_deck_captures_dotted_import_by_its_top_package_name(tmp_path):
+    # `import a.b.c` (no `as`) binds only the top-level package name `a`,
+    # matching Python's own binding rule -- there's no stdlib submodule
+    # handy here, so this just confirms the *name* captured is right.
+    path = tmp_path / "deck.py"
+    path.write_text(
+        "from codeslides import App\n\nimport xml.etree.ElementTree\n\n"
+        "app = App()\n\n@app.cell\ndef setup():\n    return 1\n"
+    )
+
+    deck = load_deck(str(path))
+
+    assert "xml" in deck.imports
+    assert "xml.etree.ElementTree" not in deck.imports
+    assert "ElementTree" not in deck.imports
+
+
+def test_load_deck_ignores_a_cell_local_import(tmp_path):
+    # A cell-local import already worked before this feature (it's just
+    # an ordinary statement inside the function body) -- it must not also
+    # show up in deck.imports, which is specifically for module-level
+    # imports outside any cell.
+    path = tmp_path / "deck.py"
+    path.write_text(
+        "from codeslides import App\n\napp = App()\n\n"
+        "@app.cell\ndef setup():\n    import math\n    return math.pi\n"
+    )
+
+    deck = load_deck(str(path))
+
+    assert "math" not in deck.imports

@@ -106,6 +106,14 @@ class Deck:
 
     cells: dict[str, Cell] = field(default_factory=dict)
     slides: list[Slide] = field(default_factory=list)
+    # Names bound by a top-level `import`/`from ... import` statement in
+    # the deck's own source file (populated by loader.py's `load_deck`,
+    # empty for a Deck built directly via `App()` in-process, e.g. tests).
+    # Merged into every cell's globals at execution time (kernel.py's
+    # execute_cell) so a deck-wide `import numpy as np` written once
+    # works the way it would in an ordinary script, instead of needing
+    # every cell that uses it to repeat its own local import.
+    imports: dict[str, Any] = field(default_factory=dict)
 
     def add_cell(self, cell: Cell) -> None:
         if cell.name in self.cells:

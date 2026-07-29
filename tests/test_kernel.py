@@ -945,3 +945,90 @@ def test_set_element_config_raises_if_the_element_does_not_exist(tmp_path):
 
     with pytest.raises(ValueError, match="does_not_exist"):
         kernel.set_element_config(session, "live_demo", "does_not_exist", {})
+
+
+_TOP_LEVEL_IMPORT_DECK_SOURCE = (
+    "from codeslides import App\n\n"
+    "import math\n\n"
+    "app = App()\n\n"
+    "@app.cell\n"
+    "def uses_math():\n"
+    "    value = math.sqrt(16)\n"
+    "    return value\n"
+)
+
+
+def test_a_cell_can_use_a_deck_level_top_level_import(tmp_path):
+    """A cell body relying on `import math` written once at the top of
+    the deck file (never its own repeated `import math`) must resolve
+    it -- previously NameError'd, since each cell's globals were seeded
+    only from cs/turtle/session.namespace, never the deck module's own
+    globals()."""
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _TOP_LEVEL_IMPORT_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+
+    kernel.run_all(session)
+
+    assert session.instances["uses_math"].status == "idle"
+    assert session.namespace["value"] == 4.0
+
+
+def test_a_cells_own_write_wins_over_a_same_named_deck_level_import(tmp_path):
+    # deck_imports is merged in before session.namespace in execute_cell,
+    # matching the existing cs/turtle precedent -- a cell's own write
+    # (however unlikely the name collision) must still take priority.
+    source = (
+        "from codeslides import App\n\n"
+        "import math\n\n"
+        "app = App()\n\n"
+        "@app.cell\n"
+        "def shadows_math():\n"
+        "    math = 'shadowed'\n"
+        "    return math\n"
+    )
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, source)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+
+    kernel.run_all(session)
+
+    assert session.namespace["math"] == "shadowed"
+
+
+def test_a_tests_element_can_use_a_deck_level_top_level_import(tmp_path):
+    source = (
+        "from codeslides import App, ui\n\n"
+        "import math\n\n"
+        "app = App()\n\n"
+        '@app.cell(elements=[ui.tests("unit", default="assert math.isclose(value, 4.0)")])\n'
+        "def uses_math():\n"
+        "    value = math.sqrt(16)\n"
+        "    return value\n"
+    )
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, source)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+
+    kernel.run_all(session)
+
+    content = session.instances["uses_math"].elements["unit"].content
+    assert content["status"] == "pass", content["message"]
+
+
+def test_deck_built_directly_via_app_without_load_deck_has_no_imports():
+    """A Deck never loaded from a file (e.g. App() used directly, as
+    every other test in this file does) has no way to know what a
+    top-level import would even be -- imports defaults to {} and
+    execution proceeds exactly as it did before this feature."""
+    app = _build_deck()
+    assert app.deck.imports == {}

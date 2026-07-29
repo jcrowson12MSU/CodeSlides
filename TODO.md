@@ -1637,7 +1637,57 @@ reshape the plan below and are called out explicitly where they apply:
   confirmed a subsequent page reload still hides the docstring from the
   editor while still rendering it as notes.
 
-- [ ] **38. Write example decks for teaching scenarios**
+- [x] **38. Make it so that import statements can be included in cells.**
+  A cell-*local* `import` (e.g. `import random` as the first line of a
+  cell's own body) already worked -- it's just an ordinary statement
+  inside the compiled function. What didn't work: a single `import numpy
+  as np` written once at the top of the deck file, the way an ordinary
+  script or notebook would, then used across multiple cells without each
+  one repeating its own import. Every cell is compiled and `exec`'d with
+  fresh globals seeded only from `cs`/`turtle`/`session.namespace`
+  (`kernel.py`'s `execute_cell`) -- never the deck module's own
+  `globals()` -- so a cell relying on that top-level import NameError'd,
+  even though `loader.py`'s `load_deck` had already executed it
+  successfully as part of loading the file.
+
+  Fixed by having `load_deck` capture what it already has lying around
+  right after `exec`ing the module: `module.__dict__` holds every name
+  the file's own top-level code bound, imports included. A new
+  `loader.py` function, `_module_level_import_names`, walks the file's
+  AST for top-level `Import`/`ImportFrom` nodes specifically (handling
+  `import x`, `import x as y`, `import x.y.z` binding just `x`, `from x
+  import y, z`, aliased `from` imports, and skipping unresolvable `from
+  x import *`) -- so only names that actually came from an import get
+  pulled out of `module.__dict__`, not `app`/`App`/`ui`/the raw cell
+  functions that also happen to live there. Stashed on a new `Deck.imports:
+  dict[str, Any]` field (`deck.py`, defaults to `{}` for a Deck built
+  directly via `App()` with no backing file, e.g. most of the test
+  suite). `kernel.py`'s `execute_cell` and `run_tests` (a `tests`
+  element's assertions get the same deck-level imports as the code
+  they're testing) both merge `deck_imports` into their exec globals in
+  the same position `cs`/`turtle` already occupy -- before
+  `session.namespace`/the test's own `namespace`, so a cell's own write
+  still wins over a same-named import in the unlikely case of a
+  collision.
+
+  Verified with both automated tests and a real running server. Added 6
+  new `loader.py` tests (plain import, `import ... as`, `from ... import`,
+  a dotted import binding only its top package name, confirming a
+  cell-*local* import is correctly excluded from `deck.imports`) and 4
+  new `kernel.py` tests (a cell using a deck-level import runs `idle`
+  with the right value; a cell's own same-named write still wins; a
+  `tests` element's assertions can use a deck-level import too; a Deck
+  built directly via `App()` with no file has an empty `imports`, same
+  as before this feature). Full suite: 255 passed, 2 skipped (9 new). In
+  a real browser via Playwright: a deck with `import random` at the top
+  of the file and a cell body calling `random.randint(1, 100)` with no
+  import of its own loaded and ran with `idle` status and a real
+  numeric output (previously would've errored); edited the cell's code
+  and re-ran it with Shift+Enter, confirmed the import still resolved
+  correctly after the edit, not just on first load. No frontend changes
+  needed -- this is purely a kernel-side execution-globals fix.
+
+- [ ] **39. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that
@@ -1646,7 +1696,7 @@ reshape the plan below and are called out explicitly where they apply:
   elements — to validate the tool end-to-end and serve as templates for
   instructors.
 
-- [ ] **39. Add tests for kernel & dependency graph**
+- [ ] **40. Add tests for kernel & dependency graph**
   Unit tests for `ast`-based variable extraction, dependency graph
   construction/cycle detection, minimal-rerun-set computation, and
   integration tests that run a sample deck through the kernel and assert
@@ -1654,9 +1704,9 @@ reshape the plan below and are called out explicitly where they apply:
   specifically clones a cell/editor instance and asserts the two instances'
   namespaces and outputs never cross-contaminate.
 
-- [ ] **40. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
+- [ ] **41. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
 
-- [ ] **41. Polish, README, and packaging**
+- [ ] **42. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
   `pip install` (editable) / eventual PyPI packaging.
