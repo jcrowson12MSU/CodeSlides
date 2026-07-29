@@ -15,6 +15,17 @@
   margin-top: 1rem;
 }
 
+/* The user asked to shrink the header in Slides view even while it's
+   still visible (expanded), not just when collapsed -- `.app`'s 4rem top
+   margin is sized for a landing-page title, which is more breathing room
+   than a persistent, always-on-screen utility bar needs once you're
+   presenting. Trimmed but not to `cs-header-is-collapsed`'s 1rem, since
+   there's still a full header row here (title + toggle + controls), not
+   just a thin toggle strip. */
+.cs-slides-header-expanded {
+  margin-top: 1.5rem;
+}
+
 /* TODO.md #24/#26: the title stays locked to the top-left of the screen
    in both views (Cells and Slides share this same top-level layout) --
    previously scrolled away with the rest of the page the moment a deck
@@ -39,6 +50,18 @@
 
 .cs-app-title {
   margin: 32px 0;
+}
+
+/* The title's default size (56px font, 32px margin) is landing-page
+   scale -- appropriate in Cells view where it's the calmest thing on
+   the page, oversized once you're presenting in Slides view and it's
+   competing for space with navigation and slide content on every
+   screen. Shrunk here rather than in `.cs-app-title` itself so Cells
+   view (which the user didn't flag as a problem) stays exactly as it
+   was. */
+.cs-slides-header-expanded .cs-app-title {
+  margin: 0.4rem 0;
+  font-size: 1.75rem;
 }
 
 /* Groups the expanded header's collapse toggle with the title so
@@ -708,8 +731,8 @@ button.cs-add-cell-button {
   display: flex;
   align-items: center;
   gap: 1rem;
-  margin: 1rem 0;
-  padding-bottom: 0.75rem;
+  margin: 0.5rem 0;
+  padding-bottom: 0.5rem;
   border-bottom: 1px solid #eee;
 }
 

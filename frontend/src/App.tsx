@@ -390,9 +390,14 @@ function App() {
   }
 
   const slidesHeaderCollapsed = viewMode === 'slides' && headerCollapsed
+  const slidesHeaderExpanded = viewMode === 'slides' && !headerCollapsed
 
   return (
-    <main className={`app ${slidesHeaderCollapsed ? 'cs-header-is-collapsed' : ''}`}>
+    <main
+      className={`app ${slidesHeaderCollapsed ? 'cs-header-is-collapsed' : ''} ${
+        slidesHeaderExpanded ? 'cs-slides-header-expanded' : ''
+      }`}
+    >
       {slidesHeaderCollapsed && (
         <div className="cs-app-header cs-app-header-collapsed">
           <button

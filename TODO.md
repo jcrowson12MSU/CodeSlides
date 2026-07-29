@@ -1113,6 +1113,36 @@ reshape the plan below and are called out explicitly where they apply:
   original writeup above still hold. No backend changes; frontend
   build/oxlint clean.
 
+  **Follow-up (same task): the user asked to also shrink the header
+  when it's expanded (visible), not just when collapsed.** Even with
+  the collapse toggle, the visible/expanded header still cost ~248px
+  before slide content -- dominated by `.cs-app-title`'s 56px
+  font-size/32px margin, sized for a Cells-view landing-page title, not
+  a persistent utility bar competing with slide content for space on
+  every screen while presenting. Added Slides-view-and-expanded-only
+  CSS (a new `cs-slides-header-expanded` class on `<main>`, alongside
+  the pre-existing `cs-header-is-collapsed`) that shrinks
+  `.cs-app-title` to 1.75rem/0.4rem margin, trims `.app`'s 4rem top
+  margin to 1.5rem, and tightens `.cs-slideshow-toolbar`'s vertical
+  margin/padding (1rem/0.75rem -> 0.5rem/0.5rem) -- all scoped so Cells
+  view, which the user didn't flag as a problem, renders pixel-
+  identical to before.
+
+  Verified in a real browser via Playwright: measured the slide
+  content's top offset before/after (248px -> 131px, ~47% reduction)
+  with the header still fully visible; confirmed the collapse toggle,
+  header controls, and slide title all stay vertically centered in the
+  now-shorter row (`align-items: center` still holds at the smaller
+  title size); confirmed Cells view's title/margins are byte-identical
+  to before (56px font, 32px margin, 72px `.app` margin-top -- no
+  scoping leak); confirmed the collapse/re-expand round-trip, keyboard
+  navigation, and item 28's scroll lock from the original writeups
+  above all still work with the smaller header; and confirmed the
+  narrow-viewport (700px) header now fits on a single row where it
+  previously needed to wrap, an incidental improvement from the
+  smaller title taking less horizontal space. No backend changes;
+  frontend build/oxlint clean.
+
 - [ ] **33. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
