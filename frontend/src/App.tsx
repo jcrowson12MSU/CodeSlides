@@ -555,7 +555,6 @@ function App() {
           cellState={mergedCellState}
           elementValues={elementValues}
           testSourceValues={testSourceOverrides}
-          collapsedCells={collapsedCells}
           minimizedElements={minimizedElements}
           onRunCell={handleRunCell}
           onRunAll={handleRunAll}

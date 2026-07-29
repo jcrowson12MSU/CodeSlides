@@ -43,6 +43,18 @@ export interface CellProps {
    * instructor chooses to reveal it. Defaults to false for the flat
    * "Cells" edit view, which always shows code. */
   hideCode?: boolean
+  /** Hide the entire `.cs-cell-header` row (collapse toggle, cell name,
+   * status/read-only badges, Edit button) -- Slides-view-only, per the
+   * user's request: a slide has exactly one cell already framed by the
+   * slide's own title, so a second name/toolbar row directly above it is
+   * redundant, and the space it freed goes to the cell instead (App.css).
+   * Collapse/edit only make sense with their own toggle visible, so
+   * neither is reachable while this is set; `SlideShow.tsx` also forces
+   * `collapsed={false}` regardless of Cells view's own collapsed-state
+   * map, so a cell collapsed there doesn't render stuck collapsed here
+   * with no way to expand it. Defaults to false for the flat "Cells"
+   * view, which always shows the header. */
+  hideHeader?: boolean
   onRunCell: (source: string) => void
   onRunAll: (source: string) => void
   onSetElementValue: (elementId: string, value: unknown) => void
@@ -94,6 +106,7 @@ export function Cell({
   collapsed,
   minimizedElements,
   hideCode = false,
+  hideHeader = false,
   onRunCell,
   onRunAll,
   onSetElementValue,
@@ -156,33 +169,35 @@ export function Cell({
   )
 
   return (
-    <div className={`cs-cell ${collapsed ? 'cs-cell-collapsed' : ''}`}>
-      <div className="cs-cell-header">
-        <button
-          type="button"
-          className="cs-collapse-toggle"
-          onClick={onToggleCollapse}
-          aria-label={collapsed ? 'Expand cell' : 'Collapse cell'}
-        >
-          {collapsed ? '▸' : '▾'}
-        </button>
-        <h3>{cellId}</h3>
-        {state && <span className={`cs-status cs-status-${state.status}`}>{state.status}</span>}
-        {meta.instance === 'static' && <span className="cs-badge-static">read-only</span>}
-        {collapsed && <span className="cs-collapsed-preview">{firstLine(meta.source)}</span>}
-        {!collapsed && (
+    <div className={`cs-cell ${collapsed ? 'cs-cell-collapsed' : ''} ${hideHeader ? 'cs-cell-no-header' : ''}`}>
+      {!hideHeader && (
+        <div className="cs-cell-header">
           <button
             type="button"
-            className="cs-edit-cell-toggle"
-            onClick={() => setEditing((prev) => !prev)}
-            aria-label={editing ? `Close ${cellId}'s edit panel` : `Edit ${cellId}`}
+            className="cs-collapse-toggle"
+            onClick={onToggleCollapse}
+            aria-label={collapsed ? 'Expand cell' : 'Collapse cell'}
           >
-            {editing ? 'Close' : 'Edit'}
+            {collapsed ? '▸' : '▾'}
           </button>
-        )}
-      </div>
+          <h3>{cellId}</h3>
+          {state && <span className={`cs-status cs-status-${state.status}`}>{state.status}</span>}
+          {meta.instance === 'static' && <span className="cs-badge-static">read-only</span>}
+          {collapsed && <span className="cs-collapsed-preview">{firstLine(meta.source)}</span>}
+          {!collapsed && (
+            <button
+              type="button"
+              className="cs-edit-cell-toggle"
+              onClick={() => setEditing((prev) => !prev)}
+              aria-label={editing ? `Close ${cellId}'s edit panel` : `Edit ${cellId}`}
+            >
+              {editing ? 'Close' : 'Edit'}
+            </button>
+          )}
+        </div>
+      )}
 
-      {!collapsed && editing && (
+      {!hideHeader && !collapsed && editing && (
         <EditCellPanel
           cellId={cellId}
           elements={meta.elements}

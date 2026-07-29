@@ -17,7 +17,6 @@ export interface SlideShowProps {
   cellState: Record<string, CellState | undefined>
   elementValues: Record<string, Record<string, unknown>>
   testSourceValues: Record<string, Record<string, string>>
-  collapsedCells: Record<string, boolean>
   minimizedElements: Record<string, Record<string, boolean>>
   onRunCell: (cellId: string, source: string) => void
   onRunAll: () => void
@@ -50,7 +49,6 @@ export function SlideShow({
   cellState,
   elementValues,
   testSourceValues,
-  collapsedCells,
   minimizedElements,
   onRunCell,
   onRunAll,
@@ -176,9 +174,14 @@ export function SlideShow({
               state={cellState[cellId]}
               elementValues={elementValues[cellId] ?? {}}
               testSourceValues={testSourceValues[cellId] ?? {}}
-              collapsed={collapsedCells[cellId] ?? false}
+              // Always expanded: the collapse toggle lives in the cell
+              // header, which Slides view hides entirely (hideHeader
+              // below) -- a cell collapsed in Cells view must not render
+              // stuck collapsed here with no way to expand it back.
+              collapsed={false}
               minimizedElements={minimizedElements[cellId] ?? {}}
               hideCode={!revealed}
+              hideHeader
               onRunCell={(source) => onRunCell(cellId, source)}
               onRunAll={onRunAll}
               onSetElementValue={(elementId, value) => onSetElementValue(cellId, elementId, value)}

@@ -1280,7 +1280,45 @@ reshape the plan below and are called out explicitly where they apply:
   frontend changes; frontend build/oxlint clean (unchanged, verifying
   nothing broke).
 
-- [ ] **34. Write example decks for teaching scenarios**
+- [x] **34. In Slides view, remove the cell header (title, status, read-only badge, and Edit button) and let the cell fill the freed space.**
+  A slide's cell rendered through the same `Cell.tsx` component as the
+  flat Cells view, including its `.cs-cell-header` row -- the cell's own
+  name, run status, read-only badge, and an Edit button opening
+  `EditCellPanel` (rename/add/remove elements). All of that duplicated
+  what the slide's own title already conveys and is Cells-view-only
+  authoring chrome, not something an audience needs to see while
+  presenting; asked the user to confirm scope (remove just the title
+  text/edit button vs. the whole header row including the collapse
+  toggle and status/read-only badges) since a half-stripped row would
+  have looked oddly sparse -- confirmed: remove the whole row. Added a
+  `hideHeader` prop to `Cell` (`Cell.tsx`) that skips rendering both
+  `.cs-cell-header` and the `EditCellPanel` entirely (not just visually
+  hiding them -- collapse/edit only make sense with their own toggle
+  visible); `SlideShow.tsx` passes it. Also hardcoded `collapsed={false}`
+  for Slides view's `<Cell>` (removing the now-dead `collapsedCells`
+  prop `SlideShow` no longer reads) -- without this, a cell collapsed in
+  Cells view would have rendered stuck collapsed in Slides view too,
+  with no toggle left to expand it back. No CSS changes were needed to
+  actually reclaim the space: item 32's follow-up already made
+  `.cs-cell-body` a `flex: 1` child of `.cs-cell`, so removing
+  `.cs-cell-header` from the DOM entirely (rather than hiding it) means
+  that flex child automatically claims the freed room for free.
+
+  Verified in a real browser via Playwright: confirmed `.cs-cell-header`,
+  the Edit button, and the cell's `<h3>` name are all absent from every
+  cell in Slides view (both a two-cell slide and a single-cell one)
+  while Cells view still shows all of them on every cell (4/4); confirmed
+  a cell collapsed in Cells view renders fully expanded in Slides view
+  (no `cs-cell-collapsed` class, content visible) and remains collapsed
+  when switching back to Cells view (state isolation intact, not
+  destroyed); confirmed the cell still fills available height exactly as
+  before (782px of an 800px viewport, matching the pre-existing
+  measurement); confirmed the resizable divider (item 20) and item 28's
+  scroll lock both still work; and confirmed the header-collapse toggle
+  (item 32) still works with cells rendering header-free underneath it.
+  No backend changes; frontend build/oxlint clean.
+
+- [ ] **35. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that
@@ -1289,7 +1327,7 @@ reshape the plan below and are called out explicitly where they apply:
   elements — to validate the tool end-to-end and serve as templates for
   instructors.
 
-- [ ] **35. Add tests for kernel & dependency graph**
+- [ ] **36. Add tests for kernel & dependency graph**
   Unit tests for `ast`-based variable extraction, dependency graph
   construction/cycle detection, minimal-rerun-set computation, and
   integration tests that run a sample deck through the kernel and assert
@@ -1297,9 +1335,9 @@ reshape the plan below and are called out explicitly where they apply:
   specifically clones a cell/editor instance and asserts the two instances'
   namespaces and outputs never cross-contaminate.
 
-- [ ] **36. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
+- [ ] **37. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
 
-- [ ] **37. Polish, README, and packaging**
+- [ ] **38. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
   `pip install` (editable) / eventual PyPI packaging.
