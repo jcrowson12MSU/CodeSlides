@@ -309,36 +309,43 @@ function App() {
     <main className="app">
       <div className="cs-app-header">
         <h1 className="cs-app-title">CodeSlides</h1>
-        {deck && (
-          <div className="cs-header-controls">
-            <button
-              type="button"
-              className="cs-view-mode-switch"
-              role="switch"
-              aria-checked={viewMode === 'slides'}
-              aria-label={`Switch to ${viewMode === 'cells' ? 'Slides' : 'Cells'} view`}
-              onClick={() => setViewMode(viewMode === 'cells' ? 'slides' : 'cells')}
-            >
-              <span className={`cs-view-mode-option ${viewMode === 'cells' ? 'cs-view-mode-option-active' : ''}`}>
-                Cells
-              </span>
-              <span className={`cs-view-mode-option ${viewMode === 'slides' ? 'cs-view-mode-option-active' : ''}`}>
-                Slides
-              </span>
-              <span
-                className="cs-view-mode-thumb"
-                style={{ transform: viewMode === 'slides' ? 'translateX(100%)' : 'translateX(0)' }}
-              />
-            </button>
-            <button type="button" disabled={!sessionId || saving} onClick={handleSaveDeck}>
-              {saving ? 'Saving…' : 'Save'}
-            </button>
-          </div>
-        )}
+        <div className="cs-header-controls">
+          {deck && (
+            <>
+              <button
+                type="button"
+                className="cs-view-mode-switch"
+                role="switch"
+                aria-checked={viewMode === 'slides'}
+                aria-label={`Switch to ${viewMode === 'cells' ? 'Slides' : 'Cells'} view`}
+                onClick={() => setViewMode(viewMode === 'cells' ? 'slides' : 'cells')}
+              >
+                <span className={`cs-view-mode-option ${viewMode === 'cells' ? 'cs-view-mode-option-active' : ''}`}>
+                  Cells
+                </span>
+                <span className={`cs-view-mode-option ${viewMode === 'slides' ? 'cs-view-mode-option-active' : ''}`}>
+                  Slides
+                </span>
+                <span
+                  className="cs-view-mode-thumb"
+                  style={{ transform: viewMode === 'slides' ? 'translateX(100%)' : 'translateX(0)' }}
+                />
+              </button>
+              <button type="button" disabled={!sessionId || saving} onClick={handleSaveDeck}>
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            className={`cs-ws-status-button ${connected ? 'cs-ws-status-connected' : 'cs-ws-status-connecting'}`}
+            title={connected ? `Websocket: connected (${sessionId ?? '...'})` : 'Websocket: connecting...'}
+            aria-label={connected ? `Websocket connected, session ${sessionId ?? 'unknown'}` : 'Websocket connecting'}
+          >
+            ?
+          </button>
+        </div>
       </div>
-      <p>
-        Websocket: <strong>{connected ? `connected (${sessionId ?? '...'})` : 'connecting...'}</strong>
-      </p>
       {deck && (
         <div className="cs-view-toggle">
           <button type="button" disabled={!sessionId} onClick={handleAddCell}>

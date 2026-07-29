@@ -48,6 +48,37 @@
   cursor: pointer;
 }
 
+/* TODO.md #27: the old raw "Websocket: connected (<session-id>)" text
+   line moved into a small circular icon button in the top-right header,
+   next to the toggle/Save -- the full status (including the session id,
+   useful for debugging two open tabs) is still available, just via the
+   button's native `title` tooltip on hover instead of always being
+   visible inline. Color signals state at a glance without needing to
+   hover: amber while connecting, green once connected -- default
+   button styling reused for cursor/font, overridden here for the round
+   shape and color. */
+.cs-ws-status-button {
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0 !important;
+  border-radius: 50% !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.cs-ws-status-connecting {
+  border-color: #e0a800 !important;
+  color: #e0a800;
+}
+
+.cs-ws-status-connected {
+  border-color: #2a8f4d !important;
+  color: #2a8f4d;
+}
+
 .cs-hint {
   font-size: 0.85rem;
   color: #888;

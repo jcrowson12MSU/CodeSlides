@@ -830,7 +830,39 @@ reshape the plan below and are called out explicitly where they apply:
   the Slides view. Screenshots confirm no visual regressions. No
   backend changes; frontend build/oxlint clean.
 
-- [ ] **27. Write example decks for teaching scenarios**
+- [x] **27. Structure4.**
+  Hide the "Websocket: connected (c59d71237da04d1e8c2b73f2b2a63224)"
+  portion in a button with a circle and a question mark or any other
+  appropriate button icon and move it to the top right.
+
+  Replaced the raw `<p>Websocket: connected (...)/connecting...</p>`
+  text line with a small circular icon button (`?`) added to
+  `.cs-header-controls`, alongside item 26's Cells/Slides switch and
+  Save button, so it sits in the same sticky top-right header row. The
+  full detail (including the session id, useful for telling two open
+  tabs apart) isn't lost -- it's now the button's native `title`
+  tooltip, shown on hover, plus a matching `aria-label`. Color signals
+  connection state at a glance without needing to hover: amber while
+  connecting, green once connected -- same `connected` boolean the old
+  text already read, just re-skinned.
+
+  The button needed to render even before `deck` loads (the connection
+  status is meaningful in that window too, and the old `<p>` was never
+  conditional on `deck`) -- restructured `.cs-header-controls` so the
+  Cells/Slides switch and Save button stay conditional on `deck` while
+  the status button always renders, rather than nesting the whole
+  group behind one `{deck && ...}` guard the way a first draft did
+  (caught before verifying, not a shipped regression).
+
+  Verified in a real browser via Playwright: confirmed the raw
+  "Websocket:" text line is gone (zero matches), the icon button
+  renders exactly once positioned near the header's right edge, its
+  tooltip contains the full "connected (session-id)" text, and the
+  whole header (title + switch + Save + status icon) stays correctly
+  pinned after scrolling. No backend changes; frontend build/oxlint
+  clean.
+
+- [ ] **28. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that
