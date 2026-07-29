@@ -104,3 +104,49 @@ def test_editing_turtle_cell_redraws_with_new_commands():
     assert new_commands != original_commands
     assert len(new_commands) == 1
     assert new_commands[0]["x"] == 10
+
+
+def test_turtle_object_constructed_in_one_cell_draws_on_the_calling_cells_canvas():
+    """The user's own markCorners(cells, t) shape: mark_corners is
+    defined in one cell with no turtle_canvas of its own, takes `t` as
+    an ordinary parameter, and is called from a second cell that
+    *does* have a turtle_canvas -- t = turtle.Turtle() constructed
+    there and passed in. Every t.* call inside mark_corners must draw
+    onto the *calling* cell's canvas (draw_with_turtle_object's), since
+    a Turtle() is a proxy onto whichever cell execution is currently
+    active, not onto whatever cell it was constructed in.
+
+    mark_corners needs its own `tests` element (empty default is fine)
+    so it's only ever *defined*, not auto-called with no arguments
+    (TODO.md #43/`_run_cells`) -- `points`/`t` have no defaults, so an
+    auto-call would fail before draw_with_turtle_object ever got a
+    chance to call it itself with real arguments."""
+    app = App()
+
+    @app.cell(elements=[ui.tests("unit")])
+    def mark_corners(points, t):
+        for x, y in points:
+            t.goto(x, y)
+            t.stamp()
+        marked = True
+        return marked
+
+    @app.cell(elements=[ui.turtle_canvas("canvas")])
+    def draw_with_turtle_object():
+        t = turtle.Turtle()
+        mark_corners([(0, 0), (1, 1)], t)
+        drawn = True
+        return drawn
+
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+
+    assert session.instances["draw_with_turtle_object"].status == "idle", (
+        session.instances["draw_with_turtle_object"].error
+    )
+    commands = session.instances["draw_with_turtle_object"].elements["canvas"].content
+    stamps = [c for c in commands if c["op"] == "stamp"]
+    assert len(stamps) == 2
+    assert (stamps[0]["x"], stamps[0]["y"]) == (0, 0)
+    assert (stamps[1]["x"], stamps[1]["y"]) == (1, 1)

@@ -149,3 +149,79 @@ def test_forward_respects_heading_direction():
 
     assert pos == pytest.approx((0, 10), abs=1e-9)
     assert math.isclose(h, 90)
+
+
+# -- Turtle() object handle -----------------------------------------------
+
+
+def test_turtle_object_calls_outside_execution_context_raise():
+    t = turtle.Turtle()
+    with pytest.raises(RuntimeError, match="outside of cell execution"):
+        t.forward(10)
+
+
+def test_turtle_object_methods_emit_the_same_commands_as_module_functions():
+    t = turtle.Turtle()
+    with turtle.execution_context() as commands:
+        t.forward(100)
+        t.right(90)
+        pos = t.position()
+        h = t.heading()
+
+    assert pos == pytest.approx((100, 0))
+    assert math.isclose(h, 270)
+    assert commands[0]["op"] == "goto"
+    assert commands[0]["x"] == pytest.approx(100)
+    assert commands[1]["op"] == "heading"
+
+
+def test_turtle_object_created_in_one_call_targets_whichever_context_is_active_when_called():
+    """A Turtle() is a proxy onto the contextvar, not an object with its
+    own state -- constructing it outside any context, then calling its
+    methods once a context becomes active (e.g. passed into another
+    cell's function), must still work and target that active context."""
+    t = turtle.Turtle()  # constructed with no context active at all
+    with turtle.execution_context() as commands:
+        t.goto(3, 4)
+
+    assert commands[0]["op"] == "goto"
+    assert commands[0]["x"] == pytest.approx(3)
+    assert commands[0]["y"] == pytest.approx(4)
+
+
+def test_turtle_object_can_be_passed_as_a_function_parameter():
+    """The exact shape the user's own markCorners(cells, t) cell needs:
+    t constructed in one place, passed as an ordinary parameter into a
+    function defined elsewhere, and its calls still draw into the
+    currently-active context (whichever cell is executing when the
+    function actually runs)."""
+
+    def draw_corners(points, t):
+        for x, y in points:
+            t.goto(x, y)
+            t.stamp()
+
+    t = turtle.Turtle()
+    with turtle.execution_context() as commands:
+        draw_corners([(0, 0), (1, 0), (1, 1), (0, 1)], t)
+
+    stamps = [c for c in commands if c["op"] == "stamp"]
+    assert len(stamps) == 4
+    assert (stamps[0]["x"], stamps[0]["y"]) == pytest.approx((0, 0))
+    assert (stamps[3]["x"], stamps[3]["y"]) == pytest.approx((0, 1))
+
+
+def test_two_turtle_objects_share_the_same_underlying_state():
+    """Documents a deliberate limitation: unlike real stdlib turtle,
+    this app has exactly one turtle worth of state per cell execution
+    (one contextvar, scoped to the cell's single turtle_canvas element)
+    -- two Turtle() instances used in the same execution are two
+    handles onto the *same* position/heading/pen state, not two
+    independently-tracked turtles."""
+    t1 = turtle.Turtle()
+    t2 = turtle.Turtle()
+    with turtle.execution_context():
+        t1.goto(5, 5)
+        pos_from_t2 = t2.position()
+
+    assert pos_from_t2 == pytest.approx((5, 5))

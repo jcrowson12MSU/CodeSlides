@@ -2074,6 +2074,80 @@ reshape the plan below and are called out explicitly where they apply:
   serialization/kernel change, following the same Save-button
   precedent as notes.
 
+- [x] **49. Add a `turtle.Turtle()` handle so a turtle can be constructed and passed as a function parameter between cells, not just driven via the bare module-level calls.**
+  `codeslides.turtle` (ARCHITECTURE.md section 7) was entirely
+  module-level functions (`turtle.forward(...)`, etc.) operating on one
+  contextvar-based `_TurtleState` per cell execution -- there was no
+  `Turtle` class at all, unlike stdlib `turtle.Turtle()`. This came up
+  directly from the user's own `markCorners(cells2=None, t=None)` cell
+  in `examples/marchingSquares.py`: its `t` parameter had no way to
+  ever receive a real turtle, since there was nothing to construct one
+  from -- the user's own test code had been reduced to a placeholder
+  `t = "t"` string just to have *something* to pass, which of course
+  broke the moment `t.color(...)`/`t.goto(...)`/`t.stamp()` were
+  actually called on it.
+
+  Added a `Turtle` class to `turtle.py`: every method is the *same*
+  module-level function of that name, bound via `staticmethod(...)` --
+  zero duplicated logic, zero risk of drift if a module-level
+  function's signature ever changes, and no `__init__`/instance state
+  at all, since every one of those functions already resolves state
+  purely through `_state()`/the contextvar, never through `self`. This
+  means `Turtle()` is a thin *proxy* onto whichever cell execution is
+  currently active, not an independently-tracked object -- constructed
+  in one cell (or a `tests` box), passed as an ordinary parameter into
+  a function defined in another cell, its method calls still draw onto
+  the *calling* cell's own `turtle_canvas`, matching the existing
+  one-state-per-cell-execution model `_maybe_turtle_context`/
+  `_find_turtle_canvas` already enforce. No kernel.py changes were
+  needed at all -- the contextvar-scoping machinery already did exactly
+  the right thing once a real callable class existed to route through
+  it.
+
+  Deliberate limitation, called out in the class's own docstring: two
+  `Turtle()` instances used within the same cell execution share one
+  position/heading/pen/commands state, not two independently-tracked
+  turtles like real stdlib `turtle.Turtle()` -- this app has exactly
+  one turtle worth of state per cell execution (one `turtle_canvas`
+  element per cell, one contextvar), not one per instance. Calling a
+  method on a `Turtle()` with no cell execution currently active still
+  raises the same clear, pre-existing `RuntimeError` from `_state()`.
+
+  Verified with 6 new automated tests (5 in `test_turtle.py`: outside-
+  context error, method delegation matches the module functions'
+  emitted commands exactly, a `Turtle()` constructed with no context
+  active still correctly targets whichever context becomes active
+  later, passing a `Turtle()` as an ordinary function parameter, and
+  the shared-state limitation between two instances; 1 integration
+  test in `test_turtle_kernel_integration.py` mirroring the user's own
+  `markCorners(cells, t)` shape exactly -- a function defined in one
+  cell with no canvas of its own, given a `tests` element so it's only
+  *defined* and never auto-called with no arguments (the
+  `_run_cells`/#43 mechanism), called from a second cell that has its
+  own `turtle_canvas` and constructs `t = turtle.Turtle()` to pass in;
+  confirmed the stamps land in that second cell's own canvas content at
+  the exact coordinates passed through). Full suite: 294 passed, 2
+  skipped. Also verified in a real running server via Playwright
+  against a scratch copy of the user's actual `examples/
+  marchingSquares.py`: set the `markCorners` cell's test box to `cells
+  = createMatrix(5, 5)\nt = turtle.Turtle()\nt.pensize(3)\nmarkCorners(cells,
+  t, scale=30)` (a temporary `scale` param, for this screenshot only,
+  to space the grid out visibly at the canvas's fixed pixel scale) and
+  restored the `t.color('pink')`/`t.color('red')` branch that had been
+  commented out in the user's own file -- the test ran `PASS` and the
+  canvas rendered a clean 6x6 grid of distinctly-colored, distinctly-
+  positioned turtle stamps, confirming the whole path end-to-end: a
+  `Turtle()` built in a test box, passed into another cell's function,
+  correctly drawing onto that cell's own canvas.
+
+  Not changed: the user's actual `examples/marchingSquares.py` was left
+  untouched by request (it has its own uncommitted, in-progress edits
+  in the main checkout that this worktree session couldn't safely
+  touch) -- only `src/codeslides/turtle.py` and its tests were merged.
+  The user can wire `t = turtle.Turtle()` into their own `markCorners`
+  test box themselves; no further framework changes are needed for
+  that to work.
+
 - [ ] **48. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local

@@ -348,3 +348,66 @@ def ycor() -> float:
 
 def heading() -> float:
     return _state().heading
+
+
+# -- Object-oriented handle ----------------------------------------------
+
+
+class Turtle:
+    """A `turtle.Turtle()` handle, for passing to another function as a
+    parameter (`markCorners(cells, t)`) the way stdlib lesson code
+    expects -- e.g. `t = turtle.Turtle()` in one cell/test box, then
+    `t.goto(...)`/`t.stamp()` inside a function that receives `t`.
+
+    Every method is the *same* module-level function above, bound as a
+    `staticmethod` -- there is deliberately no independent per-instance
+    x/y/heading/commands. All turtle state in this app lives on the one
+    contextvar-based `_TurtleState` the kernel establishes per cell
+    execution (`execution_context()`, scoped to that cell's single
+    `turtle_canvas` element), never on a Python object, so a `Turtle()`
+    instance is just a *view* onto whichever cell is currently
+    executing when a method is actually called -- created in one cell,
+    passed into another cell's function, its calls still draw onto the
+    *calling* cell's own canvas. This also means two `Turtle()`
+    instances used within the same cell execution share one position/
+    heading/pen state, unlike independently-tracked turtles in real
+    stdlib `turtle` -- there is exactly one turtle worth of state per
+    cell execution here, not one per instance.
+
+    Constructing `Turtle()` does nothing by itself (no validation, no
+    implicit `reset()`/`clear()`) -- same as the module-level functions,
+    the first method actually called raises the existing clear
+    `RuntimeError` from `_state()` if there's no cell execution
+    currently active.
+    """
+
+    forward = fd = staticmethod(forward)
+    backward = bk = back = staticmethod(backward)
+    right = rt = staticmethod(right)
+    left = lt = staticmethod(left)
+    goto = setpos = setposition = staticmethod(goto)
+    setx = staticmethod(setx)
+    sety = staticmethod(sety)
+    setheading = seth = staticmethod(setheading)
+    home = staticmethod(home)
+    circle = staticmethod(circle)
+    penup = pu = up = staticmethod(penup)
+    pendown = pd = down = staticmethod(pendown)
+    isdown = staticmethod(isdown)
+    pencolor = staticmethod(pencolor)
+    fillcolor = staticmethod(fillcolor)
+    color = staticmethod(color)
+    pensize = width = staticmethod(pensize)
+    dot = staticmethod(dot)
+    stamp = staticmethod(stamp)
+    write = staticmethod(write)
+    clear = staticmethod(clear)
+    reset = staticmethod(reset)
+    hideturtle = ht = staticmethod(hideturtle)
+    showturtle = st = staticmethod(showturtle)
+    isvisible = staticmethod(isvisible)
+    speed = staticmethod(speed)
+    position = pos = staticmethod(position)
+    xcor = staticmethod(xcor)
+    ycor = staticmethod(ycor)
+    heading = staticmethod(heading)
