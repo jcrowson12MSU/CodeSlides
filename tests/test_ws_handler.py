@@ -682,6 +682,13 @@ def test_rename_cell_emits_cell_renamed_and_writes_to_disk(tmp_path):
     assert "coding_demo" in registry.kernel.deck.cells
     assert "coding_demo" in session.instances
     assert "live_demo" not in session.instances
+    # Regression guard: every message here must send the same
+    # decorator-free (and docstring-/def-line-free if hide_def) shape
+    # display_source already gives the initial page load and a plain
+    # code edit -- this one was previously sending the cell's raw,
+    # undisplayed Cell.source (decorator included) instead.
+    assert "@app.cell" not in renamed.source
+    assert "def coding_demo(speed):" in renamed.source
 
 
 def test_rename_cell_unknown_session_produces_error_not_crash(tmp_path):
@@ -736,6 +743,9 @@ def test_add_element_emits_element_added_and_writes_to_disk(tmp_path):
     assert [e["name"] for e in added.elements] == ["multiplier"]
     assert "ui.slider('multiplier'" in path.read_text()
     assert "multiplier" in session.instances["setup"].elements
+    # Regression guard: same decorator-free shape display_source already
+    # gives every other cell-source-carrying message.
+    assert "@app.cell" not in added.source
 
 
 def test_add_element_unknown_session_produces_error_not_crash(tmp_path):
@@ -769,6 +779,38 @@ def test_add_element_duplicate_name_produces_error_not_crash(tmp_path):
     assert path.read_text() == before
 
 
+def test_add_element_on_a_hide_def_cell_still_hides_the_def_line(tmp_path):
+    """Regression guard, same bug class as the plain-decorator one above
+    but specifically for hide_def=True (TODO.md #39): ElementAdded's
+    source must also stay def-line-free and un-indented, not just
+    decorator-free, for a cell that has hide_def set."""
+    path = tmp_path / "deck.py"
+    path.write_text(
+        "from codeslides import App, ui\n\napp = App()\n\n"
+        '@app.cell(hide_def=True, instance="editable")\ndef setup():\n    base = 5\n    return base\n'
+    )
+    deck = load_deck(str(path))
+    registry = SessionRegistry(kernel=Kernel(deck, deck_path=str(path)))
+    session = registry.create()
+
+    messages = handle_message(
+        registry,
+        AddElement(
+            session_id=session.session_id,
+            cell_id="setup",
+            element_name="multiplier",
+            kind="slider",
+            config={"min": 1, "max": 5, "default": 2},
+        ),
+    )
+
+    assert isinstance(messages[0], ElementAdded)
+    added = messages[0]
+    assert "@app.cell" not in added.source
+    assert "def setup" not in added.source
+    assert added.source == "base = 5\nreturn base\n"
+
+
 def test_remove_element_emits_element_removed_and_writes_to_disk(tmp_path):
     registry, path = _build_file_backed_registry(tmp_path)
     session = registry.create()
@@ -783,6 +825,9 @@ def test_remove_element_emits_element_removed_and_writes_to_disk(tmp_path):
     assert removed.elements == []
     assert "ui.slider" not in path.read_text()
     assert "speed" not in session.instances["live_demo"].elements
+    # Regression guard: same decorator-free shape display_source already
+    # gives every other cell-source-carrying message.
+    assert "@app.cell" not in removed.source
 
 
 def test_remove_element_unknown_session_produces_error_not_crash(tmp_path):
@@ -828,6 +873,9 @@ def test_reorder_elements_emits_elements_reordered_and_writes_to_disk(tmp_path):
     assert [e["name"] for e in reordered.elements] == ["go", "speed"]
     text = path.read_text()
     assert text.index("ui.button('go'") < text.index("ui.slider('speed'")
+    # Regression guard: same decorator-free shape display_source already
+    # gives every other cell-source-carrying message.
+    assert "@app.cell" not in reordered.source
 
 
 def test_reorder_elements_unknown_session_produces_error_not_crash(tmp_path):
@@ -894,6 +942,9 @@ def test_set_element_config_emits_element_config_set_and_writes_to_disk(tmp_path
     assert output.element_id == "preview"
     assert output.content == "https://new.example.com"
     assert "https://new.example.com" in path.read_text()
+    # Regression guard: same decorator-free shape display_source already
+    # gives every other cell-source-carrying message.
+    assert "@app.cell" not in config_set.source
 
 
 def test_set_element_config_on_a_non_iframe_emits_no_element_output(tmp_path):

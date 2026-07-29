@@ -315,14 +315,23 @@ def display_docstring(source: str) -> str:
 
 
 def rebuild_cell_source(
-    name: str, instance: str, elements: list[Element], source: str
+    name: str, instance: str, elements: list[Element], source: str, hide_def: bool = False
 ) -> str:
     """Regenerate a cell's full source text with a new `name` and/or
     `elements` list, keeping its function body (everything after the
     `def` line) byte-identical -- used by `rename_cell` (new `name`, same
-    elements) and `add_element`/`remove_element` (same name, new
-    elements). The `def` line's own parameter list is preserved as-is
-    (renaming only changes the function's *name*, never its signature)."""
+    elements) and `add_element`/`remove_element`/`reorder_elements`/
+    `set_element_config` (same name, new elements) via `_replace_elements`.
+    The `def` line's own parameter list is preserved as-is (renaming only
+    changes the function's *name*, never its signature).
+
+    `hide_def` must be threaded through from the cell's *current*
+    `hide_def` (`_replace_elements` detects it from the decorator's own
+    AST, same as it already does for `instance="editable"`) and included
+    in the regenerated decorator -- otherwise any of these operations
+    would silently drop `hide_def=True` from the file the moment they
+    touch this cell, even though nothing about hiding the `def` line was
+    ever meant to change."""
     def_line, body_lines = _split_cell_source(source)
     # def_line looks like "def old_name(params):" -- replace only the name.
     paren = def_line.index("(")
@@ -330,11 +339,13 @@ def rebuild_cell_source(
 
     if elements:
         element_lines = "\n".join(f"        {_element_call_source(e)}," for e in elements)
+        hide_def_line = "\n    hide_def=True," if hide_def else ""
         decorator = (
-            f'@app.cell(\n    instance={instance!r},\n    elements=[\n{element_lines}\n    ],\n)'
+            f"@app.cell(\n    instance={instance!r},\n    elements=[\n{element_lines}\n    ],{hide_def_line}\n)"
         )
     else:
-        decorator = f"@app.cell(instance={instance!r})" if instance != "static" else "@app.cell"
+        kwargs = [kw for kw in (f"instance={instance!r}" if instance != "static" else "", "hide_def=True" if hide_def else "") if kw]
+        decorator = f"@app.cell({', '.join(kwargs)})" if kwargs else "@app.cell"
 
     return decorator + "\n" + new_def_line + "\n" + "\n".join(body_lines) + "\n"
 
@@ -482,6 +493,14 @@ def rename_cell(deck_path: str, old_name: str, new_name: str) -> None:
         for dec in func.decorator_list
     )
     instance = "editable" if is_editable else "static"
+    # Same detection, for hide_def=True -- without this, renaming a cell
+    # would silently drop hide_def from the file, even though a rename
+    # has no reason to change it.
+    hide_def = any(
+        isinstance(dec, ast.Call)
+        and any(kw.arg == "hide_def" and ast.literal_eval(kw.value) is True for kw in dec.keywords)
+        for dec in func.decorator_list
+    )
 
     start, end = spans[old_name]
     lines = original.splitlines(keepends=True)
@@ -491,7 +510,7 @@ def rename_cell(deck_path: str, old_name: str, new_name: str) -> None:
     # -- a rename must never silently drop/reorder elements.
     elements = _existing_elements(func)
 
-    new_cell_source = rebuild_cell_source(new_name, instance, elements, old_cell_source)
+    new_cell_source = rebuild_cell_source(new_name, instance, elements, old_cell_source, hide_def=hide_def)
     updated_lines = list(lines)
     updated_lines[start - 1 : end] = [new_cell_source]
     updated = "".join(updated_lines)
@@ -561,11 +580,21 @@ def _replace_elements(
         and any(kw.arg == "instance" and ast.literal_eval(kw.value) == "editable" for kw in dec.keywords)
         for dec in func.decorator_list
     )
+    # Same detection as is_editable, for hide_def=True -- without this,
+    # rebuild_cell_source would silently drop hide_def from the file the
+    # moment any of add_element/remove_element/reorder_elements/
+    # set_element_config/rename_cell touches this cell, even though none
+    # of them have any reason to change it.
+    hide_def = any(
+        isinstance(dec, ast.Call)
+        and any(kw.arg == "hide_def" and ast.literal_eval(kw.value) is True for kw in dec.keywords)
+        for dec in func.decorator_list
+    )
 
     new_elements = build_new_elements(existing)
 
     new_cell_source = rebuild_cell_source(
-        cell_name, "editable" if is_editable else "static", new_elements, cell_source
+        cell_name, "editable" if is_editable else "static", new_elements, cell_source, hide_def=hide_def
     )
     updated_lines = list(lines)
     updated_lines[start - 1 : end] = [new_cell_source]
@@ -581,7 +610,13 @@ def _replace_elements(
         ) from exc
 
     path.write_text(updated)
-    return Cell(name=cell_name, source=new_cell_source, instance="editable" if is_editable else "static", elements=new_elements)
+    return Cell(
+        name=cell_name,
+        source=new_cell_source,
+        instance="editable" if is_editable else "static",
+        elements=new_elements,
+        hide_def=hide_def,
+    )
 
 
 def add_element(deck_path: str, cell_name: str, element: Element) -> None:

@@ -12,6 +12,7 @@ from codeslides.serialization import (
     display_source,
     new_cell_name,
     reattach_decorator,
+    rebuild_cell_source,
     remove_element,
     rename_cell,
     reorder_elements,
@@ -407,6 +408,33 @@ def test_append_cell_twice_does_not_collide(deck_file):
     assert "cell_2" in deck.cells
 
 
+def test_rebuild_cell_source_includes_hide_def_with_elements():
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    updated = rebuild_cell_source("setup", "static", [ui.slider("x", min=1, max=5)], source, hide_def=True)
+    assert "hide_def=True" in updated
+    from codeslides.serialization import display_source
+
+    assert display_source(updated, hide_def=True) == "base = 5\nreturn base\n"
+
+
+def test_rebuild_cell_source_includes_hide_def_with_no_elements():
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    updated = rebuild_cell_source("setup", "static", [], source, hide_def=True)
+    assert updated == "@app.cell(hide_def=True)\ndef setup():\n    base = 5\n    return base\n"
+
+
+def test_rebuild_cell_source_includes_both_instance_and_hide_def_with_no_elements():
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    updated = rebuild_cell_source("setup", "editable", [], source, hide_def=True)
+    assert updated == '@app.cell(instance=\'editable\', hide_def=True)\ndef setup():\n    base = 5\n    return base\n'
+
+
+def test_rebuild_cell_source_omits_hide_def_when_false():
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    updated = rebuild_cell_source("setup", "static", [], source, hide_def=False)
+    assert "hide_def" not in updated
+
+
 def test_rename_cell_updates_the_def_line_and_keeps_the_body(deck_file):
     rename_cell(str(deck_file), "live_demo", "coding_demo")
 
@@ -461,6 +489,41 @@ def test_add_element_creates_an_elements_list_on_a_cell_with_none(deck_file):
     ]
     # the cell's own body is untouched
     assert "base = 5" in deck.cells["setup"].source
+
+
+def test_add_element_preserves_hide_def_on_disk(tmp_path):
+    """Regression guard: rebuild_cell_source (used by add_element/
+    remove_element/reorder_elements/set_element_config/rename_cell, all
+    via _replace_elements) previously had no idea hide_def existed at
+    all, so it silently dropped `hide_def=True` from the regenerated
+    decorator the moment any of these touched a hide_def cell -- caught
+    by a Playwright session adding an element to a hide_def cell and the
+    def line reappearing in the browser afterward."""
+    path = tmp_path / "deck.py"
+    path.write_text(
+        "from codeslides import App, ui\n\napp = App()\n\n"
+        '@app.cell(hide_def=True, instance="editable")\ndef setup():\n    base = 5\n    return base\n'
+    )
+
+    add_element(str(path), "setup", ui.slider("multiplier", min=1, max=5, default=2))
+
+    assert "hide_def=True" in path.read_text()
+    deck = load_deck(str(path))
+    assert deck.cells["setup"].hide_def is True
+
+
+def test_rename_cell_preserves_hide_def_on_disk(tmp_path):
+    path = tmp_path / "deck.py"
+    path.write_text(
+        "from codeslides import App\n\napp = App()\n\n"
+        "@app.cell(hide_def=True)\ndef setup():\n    base = 5\n    return base\n"
+    )
+
+    rename_cell(str(path), "setup", "initial_setup")
+
+    assert "hide_def=True" in path.read_text()
+    deck = load_deck(str(path))
+    assert deck.cells["initial_setup"].hide_def is True
 
 
 def test_add_element_raises_on_a_duplicate_element_name(deck_file):

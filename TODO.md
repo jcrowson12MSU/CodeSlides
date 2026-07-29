@@ -1870,7 +1870,72 @@ reshape the plan below and are called out explicitly where they apply:
   correctly via the live-edit path specifically (not just the initial
   `run_all`), with no console errors. Frontend build/lint clean.
 
-- [ ] **42. Write example decks for teaching scenarios**
+- [x] **42. Fix `add_element`/`remove_element`/`reorder_elements`/`set_element_config`/`rename_cell` sending the raw, undisplayed `Cell.source` over the wire instead of `display_source`'s output.**
+  Reported as "elements added through the browser aren't reflected in
+  the code" -- adding an element via the picker already worked
+  correctly (TODO.md #22/#24: it's written into the cell's
+  `elements=[...]` on disk immediately), but the code editor's own
+  displayed text went visibly wrong for a moment right after, since
+  that's exactly when this bug fired: five `ws_handler.py` message
+  handlers (`RenameCell`/`AddElement`/`RemoveElement`/
+  `ReorderElements`/`SetElementConfig`) all sent `cell.source` --
+  the full source including the `@app.cell(...)` decorator (and, since
+  TODO.md #39's `hide_def` shipped, the `def` line too) -- straight
+  back to the browser, instead of `display_source(cell.source,
+  hide_def=cell.hide_def)`, the one function every *other*
+  cell-source-carrying path (the initial `/api/deck` load, a plain
+  code edit, `AddCell`) already correctly uses. No existing test ever
+  asserted on the `.source` field of any of these five messages, which
+  is exactly why this went uncaught.
+
+  Fixing the display bug surfaced a second, more serious one under it:
+  `serialization.py`'s `rebuild_cell_source` (the function all five of
+  these route through, via the shared `_replace_elements`, to
+  regenerate a cell's decorator) had no concept of `hide_def` at all --
+  it only ever detected and preserved `instance="editable"` from the
+  existing decorator's AST. Any of these five operations touching a
+  `hide_def=True` cell was silently *deleting* `hide_def=True` from the
+  actual on-disk `.py` file, not just from what the browser displayed --
+  caught by a regression test written for the first bug (asserting
+  `"def setup" not in added.source` after `AddElement`) that failed for
+  a reason beyond what it was written to catch, tracing back to the
+  literal absence of `hide_def` in the file after the operation, not
+  just in the display.
+
+  Fixed both: all five `ws_handler.py` handlers now call
+  `display_source(cell.source, hide_def=cell.hide_def)`;
+  `rebuild_cell_source` gained a `hide_def` parameter, correctly
+  emitted in the regenerated decorator alongside `instance=` (both with
+  and without an `elements=[...]` list present); `_replace_elements`
+  detects `hide_def=True` from the existing decorator's AST the same
+  way it already detects `instance="editable"`; `rename_cell` (a
+  separate code path, same underlying gap) got the identical fix; the
+  `Cell(...)` objects both functions return now also carry `hide_def`
+  forward -- the same class of "new field, `Cell(...)` reconstructed
+  without it" bug this session already hit twice before (`docstring`,
+  then `hide_def` itself in `graph.py`'s `parse_cell`).
+
+  Verified with both automated tests and a real running server. Added
+  6 new `test_ws_handler.py` tests (one `"@app.cell" not in
+  <message>.source` regression guard per affected message type, plus a
+  dedicated `hide_def=True`-cell test confirming `AddElement`'s source
+  stays completely `def`-line-free) and 6 new `test_serialization.py`
+  tests (`rebuild_cell_source` includes `hide_def=True` correctly with
+  and without elements, omits it when `False`; `add_element`/
+  `rename_cell` preserve `hide_def=True` on disk end-to-end). Full
+  suite: 280 passed, 2 skipped (12 new). In a real browser via
+  Playwright: added a slider to a plain cell via the element picker,
+  confirmed the code editor now shows only `def setup(): ...` with no
+  decorator visible (previously showed the full raw decorator+
+  `elements=[...]` text); added a button to a separate `hide_def=True`
+  cell the same way, confirmed its editor still showed zero lines of
+  boilerplate (no decorator, no `def` line) after the add; confirmed
+  the saved `.py` file's regenerated decorator correctly kept
+  `hide_def=True` alongside the new `elements=[...]` list. No frontend
+  changes needed -- purely a backend serialization/display consistency
+  fix.
+
+- [ ] **43. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that
@@ -1879,7 +1944,7 @@ reshape the plan below and are called out explicitly where they apply:
   elements — to validate the tool end-to-end and serve as templates for
   instructors.
 
-- [ ] **43. Add tests for kernel & dependency graph**
+- [ ] **44. Add tests for kernel & dependency graph**
   Unit tests for `ast`-based variable extraction, dependency graph
   construction/cycle detection, minimal-rerun-set computation, and
   integration tests that run a sample deck through the kernel and assert
@@ -1887,9 +1952,9 @@ reshape the plan below and are called out explicitly where they apply:
   specifically clones a cell/editor instance and asserts the two instances'
   namespaces and outputs never cross-contaminate.
 
-- [ ] **44. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
+- [ ] **45. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
 
-- [ ] **45. Polish, README, and packaging**
+- [ ] **46. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
   `pip install` (editable) / eventual PyPI packaging.
