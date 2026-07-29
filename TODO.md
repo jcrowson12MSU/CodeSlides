@@ -1483,7 +1483,100 @@ reshape the plan below and are called out explicitly where they apply:
   no-content placeholder case). No frontend regressions; frontend
   build/oxlint clean.
 
-- [ ] **36. Write example decks for teaching scenarios**
+- [x] **36. Store a cell's markdown notes in its function's docstring, loaded and saved from there instead of a separate default.**
+  `ui.notes(name, *, default="")` kept its markdown text as a constructor
+  kwarg baked into the on-disk `ui.notes(...)` call -- a second place
+  to keep in sync with the cell's actual code, and no way to edit it
+  from the browser and have it land anywhere on save (only a code edit
+  round-tripped through `session.source_overrides`). Reworked notes to
+  follow the precedent `@app.slide` already set for its own notes field
+  (`fn.__doc__` in `app.py`): a cell's docstring *is* its notes, full
+  stop, with no separate concept to keep synchronized. Confirmed this
+  direction, dropping `default=` entirely (including migrating every
+  example deck), and folding saves into the existing Save button rather
+  than a separate immediate-persist mechanism, in three rounds of
+  AskUserQuestion before implementing.
+
+  Load path: `Cell` (`deck.py`) gained a `docstring: str = ""` field,
+  populated via `fn.__doc__ or ""` in `Cell.from_function` exactly
+  where `@app.slide` already does the same for its `Slide.notes`.
+  `session.py`'s `seed_cell_instance` now seeds a `notes` element's
+  `ElementInstance.content` from `cell.docstring` instead of the old
+  `default` kwarg.
+
+  Save path: `serialization.py` gained `_docstring_node` (the shared
+  "what counts as the docstring" AST lookup, used by both directions),
+  `set_notes_docstring` (regenerates a cell's full source with its
+  docstring replaced/inserted/removed via the same line-span-
+  substitution approach every other serialization.py function uses --
+  never regenerating a whole file from the in-memory model), and
+  `display_docstring` (the read-side counterpart, for source text
+  that's been edited but not yet re-executed). Writes use `repr()` for
+  the literal, matching how `_element_call_source` already generates
+  other element config values -- a single escaped string literal can't
+  have a markdown body accidentally close a triple-quoted block early,
+  at the cost of a multi-line note showing as one physical line with
+  escaped `\n`s in the raw `.py` file. `Kernel.on_notes_edited`
+  (`kernel.py`) is the new entry point a `notes_source` websocket
+  message routes to (`ws_handler.py`): it updates the in-memory
+  `instance.content` immediately (so the editor never appears to lose
+  a keystroke) and folds the regenerated source into
+  `session.source_overrides[cell_name]` -- the same slot a plain code
+  edit already uses -- so the existing Save button/`save_edits` path
+  persists it with no changes needed there. If the cell's own code is
+  currently unparseable (mid-edit in the same session), the docstring
+  update is silently skipped rather than raised, since there's no
+  error-reporting path for a notes-only edit; the in-memory content
+  still updates regardless.
+
+  Found and fixed a critical bug during this work: `graph.py`'s
+  `parse_cell` -- called on every single `Kernel.__init__` via
+  `build_graph`, which replaces every `Cell` in `deck.cells` with a
+  freshly-parsed copy -- was reconstructing `Cell(...)` without the
+  new `docstring` field, silently dropping it back to `""` the moment
+  any real `Kernel` was constructed. A deck's cells looked correct
+  immediately after `App()` decoration but lost their docstrings the
+  instant a server actually started. Root-caused via a from-scratch
+  repro comparing `app.deck` before vs. `Kernel(app.deck).deck` after
+  construction (identical dict key, replaced `Cell` value); fixed with
+  one added `docstring=cell.docstring` kwarg. Deliberately did *not*
+  make the same change to `kernel.py`'s separate, ephemeral
+  `_effective_graph` reconstruction, since nothing reads `.docstring`
+  off that particular object.
+
+  Migrated every existing `ui.notes(name, default="...")` call site
+  (`live_demo.py`, both cells in `live_demo1.py`,
+  `marchingSquares_live.py`) to `ui.notes(name)` with the same text
+  inserted as the owning function's new first-line docstring.
+
+  Verified with both automated tests and a real running server. Added
+  8 new `serialization.py` unit tests (`display_docstring`/
+  `set_notes_docstring` insert/replace/remove/no-op-on-empty-body/
+  decorator-preservation/round-trip cases) and 3 new `kernel.py` tests
+  (`on_notes_edited` updates content immediately with no re-run, folds
+  into `source_overrides` and actually saves correctly, and skips
+  `source_overrides` -- without losing the in-memory content update --
+  when the cell's current source is unparseable); fixed 3 pre-existing
+  tests that relied on the removed `default=` kwarg. Full suite: 239
+  passed, 2 skipped. In a real browser via Playwright against a
+  scratch deck: confirmed a cell's existing docstring renders as its
+  notes content on load; edited an existing multi-line docstring's
+  notes via the editor textarea and clicked Save -- confirmed the
+  `.py` file's docstring was replaced correctly (as a single-line
+  `repr()` literal) with the rest of the function body byte-for-byte
+  untouched; confirmed a page reload shows the persisted content;
+  inserted notes text on a cell that had no docstring at all before
+  and confirmed a new docstring was correctly added as the function's
+  first statement with everything else in the body preserved; cleared
+  an existing docstring to empty and confirmed the docstring line was
+  removed entirely (not left behind as an empty string literal);
+  confirmed Slides view still renders correctly and `EditCellPanel`
+  still lists a `notes` element normally (reorder arrows, remove
+  button, no stray config textbox) alongside this change. No frontend
+  changes beyond removing `default` from `EditCellPanel`'s notes
+  defaults map; frontend build clean.
+
+- [ ] **37. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that
@@ -1492,7 +1585,7 @@ reshape the plan below and are called out explicitly where they apply:
   elements — to validate the tool end-to-end and serve as templates for
   instructors.
 
-- [ ] **37. Add tests for kernel & dependency graph**
+- [ ] **38. Add tests for kernel & dependency graph**
   Unit tests for `ast`-based variable extraction, dependency graph
   construction/cycle detection, minimal-rerun-set computation, and
   integration tests that run a sample deck through the kernel and assert
@@ -1500,9 +1593,9 @@ reshape the plan below and are called out explicitly where they apply:
   specifically clones a cell/editor instance and asserts the two instances'
   namespaces and outputs never cross-contaminate.
 
-- [ ] **38. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
+- [ ] **39. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
 
-- [ ] **39. Polish, README, and packaging**
+- [ ] **40. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
   `pip install` (editable) / eventual PyPI packaging.

@@ -229,16 +229,86 @@ def test_cs_write_is_not_applied_when_a_later_write_in_the_same_cell_fails():
     assert session.instances["two_targets"].elements["a"].content is None
 
 
-def test_notes_element_content_seeded_from_default():
+def test_notes_element_content_seeded_from_docstring():
     app = App()
 
-    @app.cell(elements=[ui.notes("n", default="# Title\nBody")])
+    @app.cell(elements=[ui.notes("n")])
     def cell_with_notes():
+        """# Title\nBody"""
         x = 1
         return x
 
     session = Session(deck=app.deck)
     assert session.instances["cell_with_notes"].elements["n"].content == "# Title\nBody"
+
+
+_NOTES_DECK_SOURCE = (
+    "from codeslides import App, ui\n\n"
+    "app = App()\n\n"
+    '@app.cell(elements=[ui.notes("n")])\n'
+    "def cell_with_notes():\n"
+    "    base = 5\n"
+    "    return base\n"
+)
+
+
+def test_on_notes_edited_updates_content_immediately(tmp_path):
+    path = _write_deck_file(tmp_path, _NOTES_DECK_SOURCE)
+    from codeslides.loader import load_deck
+
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+
+    kernel.on_notes_edited("cell_with_notes", "n", "edited notes", session)
+
+    assert session.instances["cell_with_notes"].elements["n"].content == "edited notes"
+    # pure UI state -- no re-run, no ExecutionResults, matching
+    # on_notes_edited's `-> None` (unlike on_cell_edited/on_element_changed)
+    assert session.namespace == {}
+
+
+def test_on_notes_edited_folds_the_edit_into_source_overrides_and_it_saves(tmp_path):
+    path = _write_deck_file(tmp_path, _NOTES_DECK_SOURCE)
+    from codeslides.loader import load_deck
+    from codeslides.serialization import display_docstring, save_edits
+
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+
+    kernel.on_notes_edited("cell_with_notes", "n", "new notes", session)
+
+    assert "cell_with_notes" in session.source_overrides
+    assert display_docstring(session.source_overrides["cell_with_notes"]) == "new notes"
+    # the code body is untouched by a notes-only edit
+    assert "base = 5" in session.source_overrides["cell_with_notes"]
+
+    save_edits(str(path), session.source_overrides)
+    reloaded = load_deck(str(path))
+    assert reloaded.cells["cell_with_notes"].docstring == "new notes"
+
+
+def test_on_notes_edited_skips_source_overrides_if_the_cells_code_is_unparseable(tmp_path):
+    path = _write_deck_file(tmp_path, _NOTES_DECK_SOURCE)
+    from codeslides.loader import load_deck
+
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+
+    # simulate mid-keystroke invalid code sitting in this cell's own
+    # override, from a concurrent code edit in the same session
+    session.source_overrides["cell_with_notes"] = "def cell_with_notes(:\n    base = 5\n"
+
+    kernel.on_notes_edited("cell_with_notes", "n", "new notes", session)
+
+    # the in-memory content still updates (the notes viewer keeps showing
+    # what was typed)...
+    assert session.instances["cell_with_notes"].elements["n"].content == "new notes"
+    # ...but the unparseable override is left alone rather than crashing
+    # or silently discarding the pending (invalid) code edit
+    assert session.source_overrides["cell_with_notes"] == "def cell_with_notes(:\n    base = 5\n"
 
 
 def test_element_writes_isolated_across_cloned_sessions():

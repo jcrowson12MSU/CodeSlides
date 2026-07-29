@@ -162,6 +162,87 @@ def reattach_decorator(current_full_source: str, edited_display_source: str) -> 
     return _decorator_prefix(current_full_source) + edited_display_source
 
 
+def _docstring_node(source: str) -> ast.Expr | None:
+    """The function's docstring statement node (a bare string-expression
+    as the first line of the body), or `None` if it doesn't have one --
+    used by both `display_docstring` (read) and `set_notes_docstring`
+    (write) so the two agree on exactly what counts as "the docstring"."""
+    tree = ast.parse(textwrap.dedent(source))
+    func_defs = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    func = func_defs[0]
+    if not func.body:
+        return None
+    first = func.body[0]
+    if (
+        isinstance(first, ast.Expr)
+        and isinstance(first.value, ast.Constant)
+        and isinstance(first.value.value, str)
+    ):
+        return first
+    return None
+
+
+def set_notes_docstring(current_full_source: str, notes_text: str) -> str:
+    """Regenerate a cell's full source with its docstring replaced by
+    `notes_text` (a `notes` element's markdown content, edited in the
+    browser and saved via the ordinary Save button/`save_edits` path --
+    it's folded into `session.source_overrides` as a whole-cell source
+    edit, the same slot a code edit already uses, rather than a separate
+    save mechanism). Same precedent as `@app.slide`'s docstring-as-notes
+    (`app.py`), just for a cell's own function instead of a slide's.
+
+    Inserts a new docstring as the function's first statement if it
+    doesn't have one yet; replaces it in place (preserving indentation)
+    if it does; removes it entirely if `notes_text` is empty (an absent
+    docstring and an empty one both read back as `""`, so writing one
+    out for empty text would just be inert boilerplate). Uses `repr()`
+    for the literal rather than hand-formatting a triple-quoted block --
+    a single escaped string literal can hold embedded quotes/newlines
+    safely with no risk of a markdown body accidentally closing the
+    string early, at the cost of the source `.py` file showing escaped
+    `\\n`s instead of real line breaks in a multi-line note."""
+    tree = ast.parse(textwrap.dedent(current_full_source))
+    func_defs = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    func = func_defs[0]
+    lines = textwrap.dedent(current_full_source).splitlines()
+    existing = _docstring_node(current_full_source)
+
+    if existing is not None:
+        start, end = existing.lineno - 1, existing.end_lineno  # 0-indexed, exclusive end
+        indent = lines[start][: len(lines[start]) - len(lines[start].lstrip())]
+        del lines[start:end]
+        if notes_text:
+            lines.insert(start, f"{indent}{notes_text!r}")
+    elif notes_text:
+        # No existing docstring -- insert one as the new first line of the
+        # body, indented to match the body's own first statement (or, for
+        # a body that's only ever had `pass`/nothing yet, the same
+        # indent `blank_cell_source` already uses).
+        body_start = func.body[0].lineno - 1
+        first_body_line = lines[body_start]
+        indent = first_body_line[: len(first_body_line) - len(first_body_line.lstrip())]
+        lines.insert(body_start, f"{indent}{notes_text!r}")
+
+    return "\n".join(lines) + "\n"
+
+
+def display_docstring(source: str) -> str:
+    """The cell's current notes text, read the same way `set_notes_docstring`
+    writes it -- used by callers that need to recompute it from a live,
+    possibly-just-edited `source` (e.g. `kernel.py`'s `on_cell_edited`,
+    which must keep an in-session notes override in sync if the user is
+    simultaneously editing the code and the docstring in the same save).
+    `Cell.docstring` (`deck.py`) is the *load-time* equivalent of this,
+    populated once via `fn.__doc__` when the deck file's `@app.cell`
+    actually executes -- this is for the in-between: source text that
+    hasn't been executed yet, only parsed."""
+    node = _docstring_node(source)
+    if node is None:
+        return ""
+    assert isinstance(node.value, ast.Constant)
+    return node.value.value
+
+
 def rebuild_cell_source(
     name: str, instance: str, elements: list[Element], source: str
 ) -> str:

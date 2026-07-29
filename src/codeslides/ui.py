@@ -35,8 +35,15 @@ def iframe(name: str, *, src: str = "", height: int = 240) -> Element:
     return Element(name=name, kind="iframe", config={"src": src, "height": height})
 
 
-def notes(name: str, *, default: str = "") -> Element:
-    return Element(name=name, kind="notes", config={"default": default})
+def notes(name: str) -> Element:
+    """A markdown notes viewer -- its content is the owning cell's own
+    docstring, not a constructor argument (same precedent as
+    `@app.slide`'s docstring-as-notes), so editing it in the browser and
+    saving writes straight into the cell's `def`, no separate
+    `default=...` text to keep in sync with a second place. See
+    `Cell.docstring` (`deck.py`) and `serialization.py`'s
+    `set_notes_docstring`/`display_docstring` for how it's read/written."""
+    return Element(name=name, kind="notes", config={})
 
 
 def tests(name: str, *, default: str = "") -> Element:

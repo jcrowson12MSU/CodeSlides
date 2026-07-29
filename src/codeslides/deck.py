@@ -62,6 +62,14 @@ class Cell:
     reads: frozenset[str] = field(default_factory=frozenset)
     writes: frozenset[str] = field(default_factory=frozenset)
     elements: list[Element] = field(default_factory=list)
+    # A `notes` element's displayed content -- the cell's own docstring,
+    # same precedent as `@app.slide`'s docstring-as-notes (`app.py`).
+    # Populated from `fn.__doc__` at construction, kept alongside `source`
+    # (which still includes the docstring as ordinary source text) rather
+    # than derived from it on every read, since callers that just want the
+    # notes text (`session.py`'s instance-seeding) shouldn't need to
+    # re-parse `source` themselves.
+    docstring: str = ""
 
     def __post_init__(self) -> None:
         names = [e.name for e in self.elements]
@@ -77,6 +85,7 @@ class Cell:
             source=inspect.getsource(fn),
             instance=instance,
             elements=elements or [],
+            docstring=fn.__doc__ or "",
         )
 
 

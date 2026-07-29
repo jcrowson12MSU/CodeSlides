@@ -99,11 +99,12 @@ def test_run_all_emits_element_output_for_cs_image_write():
     assert element_outputs[0].content == "/tmp/figure.png"
 
 
-def test_run_all_surfaces_notes_default_without_any_write():
+def test_run_all_surfaces_notes_docstring_without_any_write():
     app = App()
 
-    @app.cell(elements=[ui.notes("n", default="# Title\nBody")])
+    @app.cell(elements=[ui.notes("n")])
     def cell_with_notes():
+        """# Title\nBody"""
         x = 1
         return x
 
@@ -121,8 +122,9 @@ def test_run_all_surfaces_notes_default_without_any_write():
 def test_set_ui_state_notes_source_updates_content_without_rerun():
     app = App()
 
-    @app.cell(elements=[ui.notes("n", default="original")])
+    @app.cell(elements=[ui.notes("n")])
     def cell_with_notes():
+        """original"""
         x = 1
         return x
 

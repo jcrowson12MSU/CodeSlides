@@ -59,13 +59,11 @@ def explain():
         ui.slider("density", min=2, max=20, default=8),
         ui.button("reroll", label="Reroll grid"),
         ui.turtle_canvas("canvas", width=440, height=440),
-        ui.notes(
-            "notes",
-            default="# Marching squares\nDrag density or press reroll to redraw.",
-        ),
+        ui.notes("notes"),
     ],
 )
 def marching_squares_demo(density, reroll):
+    """# Marching squares\nDrag density or press reroll to redraw."""
     # A cell's compiled globals are seeded only with `cs`/`turtle` and the
     # Session's namespace -- any stdlib module a cell body needs must be
     # imported right here, same as a fresh module would.

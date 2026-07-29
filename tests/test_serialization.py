@@ -8,6 +8,7 @@ from codeslides.serialization import (
     add_element,
     append_cell,
     blank_cell_source,
+    display_docstring,
     display_source,
     new_cell_name,
     reattach_decorator,
@@ -16,6 +17,7 @@ from codeslides.serialization import (
     reorder_elements,
     save_edits,
     set_element_config,
+    set_notes_docstring,
 )
 
 DECK_SOURCE = '''"""A tiny demo deck with a comment worth preserving."""
@@ -197,6 +199,67 @@ def test_reattach_decorator_tolerates_a_cell_with_no_decorator():
     # shouldn't crash if it somehow didn't.
     current = "def plain():\n    return 1\n"
     assert reattach_decorator(current, "def plain():\n    return 2\n") == "def plain():\n    return 2\n"
+
+
+def test_display_docstring_returns_empty_string_with_no_docstring():
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    assert display_docstring(source) == ""
+
+
+def test_display_docstring_reads_an_existing_one():
+    source = '@app.cell\ndef setup():\n    "Some notes."\n    base = 5\n    return base\n'
+    assert display_docstring(source) == "Some notes."
+
+
+def test_set_notes_docstring_inserts_a_new_docstring():
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    updated = set_notes_docstring(source, "# Title\nBody")
+    assert display_docstring(updated) == "# Title\nBody"
+    # the rest of the body is untouched
+    assert "base = 5" in updated
+    assert "return base" in updated
+
+
+def test_set_notes_docstring_replaces_an_existing_one():
+    source = '@app.cell\ndef setup():\n    "old notes"\n    base = 5\n    return base\n'
+    updated = set_notes_docstring(source, "new notes")
+    assert display_docstring(updated) == "new notes"
+    assert "old notes" not in updated
+    assert "base = 5" in updated
+
+
+def test_set_notes_docstring_removes_the_docstring_when_notes_text_is_empty():
+    source = '@app.cell\ndef setup():\n    "old notes"\n    base = 5\n    return base\n'
+    updated = set_notes_docstring(source, "")
+    assert display_docstring(updated) == ""
+    assert "old notes" not in updated
+    assert "base = 5" in updated
+
+
+def test_set_notes_docstring_on_an_empty_body_leaves_no_docstring_for_empty_text():
+    # blank_cell_source-style cell -- setting empty notes text on a cell
+    # with no existing docstring must not insert one just to remove it.
+    source = "@app.cell\ndef cell_1():\n    pass\n"
+    updated = set_notes_docstring(source, "")
+    assert updated == source
+
+
+def test_set_notes_docstring_preserves_the_decorator():
+    source = (
+        '@app.cell(instance="editable", elements=[ui.notes("n")])\n'
+        "def live_demo():\n    return 1\n"
+    )
+    updated = set_notes_docstring(source, "hello")
+    assert updated.startswith('@app.cell(instance="editable", elements=[ui.notes("n")])\n')
+    assert display_docstring(updated) == "hello"
+
+
+def test_set_notes_docstring_round_trips_multiple_edits():
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    first = set_notes_docstring(source, "v1")
+    second = set_notes_docstring(first, "v2")
+    assert display_docstring(second) == "v2"
+    assert display_docstring(first) == "v1"  # first edit's result is untouched by the second
 
 
 def test_append_cell_writes_a_new_blank_cell_to_disk(deck_file):

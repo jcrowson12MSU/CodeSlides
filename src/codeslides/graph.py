@@ -153,6 +153,7 @@ def parse_cell(cell: Cell) -> Cell:
         reads=reads,
         writes=writes,
         elements=cell.elements,
+        docstring=cell.docstring,
     )
 
 

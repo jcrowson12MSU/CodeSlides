@@ -107,11 +107,18 @@ class Session:
                 # from cell execution -- seed `content`, not `value`,
                 # so the notes viewer has something to render before
                 # any cs.* write or edit happens (ARCHITECTURE.md
-                # section 3a). `tests` elements seed `value` (their
-                # default source, same as every other non-notes kind
-                # already does) -- `content` (the pass/fail result)
-                # starts empty since no run has happened yet.
-                ElementInstance(value=default, content=default if element.kind == "notes" else None),
+                # section 3a). Their content is the cell's own
+                # docstring (`Cell.docstring`, `deck.py`), not a config
+                # key -- same precedent as `@app.slide`'s
+                # docstring-as-notes, and unlike every other kind's
+                # `default` (which stays a config value). `tests`
+                # elements seed `value` (their default source, same as
+                # every other non-notes kind already does) -- `content`
+                # (the pass/fail result) starts empty since no run has
+                # happened yet.
+                ElementInstance(
+                    value=default, content=cell.docstring if element.kind == "notes" else None
+                ),
             )
         return instance
 

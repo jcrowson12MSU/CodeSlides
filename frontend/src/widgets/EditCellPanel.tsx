@@ -14,7 +14,10 @@ const ELEMENT_KIND_DEFAULTS: Record<string, Record<string, unknown>> = {
   turtle_canvas: { width: 400, height: 400 },
   image: {},
   iframe: { src: '', height: 240 },
-  notes: { default: '' },
+  // No config keys at all -- a notes element's content is always its
+  // owning cell's own docstring (ui.py's notes(), deck.py's
+  // Cell.docstring), never a constructor kwarg to keep in sync here.
+  notes: {},
   tests: { default: '' },
 }
 

@@ -46,10 +46,11 @@ def make_preview():
     elements=[
         ui.slider("speed", min=1, max=10, default=3),
         ui.turtle_canvas("canvas", width=400, height=400),
-        ui.notes("notes", default="# Live Coding\nWatch `speed` change the turtle's step size."),
+        ui.notes("notes"),
     ],
 )
 def live_demo(speed):
+    """# Live Coding\nWatch `speed` change the turtle's step size."""
     # `base` comes from the `setup` cell via the reactive dependency graph
     # (codeslides.graph.build_graph); ruff can't see that wiring, hence noqa.
     # `speed` scales the step size of a five-pointed star -- moving the

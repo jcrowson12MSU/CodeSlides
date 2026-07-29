@@ -46,10 +46,11 @@ def make_preview():
     elements=[
         ui.slider("speed", min=1, max=10, default=3),
         ui.turtle_canvas("canvas", width=400, height=400),
-        ui.notes("notes", default="# Live Coding\nWatch `speed` change the turtle's step size."),
+        ui.notes("notes"),
     ],
 )
 def drawSquare(speed, location=(0, 0)):
+    """# Live Coding\nWatch `speed` change the turtle's step size."""
     # `base` comes from the `setup` cell via the reactive dependency graph
     # (codeslides.graph.build_graph); ruff can't see that wiring, hence noqa.
     # `speed` scales the step size of a five-pointed star -- moving the
@@ -82,10 +83,11 @@ def drawSquare(speed, location=(0, 0)):
     instance="editable",
     elements=[
         ui.turtle_canvas("canvas", width=400, height=400),
-        ui.notes("notes", default="# Draw multiple squares\nCalls `drawSquare` once per location."),
+        ui.notes("notes"),
     ],
 )
 def drawSquares(locations=((0, 0), (100, 0), (0, 100), (100, 100))):
+    """# Draw multiple squares\nCalls `drawSquare` once per location."""
     # `locations` has a default (a plain tuple of (x, y) pairs) since no
     # input element kind supports "a list of points" -- this cell is meant
     # to be run as a whole, not tuned one field at a time via the UI.

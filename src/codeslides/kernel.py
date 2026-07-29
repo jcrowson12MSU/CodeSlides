@@ -26,7 +26,7 @@ from codeslides import cs, turtle
 from codeslides.deck import Cell, Deck, Element
 from codeslides.graph import DependencyGraph, build_graph
 from codeslides.output import resolve_output, wire_safe_value
-from codeslides.serialization import reattach_decorator
+from codeslides.serialization import reattach_decorator, set_notes_docstring
 from codeslides.session import CellInstance, Session
 
 _NESTED_SCOPE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
@@ -453,6 +453,36 @@ class Kernel:
             }
         affected = graph.affected_by(cell_name)
         return self._run_cells(affected, session)
+
+    def on_notes_edited(self, cell_name: str, element_name: str, notes_text: str, session: Session) -> None:
+        """Handle a `notes` element's markdown content changing, scoped to
+        `session` only: fold it into `session.source_overrides` as a
+        regenerated whole-cell source (docstring replaced/inserted/
+        removed -- `set_notes_docstring`), the same slot a plain code edit
+        already uses, so the existing Save button/`save_edits` path
+        persists it with no separate save mechanism (ARCHITECTURE.md
+        section 8's "pure UI state" still holds -- this never triggers a
+        re-run, same as the `instance.content` update below always has).
+
+        Unlike `on_cell_edited`, an unparseable *current* source (this
+        cell's own code is mid-edit with invalid syntax elsewhere in the
+        same session) means there's no reliable place to insert/replace a
+        docstring -- silently skip updating `source_overrides` in that
+        case rather than raising out of a call site with no error-
+        reporting path for notes edits, matching this method's
+        `-> None` (no `ExecutionResult`s to report, unlike a code edit).
+        The in-memory `instance.content` update (what the notes viewer
+        actually renders) always happens regardless, so the editor never
+        appears to reject or lose what was typed -- only the disk-bound
+        override is deferred until the code becomes valid again."""
+        instance = session.instances[cell_name].elements.get(element_name)
+        if instance is not None:
+            instance.content = notes_text
+        current = session.source_overrides.get(cell_name, self.deck.cells[cell_name].source)
+        try:
+            session.source_overrides[cell_name] = set_notes_docstring(current, notes_text)
+        except (SyntaxError, ValueError):
+            pass
 
     def on_element_changed(
         self, cell_name: str, element_name: str, value: object, session: Session

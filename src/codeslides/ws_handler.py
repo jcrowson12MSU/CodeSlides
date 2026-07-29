@@ -113,8 +113,9 @@ def _element_output_messages(session: Session, results: dict[str, ExecutionResul
 
     `notes` and `tests` elements are handled separately: neither is
     written to via a `cs.*` call, so both need a fallback that surfaces
-    their current `content` directly. `notes` is authored content
-    (`ui.notes(default=...)`) that's never "computed" at all; `tests`
+    their current `content` directly. `notes` is authored content --
+    the owning cell's own docstring (`Cell.docstring`, `deck.py`) -- that's
+    never "computed" at all; `tests`
     (ARCHITECTURE.md section 3b) *is* computed, but by `_run_cells`
     calling `kernel.run_tests` directly and storing the result straight
     onto `ElementInstance.content` -- not through the `cs.execution_context`
@@ -252,7 +253,15 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
             if message.minimized is not None:
                 instance.elements[message.element_id].minimized = message.minimized
             if message.notes_source is not None:
-                instance.elements[message.element_id].content = message.notes_source
+                # Also folds this edit into session.source_overrides (a
+                # regenerated whole-cell source with the docstring
+                # replaced) so the existing Save button persists it --
+                # see Kernel.on_notes_edited's own docstring for why this
+                # can't just be the direct instance.content assignment
+                # every other branch here uses.
+                registry.kernel.on_notes_edited(
+                    message.cell_id, message.element_id, message.notes_source, session
+                )
         return []
 
     if isinstance(message, SetTestSource):
