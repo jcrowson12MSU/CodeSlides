@@ -48,6 +48,19 @@
   cursor: pointer;
 }
 
+/* TODO.md #30: match the Save button's height to the Cells/Slides
+   switch's rendered height (38.86px, driven by the switch's own
+   padding/border) so the two header controls read as the same size at
+   a glance instead of Save looking visibly smaller/shorter next to it.
+   Scoped to just the Save button (not the generic `.cs-header-controls
+   button` rule above) so it doesn't also stretch the circular help
+   button, which sizes itself independently via `.cs-help-button`. */
+button.cs-save-button {
+  box-sizing: border-box;
+  height: 2.16rem;
+  padding: 0 0.8rem;
+}
+
 /* TODO.md #27 (revised): the "?" button in the top-right header no
    longer shows websocket connection status -- confirmed with the user
    that info didn't actually matter day to day, and a hover-only native

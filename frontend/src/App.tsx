@@ -396,7 +396,12 @@ function App() {
                   style={{ transform: viewMode === 'slides' ? 'translateX(100%)' : 'translateX(0)' }}
                 />
               </button>
-              <button type="button" disabled={!sessionId || saving} onClick={handleSaveDeck}>
+              <button
+                type="button"
+                className="cs-save-button"
+                disabled={!sessionId || saving}
+                onClick={handleSaveDeck}
+              >
                 {saving ? 'Saving…' : 'Save'}
               </button>
             </>

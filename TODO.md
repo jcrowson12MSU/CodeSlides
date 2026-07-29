@@ -513,54 +513,22 @@ reshape the plan below and are called out explicitly where they apply:
   lines, and nothing looks cramped or broken at the narrower width
   either. Frontend build/oxlint clean; no backend changes.
 
-- [ ] **18. Remove the grey vertical lines on the left and right side**
-  Fixed as part of item 17 above (same root cause: `#root`'s leftover
-  `border-inline` from the create-vite template) -- verified gone in
-  the same screenshots. Left the checkbox here unchecked only because
-  it's a separately-numbered item; nothing further to do for it.
+- [x] **18. Remove the grey vertical lines on the left and right side**
+  Fixed as part of item 17 (same root cause: `#root`'s leftover
+  `border-inline` from the create-vite template). Re-verified now,
+  separately, since real layout changes have landed since (the
+  resizable divider, the hideCode overflow fix) that touched this same
+  area -- re-checked `#root`'s computed `border-left-width`/
+  `border-right-width` (both `0px`) and screenshotted both the Cells
+  and Slides views at a 1920px viewport: no vertical lines anywhere on
+  either side, in either view. No code changes needed; already fixed.
 
-- [ ] **19. Change the shortcut to go to the next/previous slide to cmd+control + left/right**
+- [x] **19. Change the shortcut to go to the next/previous slide to cmd+control + left/right**
+  This is in place of the current use of arrows to move between slides. Currently it is hard to edit the code in the code
+  editor because I use arrows to move my cursor around the code editor which accidentally goes to another slide.
 
 - [x] **20. Add a divider between the left and right to resize these sections.**
-  As the divider is moved to the left, the code editor on the left gets
-  smaller and the right side gets bigger and vice versa.
-
-  Confirmed the intended scope with the user first: independent per
-  cell (each cell remembers its own split), not one shared ratio across
-  the whole deck, and mainly meant for the Slides view where a single
-  cell is in focus and giving a wide turtle canvas or a long function
-  body more room is genuinely useful.
-
-  Implemented entirely in `Cell.tsx` as local component state (a
-  `codeFraction` between 0.15 and 0.85, defaulting to 0.5) -- no
-  App.tsx/SlideShow.tsx prop threading needed, since this is pure
-  display layout with no server round-trip and no effect on execution,
-  unlike collapsed/minimized which do send `set_ui_state`. React
-  preserves this per-cell state across re-renders as long as the Cell
-  isn't unmounted (the parent already keys each Cell by `cellId`), so a
-  drag survives the cell's own output changing.
-
-  A new `.cs-resize-handle` div (native pointer events, not a library)
-  sits between `.cs-cell-code` and `.cs-cell-side`; both columns'
-  `flex-basis` is set inline as a percentage driven by the drag, with
-  `flex-grow`/`flex-shrink` pinned to 0 in CSS so the inline basis is
-  the actual rendered width rather than just a starting point flexbox
-  could redistribute. A `cs-resizing` class on `<body>` during the drag
-  locks the cursor and disables text selection page-wide, since a fast
-  drag can put the pointer briefly over the code editor or an element
-  widget between pointermove events. At the existing 800px stacking
-  breakpoint (`@media (max-width: 800px)`), the handle is hidden and
-  both columns' flex-basis is forced back to `auto !important` --
-  horizontal resizing is meaningless once the columns stack vertically.
-
-  Verified end-to-end in a real browser: dragging the handle right
-  grows the code column and shrinks the elements column by matching
-  pixel amounts (measured via `boundingBox()`, not just eyeballed), the
-  code editor stays fully functional mid-drag and after, the `body`
-  cursor lock is correctly removed on mouseup, the same drag works in
-  the Slides view (the primary intended use case), and the handle
-  correctly disappears with no leftover width override at a narrow
-  (700px) viewport. Frontend build/oxlint clean; no backend changes.
+  As the divider is moved to the left, the code editor on the left gest smaller and the right side gets bigger and vice versa.
 
 - [x] **21. Add a new cell button**
   add the option to add new cells from the browser that could then be inserted into the source file. A cell should be able to have all veiwer element added to it.
@@ -1001,7 +969,35 @@ reshape the plan below and are called out explicitly where they apply:
   stacked layout (700px, item 20's `@media` breakpoint) is unaffected.
   No backend changes; frontend build/oxlint clean.
 
-- [ ] **30. Write example decks for teaching scenarios**
+- [x] **30. Make the save button the same size as the Cells/Slides switch.**
+  The Save button (`App.tsx`'s header controls) rendered noticeably
+  smaller than the Cells/Slides toggle next to it -- 65.7x30.8px vs.
+  173.8x38.9px -- because both were governed by the same generic
+  `.cs-header-controls button` rule (`padding: 0.3rem 0.8rem`), but the
+  switch's own padding, border, and inner thumb inset pushed its
+  rendered height well past what that shared rule alone produced for a
+  plain text button. Gave the Save button a dedicated `cs-save-button`
+  class (`App.tsx`) and a scoped `button.cs-save-button` rule (`App.css`)
+  setting `box-sizing: border-box; height: 2.16rem` -- matching the
+  switch's actual rendered height rather than guessing from its source
+  padding. Scoped narrowly (not applied to the generic
+  `.cs-header-controls button` selector) so it doesn't also stretch the
+  circular help button (item 27), which sizes itself independently via
+  `.cs-help-button`.
+
+  Verified in a real browser via Playwright: measured all three header
+  controls' bounding boxes in both Cells and Slides views and confirmed
+  Save's height now matches the switch's height to sub-pixel precision
+  (38.86px vs. 38.875px, previously off by 8px) in both views; confirmed
+  the help button's circular shape is unaffected (31.5x31.5px, still a
+  perfect circle) since an earlier draft of this fix that widened the
+  shared selector had briefly stretched it into an oval before being
+  caught and narrowed to the dedicated class. No backend changes;
+  frontend build/oxlint clean.
+
+- [ ] **31. Move the "+ Add cell" to the top right in the header too.**
+
+- [ ] **32. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that
@@ -1010,7 +1006,7 @@ reshape the plan below and are called out explicitly where they apply:
   elements — to validate the tool end-to-end and serve as templates for
   instructors.
 
-- [ ] **25. Add tests for kernel & dependency graph**
+- [ ] **33. Add tests for kernel & dependency graph**
   Unit tests for `ast`-based variable extraction, dependency graph
   construction/cycle detection, minimal-rerun-set computation, and
   integration tests that run a sample deck through the kernel and assert
@@ -1018,7 +1014,9 @@ reshape the plan below and are called out explicitly where they apply:
   specifically clones a cell/editor instance and asserts the two instances'
   namespaces and outputs never cross-contaminate.
 
-- [ ] **26. Polish, README, and packaging**
+- [ ] **34. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
+
+- [ ] **35. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
   `pip install` (editable) / eventual PyPI packaging.
