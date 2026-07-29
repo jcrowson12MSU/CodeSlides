@@ -572,13 +572,6 @@ body.cs-resizing {
   color: #999;
 }
 
-.cs-view-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  margin: 0.75rem 0;
-}
-
 .cs-save-status {
   font-size: 0.85rem;
   margin-left: 0.5rem;
@@ -592,13 +585,17 @@ body.cs-resizing {
   color: #c92a2a;
 }
 
-.cs-view-toggle > button {
-  border: 1px solid #ccc;
-  background: white;
-  border-radius: 4px;
-  padding: 0.3rem 0.8rem;
-  font-size: 0.85rem;
-  cursor: pointer;
+/* TODO.md #31: "+ Add cell" moved from its own row under the title into
+   the top-right header controls, next to the Cells/Slides switch it now
+   sits in front of -- same rationale as item 26 moving the switch/Save
+   there: keep every deck-level action in the one persistent, always-
+   visible row instead of scattered below the (sometimes scrolled-past)
+   title. Matches `.cs-save-button`'s explicit height (item 30) so it
+   lines up with the rest of the row instead of using the shorter height
+   the shared `.cs-header-controls button` padding alone produces. */
+button.cs-add-cell-button {
+  box-sizing: border-box;
+  height: 2.16rem;
 }
 
 /* TODO.md #25: a single toggle switching between Cells/Slides, replacing

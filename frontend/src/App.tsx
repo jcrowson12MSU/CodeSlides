@@ -377,6 +377,9 @@ function App() {
         <div className="cs-header-controls">
           {deck && (
             <>
+              <button type="button" className="cs-add-cell-button" disabled={!sessionId} onClick={handleAddCell}>
+                + Add cell
+              </button>
               <button
                 type="button"
                 className="cs-view-mode-switch"
@@ -404,6 +407,9 @@ function App() {
               >
                 {saving ? 'Saving…' : 'Save'}
               </button>
+              {saveStatus && (
+                <span className={`cs-save-status cs-save-status-${saveStatus.kind}`}>{saveStatus.text}</span>
+              )}
             </>
           )}
           <div className="cs-help" ref={helpRef}>
@@ -433,18 +439,6 @@ function App() {
           </div>
         </div>
       </div>
-      {deck && (
-        <div className="cs-view-toggle">
-          <button type="button" disabled={!sessionId} onClick={handleAddCell}>
-            + Add cell
-          </button>
-          {saveStatus && (
-            <span className={`cs-save-status cs-save-status-${saveStatus.kind}`}>
-              {saveStatus.text}
-            </span>
-          )}
-        </div>
-      )}
       {viewMode === 'cells' && (
         <p className="cs-hint">Shift+Enter: run cell &middot; Mod+Shift+Enter: run all</p>
       )}

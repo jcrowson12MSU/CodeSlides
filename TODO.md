@@ -995,7 +995,33 @@ reshape the plan below and are called out explicitly where they apply:
   caught and narrowed to the dedicated class. No backend changes;
   frontend build/oxlint clean.
 
-- [ ] **31. Move the "+ Add cell" to the top right in the header too.**
+- [x] **31. Move the "+ Add cell" to the top right in the header too.**
+  "+ Add cell" previously sat in its own row directly under the title
+  (`.cs-view-toggle`, alongside the save-status text), disconnected from
+  the Cells/Slides switch, Save, and help button that item 26 had
+  already pulled into the sticky top-right header row -- so the one
+  other always-relevant deck-level action was left behind in a separate,
+  non-sticky row instead of living with the rest. Moved the button into
+  `.cs-header-controls` (`App.tsx`), placed first (left of the switch,
+  reading left-to-right as add → choose view → save → help), and moved
+  `saveStatus`'s inline text there with it since it no longer had a
+  home once its row was removed. Gave it a `cs-add-cell-button` class
+  with the same explicit height as `cs-save-button` (item 30) so it
+  lines up with the rest of the row; removed the now-dead
+  `.cs-view-toggle`/`.cs-view-toggle > button` rules (`App.css`).
+  Disabled-until-connected and click-to-add behavior unchanged.
+
+  Verified in a real browser via Playwright: confirmed the button now
+  renders inside `.cs-app-header` (not the old standalone row, which no
+  longer exists in the DOM), sits left of the Cells/Slides switch, and
+  matches the switch's height (38.86px vs. 38.875px); confirmed clicking
+  it still adds a cell (cell count 4 → 5) and that it's present and
+  enabled in both Cells and Slides views; confirmed the save-status text
+  ("Nothing to save") still renders correctly next to Save after the
+  move; and confirmed the narrow-viewport (700px) header wraps each
+  button's own label gracefully rather than overflowing, consistent
+  with how that row already behaved before this change. No backend
+  changes; frontend build/oxlint clean.
 
 - [ ] **32. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
