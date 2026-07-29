@@ -1318,6 +1318,49 @@ reshape the plan below and are called out explicitly where they apply:
   (item 32) still works with cells rendering header-free underneath it.
   No backend changes; frontend build/oxlint clean.
 
+  **Follow-up (same task): the user reported the cell should take up
+  even more space now that the header's gone.** Root cause: the outer
+  `.cs-cell` box *did* grow correctly (it already fills
+  `--cs-slide-available-height`), but the *inner* scrollable content
+  (`.cs-cell-side`/`.cm-editor`) was still capped by item 28's old,
+  static `55vh` -- a number with no relationship to the newly-freed
+  space, chosen back when the cap only needed to be "conservative
+  enough in practice." Once the header stopped eating part of the
+  cell's height, the gap between that fixed cap and the now-taller
+  outer box became a large, clearly visible dead area below the actual
+  content.
+
+  Replaced the two `55vh` rules with a second JS-measured custom
+  property, `--cs-cell-content-available-height` (`SlideShow.tsx`,
+  same `useEffect` that already computes `--cs-slide-available-
+  height`), read by `.cs-cell-code .cm-editor`/`.cs-cell-side`'s
+  `max-height`. Getting this right took two attempts: the first
+  version measured `.cs-cell-body`'s top straight down to the literal
+  viewport edge, which overflowed the viewport by ~27px on a
+  genuinely-tall cell -- `--cs-slide-available-height` is a *floor*
+  (CSS `min-height`), not a ceiling, so if the inner cap allows content
+  taller than that floor, the whole flex column still grows to fit it,
+  pushing past where the floor was originally sized to end. Fixed by
+  computing the inner cap relative to `.cs-slide`'s own measured floor
+  instead of the raw viewport (`slideTop + available - bodyTop -
+  cellPaddingBottom - bodyMarginBottom`), so the inner content's cap
+  and the outer box's floor agree on the same bottom edge.
+
+  Verified in a real browser via Playwright: measured a genuinely-tall
+  cell (code + turtle canvas + notes) across five states -- two short-
+  content slides, code hidden, code revealed, and the header-collapsed
+  variant (which frees even more space) -- and confirmed the cell's
+  own bottom lands at exactly the viewport edge (800px of an 800px
+  viewport) in every case, no overflow, no dead gap, content visibly
+  extending further than before (`.cm-editor`/`.cs-cell-side` grew from
+  440px capped to ~546-556px depending on state); confirmed the
+  resizable divider (item 20) still works and doesn't affect the height
+  cap; confirmed item 28's scroll lock, including the focus-triggered-
+  scroll edge case, is unaffected at both normal and narrow (700px)
+  viewports; confirmed Cells view is untouched (`min-height: 0px` on
+  its cells, unchanged). No backend changes; frontend build/oxlint
+  clean.
+
 - [ ] **35. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example

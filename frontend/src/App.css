@@ -879,8 +879,23 @@ body.cs-slides-locked {
   overflow: clip;
 }
 
+/* TODO.md #34 follow-up: `55vh` was a static, conservative estimate
+   (item 28's own comment: "simpler ... conservative enough in
+   practice") chosen before precise measurement existed. Once the cell
+   header (TODO.md #34) stopped eating a chunk of the cell's own
+   vertical space, that fixed number left a large, clearly visible dead
+   gap between the capped content and the now-taller outer cell box.
+   `--cs-cell-content-available-height` (SlideShow.tsx) is the actual
+   measured remaining space below `.cs-cell-body`'s own top *down to
+   `.cs-slide`'s own measured floor* (not the raw viewport edge -- that
+   would ignore `.cs-cell`'s trailing padding and `.cs-cell-body`'s
+   trailing margin, which still need to fit inside the same floor the
+   outer box uses, and overflowed the viewport by ~27px before this was
+   corrected). Already accounts for the slide title's height (if
+   shown), the header-collapsed state, and all the cell's own
+   padding/margin -- no further adjustment needed here. */
 .cs-slides-locked .cs-slide .cs-cell-code .cm-editor {
-  max-height: 55vh;
+  max-height: var(--cs-cell-content-available-height, 55vh);
 }
 
 /* `overscroll-behavior: contain` on both scrollers stops scroll
@@ -895,7 +910,7 @@ body.cs-slides-locked {
 }
 
 .cs-slides-locked .cs-slide .cs-cell-side {
-  max-height: 55vh;
+  max-height: var(--cs-cell-content-available-height, 55vh);
   overflow-y: auto;
   overscroll-behavior: contain;
 }

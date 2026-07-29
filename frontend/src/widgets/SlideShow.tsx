@@ -83,13 +83,50 @@ export function SlideShow({
   // directly and expose it as a custom property `.cs-cell` (App.css)
   // reads to size itself. Recomputed on window resize and whenever
   // `headerCollapsed` changes, since both change the offset.
+  //
+  // TODO.md #34 follow-up: the outer `.cs-cell` box grows correctly via
+  // `--cs-slide-available-height` above, but item 28's `55vh` cap on the
+  // *inner* scrollable content (`.cs-cell-side`/`.cm-editor`) is a static
+  // number with no relationship to that measured value -- once the cell
+  // header (TODO.md #34) stopped eating a chunk of the cell's own
+  // vertical space, the gap between the 55vh-capped content and the
+  // taller-now outer box became a large, visible dead area.
+  //
+  // `--cs-slide-available-height` is a *floor* on `.cs-slide` (CSS
+  // `min-height`), not a hard ceiling -- if content asks for more than
+  // that floor, the flex column still grows to fit it, overflowing the
+  // viewport. So the inner cap can't just be "space from here to the
+  // literal viewport edge" (that ignores the cell's own trailing
+  // padding/margin, and was the first version of this fix -- it
+  // overflowed the viewport by ~27px on a genuinely tall cell). It has
+  // to be "space from here to the *bottom of `.cs-slide`'s own
+  // measured floor*", so the inner content's cap and the outer box's
+  // floor agree on the same bottom edge. `bodyEl`'s own trailing
+  // padding-bottom/margin-bottom are read directly from computed style
+  // rather than hand-derived in a CSS `calc()`, since -- like the top
+  // offset above -- they're exactly the kind of multi-source arithmetic
+  // (cell padding + body margin) that's more reliable measured than
+  // guessed.
   useEffect(() => {
     function updateAvailableHeight() {
-      const el = slideRef.current
-      if (!el) return
-      const top = el.getBoundingClientRect().top
-      const available = Math.max(window.innerHeight - top, 0)
-      el.style.setProperty('--cs-slide-available-height', `${available}px`)
+      const slideEl = slideRef.current
+      if (!slideEl) return
+      const slideTop = slideEl.getBoundingClientRect().top
+      const available = Math.max(window.innerHeight - slideTop, 0)
+      slideEl.style.setProperty('--cs-slide-available-height', `${available}px`)
+
+      const bodyEl = slideEl.querySelector<HTMLElement>('.cs-cell-body')
+      const cellEl = slideEl.querySelector<HTMLElement>('.cs-cell')
+      if (!bodyEl || !cellEl) return
+      const bodyTop = bodyEl.getBoundingClientRect().top
+      const slideBottom = slideTop + available
+      const cellPaddingBottom = Number.parseFloat(getComputedStyle(cellEl).paddingBottom) || 0
+      const bodyMarginBottom = Number.parseFloat(getComputedStyle(bodyEl).marginBottom) || 0
+      const contentAvailable = Math.max(
+        slideBottom - bodyTop - cellPaddingBottom - bodyMarginBottom,
+        0,
+      )
+      slideEl.style.setProperty('--cs-cell-content-available-height', `${contentAvailable}px`)
     }
     updateAvailableHeight()
     window.addEventListener('resize', updateAvailableHeight)
