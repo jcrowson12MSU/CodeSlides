@@ -1361,6 +1361,40 @@ reshape the plan below and are called out explicitly where they apply:
   its cells, unchanged). No backend changes; frontend build/oxlint
   clean.
 
+  **Follow-up (same task): the user reported the gap between a slide's
+  title and its content was still too large.** Root cause: three
+  separate spacing rules -- `.cs-slide-title`'s `margin-bottom` (1rem),
+  `.cs-cell`'s `padding-top` (1.25rem), and `.cs-cell-body`'s
+  `margin-top` (0.5rem, inherited from the base Cells-view rule) --
+  each used to separate the title from the *header row* that sat
+  directly under it. Now that the header's gone (the item immediately
+  above), those three gaps stack with nothing between them to justify
+  it, totaling ~50px of visibly loose whitespace above the code editor/
+  elements column. Tightened all three together (rather than just one,
+  so no single change reads as doing all the work) -- title's
+  `margin-bottom` to 0.5rem, `.cs-cell`'s top padding specifically to
+  0.5rem (left/right/bottom untouched at 1.25rem/1.5rem), and added
+  `margin-top: 0` to the existing `.cs-slide .cs-cell-body` override --
+  landing at 18px total, down from ~50px. All three changes are scoped
+  to Slides-view-specific selectors (`.cs-slide-title`,
+  `.cs-slide .cs-cell`, `.cs-slide .cs-cell-body`), so Cells view's
+  spacing (where the header row still exists and still needs the
+  original buffer) is untouched.
+
+  Verified in a real browser via Playwright: measured the title-to-
+  content gap across all three slides (two short-content, one with a
+  code editor + turtle canvas + notes) and both `Reveal code` states,
+  confirming a consistent 18px gap everywhere (was ~50px); confirmed
+  Cells view's cell padding (`13.5px 18px`) and border are byte-
+  identical to before -- no scoping leak; confirmed no overflow was
+  introduced by the freed-up space being recomputed into
+  `--cs-cell-content-available-height` (cell bottom still lands at or
+  under the viewport edge in every state, including the header-
+  collapsed variant, which now shows even more of the previously-cut-
+  off content); confirmed the resizable divider (item 20) and item 28's
+  scroll lock both still work. No backend changes; frontend build/
+  oxlint clean.
+
 - [ ] **35. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example

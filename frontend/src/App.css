@@ -777,7 +777,15 @@ button.cs-add-cell-button {
 
 .cs-slide-title {
   font-size: 2rem;
-  margin: 0 0 1rem;
+  /* TODO.md #34 follow-up: this margin, `.cs-cell`'s own top padding, and
+     `.cs-cell-body`'s top margin (further down) used to separate the
+     title from the *header row* that sat directly under it -- now that
+     the header's gone (TODO.md #34), those three separate gaps stack
+     into ~50px of visibly loose whitespace above the code editor/
+     elements column with nothing between them to justify it. Tightened
+     here and at the other two rules together, rather than in just one
+     place, so no single change looks like it's doing all the work. */
+  margin: 0 0 0.5rem;
   flex: 0 0 auto;
 }
 
@@ -787,7 +795,12 @@ button.cs-add-cell-button {
    as unnecessary chrome in Slides view where there's only ever one
    cell already set apart by the slide itself. */
 .cs-slide .cs-cell {
-  padding: 1.25rem 1.5rem;
+  /* Top padding tightened separately from the other three sides (still
+     1.25rem) -- see `.cs-slide-title`'s own comment: this used to be
+     buffer between the title above and the header row that no longer
+     exists here, now it's redundant space stacked on top of the
+     title's own margin and `.cs-cell-body`'s margin below. */
+  padding: 0.5rem 1.5rem 1.25rem;
   border: none;
   border-radius: 0;
 }
@@ -832,6 +845,10 @@ button.cs-add-cell-button {
 .cs-slide .cs-cell-body {
   flex: 1;
   min-height: 0;
+  /* Top margin zeroed -- see `.cs-slide-title`'s own comment: this used
+     to add separation from the header row directly above it, which no
+     longer exists here. */
+  margin-top: 0;
 }
 
 /* TODO.md #29: no `max-height` override here anymore -- the base rule's
