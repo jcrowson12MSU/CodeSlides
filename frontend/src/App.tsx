@@ -87,6 +87,44 @@ function App() {
       .catch(() => setDeck(null))
   }, [])
 
+  // TODO.md #28: in Slides view, the screen itself must not move --
+  // only a cell's own code editor / elements column scrolls internally.
+  // A class toggled on both `<html>` and `<body>` (App.css) is the
+  // simplest way to change the page's overall scroll behavior for
+  // exactly this one view without touching the Cells view's layout at
+  // all -- same pattern Cell.tsx already uses for `cs-resizing` during a
+  // divider drag. Both elements need the class, not just `body`:
+  // confirmed by hand that `<html>` is the actual document scrolling
+  // element in this browser, so locking `body` alone still let a wheel
+  // event bubbling past an internal scroll container move the page.
+  useEffect(() => {
+    const locked = viewMode === 'slides'
+    document.documentElement.classList.toggle('cs-slides-locked', locked)
+    document.body.classList.toggle('cs-slides-locked', locked)
+    if (!locked) return
+
+    // `overflow: hidden`/`clip` on <html>/<body> (App.css) block wheel-
+    // driven document scroll, but not this: clicking into a cell's code
+    // editor to focus it still moves `document.documentElement.
+    // scrollTop` by the sticky header's height, confirmed by hand --
+    // the browser's own default focus-scroll-into-view behavior, which
+    // isn't blocked by overflow on the scrolling element the way a
+    // wheel/touch scroll is. Snapping it straight back to 0 on every
+    // `scroll` event is the reliable fix regardless of what triggers it
+    // (this fires for that focus-driven scroll same as any other).
+    function snapBack() {
+      if (document.documentElement.scrollTop !== 0) {
+        document.documentElement.scrollTop = 0
+      }
+    }
+    window.addEventListener('scroll', snapBack)
+    return () => {
+      document.documentElement.classList.remove('cs-slides-locked')
+      document.body.classList.remove('cs-slides-locked')
+      window.removeEventListener('scroll', snapBack)
+    }
+  }, [viewMode])
+
   useEffect(() => {
     if (!helpOpen) return
     function handlePointerDown(event: PointerEvent) {

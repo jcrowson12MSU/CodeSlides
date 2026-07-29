@@ -886,7 +886,59 @@ reshape the plan below and are called out explicitly where they apply:
   correct rendering in both the Cells and Slides views. No backend
   changes; frontend build/oxlint clean.
 
-- [ ] **28. Write example decks for teaching scenarios**
+- [x] **28. Structure5.**
+  Make it so that the screen does not move when scrolling in slide
+  view, but that content within a cell such as the code editor or the
+  right side of the cell can be scrolled in when scrolling on the
+  right side.
+
+  Confirmed scope with the user before building: the *whole window*
+  (header, slide toolbar, slide title) stays fixed in Slides view --
+  not just the cell content area -- and each cell on a multi-cell slide
+  gets its own independently-scrollable height, rather than a slide's
+  cells sharing one shared scroll region. A `cs-slides-locked` class
+  toggled on both `<html>` and `<body>` (App.tsx, scoped to
+  `viewMode === 'slides'` only -- Cells view is completely untouched,
+  same body-class pattern item 20's resize-divider drag already uses)
+  drives `overflow: clip` in `App.css`; the code editor's `.cm-scroller`
+  already scrolled internally on its own (item 7), so only
+  `.cs-cell-side` (the elements/output column, previously unbounded
+  height) needed a matching `max-height`/`overflow-y`.
+
+  Chased down two real bugs by hand, not caught by reading the CSS
+  alone -- confirming this needed actual browser interaction, not just
+  a visual check: (1) `overflow: hidden` blocked wheel-driven scroll
+  but not scroll-*chaining* -- once an inner scroller (the code editor
+  or elements column) hit its own limit, the remaining wheel delta
+  still propagated to the page underneath; fixed with
+  `overscroll-behavior: contain` on both scrollers. (2) Separately,
+  `overflow: hidden`/`clip` on `<html>`/`<body>` didn't block the
+  browser's own default focus-scroll-into-view behavior -- clicking
+  into a cell's code editor to focus it (CodeMirror) moved
+  `document.documentElement.scrollTop` by exactly the sticky header's
+  height regardless, confirmed reproducible with zero wheel/mouse
+  scroll involved at all (a single click, or even just pressing an
+  arrow key to move the cursor, triggered it). Neither `overflow: clip`
+  nor removing `position: sticky` from the header fixed this on their
+  own -- traced it to genuinely being the focus event's own
+  browser-driven scroll, not a scroll-chaining or sticky-positioning
+  interaction. Fixed with a `scroll` event listener (only registered
+  while locked) that snaps `document.documentElement.scrollTop` back
+  to `0` on every scroll event, regardless of what triggered it.
+
+  Verified in a real browser via Playwright: confirmed Cells view's
+  `body` overflow stays `visible` and scrolls freely (unaffected);
+  Slides view's `body`/`html` overflow is `clip` and a page-level wheel
+  scroll leaves `window.scrollY` at `0`; the header and slide toolbar
+  stay visible within the viewport; both the code editor and the
+  elements column are independently, genuinely scrollable
+  (`scrollHeight > clientHeight`, confirmed actual `scrollTop` movement
+  on a real wheel scroll, not just the DOM property); and the page
+  itself stays at `scrollY: 0` even after scrolling both of those
+  internal regions and clicking to focus the code editor. No backend
+  changes; frontend build/oxlint clean.
+
+- [ ] **29. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that

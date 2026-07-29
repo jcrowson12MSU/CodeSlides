@@ -658,6 +658,57 @@ body.cs-resizing {
   font-size: 1rem;
 }
 
+/* TODO.md #28: in Slides view, the screen itself must not move -- only a
+   cell's own code editor / elements column scrolls internally. Confirmed
+   scope with the user: the whole window (header, slide toolbar, slide
+   title) stays fixed, and *each* cell on a multi-cell slide gets its own
+   independently-scrollable height rather than the slide's cells sharing
+   one scroll region. `body.cs-slides-locked` (toggled in App.tsx,
+   scoped to Slides view only -- Cells view is completely untouched)
+   removes page-level scroll; `.cs-code-editor .cm-scroller` already
+   scrolls internally (TODO.md #7), so only `.cs-cell-side` (the
+   elements/output column, previously unbounded height) needed a
+   matching `max-height`/`overflow-y`. `vh`-based caps rather than a
+   precise "remaining space" calculation -- simpler, and conservative
+   enough in practice that the header/toolbar/title above it aren't
+   pushed off without their own scroll. */
+/* Both `html` and `body` need locking -- confirmed by hand that `body`
+   alone isn't enough: `<html>` is the actual document scrolling
+   element in this browser. `overflow: clip`, not `hidden` -- also
+   confirmed by hand that `hidden` alone wasn't enough either: clicking
+   into a cell's code editor (CodeMirror) to focus it triggers the
+   browser's own default focus-scroll-into-view behavior, which moved
+   `<html>`'s scroll position by exactly the sticky header's height
+   even with `overflow: hidden` set, since that's a programmatic
+   scroll driven by the focus event rather than a user-scroll `<html>`
+   is blocking. `overflow: clip` (unlike `hidden`) disables scrolling
+   unconditionally, including this programmatic case. */
+html.cs-slides-locked,
+body.cs-slides-locked {
+  overflow: clip;
+}
+
+.cs-slides-locked .cs-slide .cs-cell-code .cm-editor {
+  max-height: 55vh;
+}
+
+/* `overscroll-behavior: contain` on both scrollers stops scroll
+   chaining -- without it, a wheel scroll that reaches an inner
+   scroller's own limit (start/end of the code, or the elements column)
+   still propagates the remaining delta to the page underneath, moving
+   it despite `overflow: hidden` above; caught this by hand (the page
+   visibly shifted a few dozen pixels once an internal scroll bottomed
+   out) before adding this. */
+.cs-slides-locked .cs-slide .cs-cell-code .cm-scroller {
+  overscroll-behavior: contain;
+}
+
+.cs-slides-locked .cs-slide .cs-cell-side {
+  max-height: 55vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 /* TODO.md #22's edit button: rename the cell's own identity, add/remove
    attached elements. */
 .cs-edit-cell-toggle {
