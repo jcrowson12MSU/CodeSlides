@@ -1200,6 +1200,26 @@ reshape the plan below and are called out explicitly where they apply:
   than being compressed. No backend changes; frontend build/oxlint
   clean.
 
+  **Follow-up (same task): the user asked to remove the gray box
+  around a slide's cell.** `.cs-cell`'s `1px solid #ddd` border (base
+  rule, shared with Cells view) makes sense in Cells view, where a
+  deck can stack many cells and the border visually separates them --
+  but in Slides view there's only ever one cell per slide already set
+  apart by the slide itself, so the border just reads as unnecessary
+  boxed chrome, especially now that the cell fills the available
+  height (the follow-up immediately above) and its border runs the
+  full height of the screen. Added `border: none; border-radius: 0`
+  to the existing `.cs-slide .cs-cell` override (`App.css`, same rule
+  that already sets Slides-view-only padding), scoped narrowly enough
+  that Cells view keeps its border exactly as before.
+
+  Verified in a real browser via Playwright: confirmed `.cs-cell`'s
+  computed border in Slides view is `0px none` (was `1px solid
+  rgb(221, 221, 221)`) on both a two-cell and a single-cell slide;
+  confirmed Cells view's cell border is unchanged (`1px solid
+  rgb(221, 221, 221)`) -- no scoping leak. No backend changes; frontend
+  build/oxlint clean.
+
 - [ ] **33. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example

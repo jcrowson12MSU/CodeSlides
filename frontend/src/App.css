@@ -781,8 +781,15 @@ button.cs-add-cell-button {
   flex: 0 0 auto;
 }
 
+/* The user asked to remove the gray box around a slide's cell --
+   `.cs-cell`'s `1px solid #ddd` border made sense in the flat Cells
+   view, where it visually separates a stack of many cells, but reads
+   as unnecessary chrome in Slides view where there's only ever one
+   cell already set apart by the slide itself. */
 .cs-slide .cs-cell {
   padding: 1.25rem 1.5rem;
+  border: none;
+  border-radius: 0;
 }
 
 /* The user wants a slide's cell(s) to grow and fill whatever vertical
