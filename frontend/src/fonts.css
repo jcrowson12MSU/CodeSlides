@@ -15,9 +15,22 @@
   --cs-font-base: 0.85rem; /* the default UI text size: labels, popovers, editors, cell output, save status */
   --cs-font-md: 0.9rem; /* a step up from base: notes' rendered markdown body, slideshow toolbar */
   --cs-font-lg: 1rem; /* icon/remove buttons, Slides-view cell output */
-  --cs-font-xl: 1.15rem; /* notes heading, Slides-view body text size */
+  --cs-font-xl: 1.15rem; /* Slides-view body text size */
   --cs-font-2xl: 1.75rem; /* app title, collapsed Slides-view header */
   --cs-font-3xl: 2rem; /* slide title */
+
+  /* Notes markdown headings (.cs-notes-rendered h1..h6) -- each level
+     gets its own size, scaling down from h1 to h6, instead of every
+     level rendering identically. Independent of --cs-font-md (the
+     notes viewer's own non-heading body text) and --cs-font-xl (an
+     unrelated Slides-view body size) so resizing one heading level
+     doesn't drag either of those along with it. */
+  --cs-font-notes-h1: 1.15rem;
+  --cs-font-notes-h2: 1.05rem;
+  --cs-font-notes-h3: 1rem;
+  --cs-font-notes-h4: 0.95rem;
+  --cs-font-notes-h5: 0.9rem;
+  --cs-font-notes-h6: 0.85rem;
   --cs-font-code: 13px; /* Cells-view code editor's own base size --
                             CodeEditor.tsx's CodeMirror theme
                             (EditorView.theme()) reads this directly, since

@@ -567,8 +567,34 @@ body.cs-resizing {
      default heading sizes/margins (up to 2em with a matching margin)
      were designed for full-page reading, not a title sitting a few
      lines above a couple sentences of body text. */
-  font-size: var(--cs-font-xl);
   margin: 0 0 0.15rem;
+}
+
+/* Each level sized independently (fonts.css's --cs-font-notes-h1..h6) so
+   a markdown ## renders visibly smaller than a #, rather than every
+   heading level collapsing to one identical size. */
+.cs-notes-rendered h1 {
+  font-size: var(--cs-font-notes-h1);
+}
+
+.cs-notes-rendered h2 {
+  font-size: var(--cs-font-notes-h2);
+}
+
+.cs-notes-rendered h3 {
+  font-size: var(--cs-font-notes-h3);
+}
+
+.cs-notes-rendered h4 {
+  font-size: var(--cs-font-notes-h4);
+}
+
+.cs-notes-rendered h5 {
+  font-size: var(--cs-font-notes-h5);
+}
+
+.cs-notes-rendered h6 {
+  font-size: var(--cs-font-notes-h6);
 }
 
 .cs-notes-rendered :first-child {
