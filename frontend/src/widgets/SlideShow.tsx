@@ -11,6 +11,7 @@ export interface SlideMeta {
 
 export interface SlideShowProps {
   slides: SlideMeta[]
+  headerCollapsed: boolean
   cellMeta: Record<string, CellMeta>
   cellState: Record<string, CellState | undefined>
   elementValues: Record<string, Record<string, unknown>>
@@ -42,6 +43,7 @@ export interface SlideShowProps {
 // section 8).
 export function SlideShow({
   slides,
+  headerCollapsed,
   cellMeta,
   cellState,
   elementValues,
@@ -99,6 +101,7 @@ export function SlideShow({
 
   return (
     <div className="cs-slideshow">
+      {!headerCollapsed && (
       <div className="cs-slideshow-toolbar">
         <button type="button" onClick={() => setIndex((i) => Math.max(i - 1, 0))} disabled={atStart}>
           &larr; Prev
@@ -124,6 +127,7 @@ export function SlideShow({
           Reveal code
         </label>
       </div>
+      )}
 
       <div className="cs-slide">
         <h2 className="cs-slide-title">{slide.title}</h2>

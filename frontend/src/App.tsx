@@ -32,6 +32,20 @@ function initialViewMode(): ViewMode {
 function App() {
   const [deck, setDeck] = useState<DeckSummary | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode)
+  // Slides-view-only: collapses the entire header (title row + the
+  // Prev/Next/Reveal-code toolbar rendered inside SlideShow) down to just
+  // the toggle button itself, so presenting on a small/projected screen
+  // doesn't lose ~250px of vertical space to chrome the audience doesn't
+  // need to see. Prev/Next stay reachable while collapsed via the
+  // existing Cmd+Control+Left/Right shortcut (SlideShow.tsx's window-
+  // level listener doesn't depend on the toolbar being visible). Reset
+  // whenever leaving Slides view so it never affects the Cells layout and
+  // never surprises the user by starting collapsed next time they
+  // present.
+  const [headerCollapsed, setHeaderCollapsed] = useState(false)
+  useEffect(() => {
+    if (viewMode !== 'slides') setHeaderCollapsed(false)
+  }, [viewMode])
   // The header's "?" button (TODO.md #27, revised): the websocket
   // connection status it originally showed turned out not to matter day
   // to day (confirmed with the user), so it's now a real help popover
@@ -371,7 +385,20 @@ function App() {
   }
 
   return (
-    <main className="app">
+    <main className={`app ${viewMode === 'slides' && headerCollapsed ? 'cs-header-is-collapsed' : ''}`}>
+      {viewMode === 'slides' && (
+        <button
+          type="button"
+          className="cs-header-collapse-toggle"
+          aria-pressed={headerCollapsed}
+          aria-label={headerCollapsed ? 'Show header' : 'Hide header'}
+          title={headerCollapsed ? 'Show header' : 'Hide header'}
+          onClick={() => setHeaderCollapsed((prev) => !prev)}
+        >
+          {headerCollapsed ? '▾' : '▴'}
+        </button>
+      )}
+      {!(viewMode === 'slides' && headerCollapsed) && (
       <div className="cs-app-header">
         <h1 className="cs-app-title">CodeSlides</h1>
         <div className="cs-header-controls">
@@ -439,6 +466,7 @@ function App() {
           </div>
         </div>
       </div>
+      )}
       {viewMode === 'cells' && (
         <p className="cs-hint">Shift+Enter: run cell &middot; Mod+Shift+Enter: run all</p>
       )}
@@ -474,6 +502,7 @@ function App() {
       {deck && viewMode === 'slides' && (
         <SlideShow
           slides={deck.slides}
+          headerCollapsed={headerCollapsed}
           cellMeta={deck.cells}
           cellState={mergedCellState}
           elementValues={elementValues}

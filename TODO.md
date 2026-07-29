@@ -1023,7 +1023,57 @@ reshape the plan below and are called out explicitly where they apply:
   with how that row already behaved before this change. No backend
   changes; frontend build/oxlint clean.
 
-- [ ] **32. Write example decks for teaching scenarios**
+- [x] **32. Reduce the size of the Slides-view header.**
+  The user reported the header was too large in Slides view -- measured
+  at ~248px of title row + a separate Prev/Next/position/Reveal-code
+  toolbar row before any slide content appeared, nearly a third of an
+  800px-tall viewport. Discussed two shapes: merging the toolbar into
+  the existing header row (no interaction cost, but doesn't shrink
+  further) vs. a full collapse toggle including navigation (maximizes
+  space, but the user explicitly opted for this despite the extra
+  interaction, confirmed by AskUserQuestion). Implemented a
+  `headerCollapsed` state (`App.tsx`), Slides-view-only and reset to
+  expanded whenever `viewMode` leaves `'slides'` (so it never affects
+  Cells view and never surprises the user by starting collapsed next
+  time they present). A small fixed-position toggle button
+  (`.cs-header-collapse-toggle`, top-left, ▴/▾) hides `.cs-app-header`
+  entirely and passes `headerCollapsed` down as a new prop to
+  `SlideShow`, which conditionally hides its own
+  `.cs-slideshow-toolbar` (Prev/Next/position/Reveal-code) the same
+  way. `position: fixed` (not `sticky`, unlike the header itself) so
+  the toggle stays reachable at a fixed screen position regardless of
+  scroll, even though `.cs-app-header` -- what it would otherwise be
+  positioned relative to -- doesn't render at all while collapsed.
+  Prev/Next stay fully reachable while collapsed via the pre-existing
+  Cmd+Control+Left/Right shortcut (TODO.md #19), which is a
+  window-level listener independent of the toolbar's visibility.
+  Reveal-code has no shortcut and is only reachable by expanding
+  briefly -- acceptable since it's a per-slide authoring toggle, not
+  something needed mid-presentation. Also trimmed `.app`'s own 4rem top
+  margin down to 1rem while collapsed (`.cs-header-is-collapsed`) so
+  that space gets reclaimed too instead of becoming dead whitespace
+  above the slide, and added top margin to `.cs-slide-title`
+  specifically while collapsed so the title text has guaranteed
+  clearance from the corner toggle rather than coincidentally landing
+  flush against it.
+
+  Verified in a real browser via Playwright: measured the slide
+  content's top offset before/after collapsing (248px -> 54px, ~78%
+  reduction); confirmed the toggle is entirely absent in Cells view
+  (Slides-view-only feature); confirmed collapsing removes both
+  `.cs-app-header` and `.cs-slideshow-toolbar` from the DOM while the
+  toggle itself stays visible and its icon flips; confirmed
+  Cmd+Control+Right still advances the slide (title changed "Setup" ->
+  "Image Preview") while fully collapsed; confirmed re-clicking the
+  toggle restores both rows; confirmed switching to Cells view and back
+  to Slides resets the collapse (never starts collapsed unexpectedly);
+  confirmed the toggle and slide title no longer visually overlap;
+  confirmed item 28's scroll lock (wheel scroll stays pinned at
+  `scrollY: 0`) is unaffected by header state; and confirmed Cells view
+  is pixel-identical to before (no toggle, no layout change). No
+  backend changes; frontend build/oxlint clean.
+
+- [ ] **33. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
   using a slider widget, a turtle-graphics drawing lesson, a deck that
@@ -1032,7 +1082,7 @@ reshape the plan below and are called out explicitly where they apply:
   elements — to validate the tool end-to-end and serve as templates for
   instructors.
 
-- [ ] **33. Add tests for kernel & dependency graph**
+- [ ] **34. Add tests for kernel & dependency graph**
   Unit tests for `ast`-based variable extraction, dependency graph
   construction/cycle detection, minimal-rerun-set computation, and
   integration tests that run a sample deck through the kernel and assert
@@ -1040,9 +1090,9 @@ reshape the plan below and are called out explicitly where they apply:
   specifically clones a cell/editor instance and asserts the two instances'
   namespaces and outputs never cross-contaminate.
 
-- [ ] **34. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
+- [ ] **35. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
 
-- [ ] **35. Polish, README, and packaging**
+- [ ] **36. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
   `pip install` (editable) / eventual PyPI packaging.
