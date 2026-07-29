@@ -1,3 +1,5 @@
+@import './fonts.css';
+
 .app {
   width: 100%;
   margin: 4rem 0;
@@ -61,7 +63,7 @@
    was. */
 .cs-slides-header-expanded .cs-app-title {
   margin: 0.4rem 0;
-  font-size: 1.75rem;
+  font-size: var(--cs-font-2xl);
 }
 
 /* Groups the expanded header's collapse toggle with the title so
@@ -129,7 +131,7 @@
   background: white;
   border-radius: 4px;
   padding: 0.3rem 0.8rem;
-  font-size: 0.85rem;
+  font-size: var(--cs-font-base);
   cursor: pointer;
 }
 
@@ -181,12 +183,12 @@ button.cs-save-button {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
   padding: 0.75rem 1rem;
   width: 260px;
-  font-size: 0.85rem;
+  font-size: var(--cs-font-base);
 }
 
 .cs-help-popover h3 {
   margin: 0 0 0.5rem;
-  font-size: 0.85rem;
+  font-size: var(--cs-font-base);
   font-weight: 600;
 }
 
@@ -209,7 +211,7 @@ button.cs-save-button {
 }
 
 .cs-hint {
-  font-size: 0.85rem;
+  font-size: var(--cs-font-base);
   color: #888;
 }
 
@@ -238,7 +240,7 @@ button.cs-save-button {
   border: none;
   background: none;
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: var(--cs-font-tight);
   color: #888;
   padding: 0 0.15rem;
   line-height: 1;
@@ -247,7 +249,7 @@ button.cs-save-button {
 
 .cs-collapsed-preview {
   font-family: ui-monospace, monospace;
-  font-size: 0.8rem;
+  font-size: var(--cs-font-tight);
   color: #999;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -255,7 +257,7 @@ button.cs-save-button {
 }
 
 .cs-status {
-  font-size: 0.8rem;
+  font-size: var(--cs-font-tight);
   font-weight: normal;
   color: #666;
 }
@@ -270,7 +272,7 @@ button.cs-save-button {
 }
 
 .cs-badge-static {
-  font-size: 0.75rem;
+  font-size: var(--cs-font-sm);
   color: #888;
   border: 1px solid #ccc;
   border-radius: 3px;
@@ -423,7 +425,7 @@ body.cs-resizing {
 
 .cs-element-label {
   min-width: 6rem;
-  font-size: 0.85rem;
+  font-size: var(--cs-font-base);
   color: #555;
 }
 
@@ -432,7 +434,7 @@ body.cs-resizing {
   border-radius: 4px;
   padding: 0.5rem;
   margin: 0;
-  font-size: 0.85rem;
+  font-size: var(--cs-font-base);
   overflow-x: auto;
   white-space: pre-wrap;
 }
@@ -463,7 +465,7 @@ body.cs-resizing {
 
 .cs-cell-output-dataframe table {
   border-collapse: collapse;
-  font-size: 0.85rem;
+  font-size: var(--cs-font-base);
   width: 100%;
 }
 
@@ -484,7 +486,7 @@ body.cs-resizing {
 }
 
 .cs-element-empty .cs-viewer-placeholder {
-  font-size: 0.85rem;
+  font-size: var(--cs-font-base);
   color: #999;
   font-style: italic;
 }
@@ -530,7 +532,7 @@ body.cs-resizing {
 }
 
 .cs-notes-toggle {
-  font-size: 0.75rem;
+  font-size: var(--cs-font-sm);
   border: 1px solid #ccc;
   border-radius: 3px;
   background: white;
@@ -542,7 +544,7 @@ body.cs-resizing {
   width: 100%;
   min-height: 80px;
   font-family: ui-monospace, monospace;
-  font-size: 0.85rem;
+  font-size: var(--cs-font-base);
   border: 1px solid #ddd;
   border-radius: 4px;
   padding: 0.4rem;
@@ -551,7 +553,7 @@ body.cs-resizing {
 }
 
 .cs-notes-rendered {
-  font-size: 0.9rem;
+  font-size: var(--cs-font-md);
   line-height: 1.4;
 }
 
@@ -565,7 +567,7 @@ body.cs-resizing {
      default heading sizes/margins (up to 2em with a matching margin)
      were designed for full-page reading, not a title sitting a few
      lines above a couple sentences of body text. */
-  font-size: 1.15rem;
+  font-size: var(--cs-font-xl);
   margin: 0 0 0.15rem;
 }
 
@@ -591,7 +593,7 @@ body.cs-resizing {
 }
 
 .cs-tests-badge {
-  font-size: 0.75rem;
+  font-size: var(--cs-font-sm);
   font-weight: 600;
   border-radius: 3px;
   padding: 0.1rem 0.5rem;
@@ -621,7 +623,7 @@ body.cs-resizing {
   margin: 0.35rem 0 0;
   padding: 0.5rem;
   border-radius: 4px;
-  font-size: 0.8rem;
+  font-size: var(--cs-font-tight);
   white-space: pre-wrap;
   overflow-x: auto;
 }
@@ -651,7 +653,7 @@ body.cs-resizing {
   border: none;
   background: none;
   cursor: pointer;
-  font-size: 0.75rem;
+  font-size: var(--cs-font-sm);
   color: #aaa;
   padding: 0.1rem 0.2rem;
   line-height: 1;
@@ -663,7 +665,7 @@ body.cs-resizing {
 }
 
 .cs-element-minimized {
-  font-size: 0.8rem;
+  font-size: var(--cs-font-tight);
   color: #999;
 }
 
@@ -672,7 +674,7 @@ body.cs-resizing {
 }
 
 .cs-save-status {
-  font-size: 0.85rem;
+  font-size: var(--cs-font-base);
   margin-left: 0.5rem;
 }
 
@@ -712,7 +714,7 @@ button.cs-add-cell-button {
   padding: 2px;
   background: #f2f2f2;
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: var(--cs-font-base);
   line-height: 1;
 }
 
@@ -755,7 +757,7 @@ button.cs-add-cell-button {
   background: white;
   border-radius: 4px;
   padding: 0.4rem 0.9rem;
-  font-size: 0.9rem;
+  font-size: var(--cs-font-md);
   cursor: pointer;
 }
 
@@ -765,7 +767,7 @@ button.cs-add-cell-button {
 }
 
 .cs-slideshow-position {
-  font-size: 0.9rem;
+  font-size: var(--cs-font-md);
   color: #666;
   font-variant-numeric: tabular-nums;
 }
@@ -775,7 +777,7 @@ button.cs-add-cell-button {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.85rem;
+  font-size: var(--cs-font-base);
   color: #555;
   cursor: pointer;
 }
@@ -784,13 +786,13 @@ button.cs-add-cell-button {
    flat Cells edit view, matching ARCHITECTURE.md section 2's "built for
    live teaching first" principle. */
 .cs-slide {
-  font-size: 1.15rem;
+  font-size: var(--cs-font-xl);
   display: flex;
   flex-direction: column;
 }
 
 .cs-slide-title {
-  font-size: 2rem;
+  font-size: var(--cs-font-3xl);
   /* TODO.md #34 follow-up: this margin, `.cs-cell`'s own top padding, and
      `.cs-cell-body`'s top margin (further down) used to separate the
      title from the *header row* that sat directly under it -- now that
@@ -873,11 +875,11 @@ button.cs-add-cell-button {
    further down -- this rule now only needs the larger presentation
    font size. */
 .cs-slide .cs-code-editor .cm-editor {
-  font-size: 16px;
+  font-size: var(--cs-font-code-slides);
 }
 
 .cs-slide .cs-cell-output {
-  font-size: 1rem;
+  font-size: var(--cs-font-lg);
 }
 
 /* TODO.md #28: in Slides view, the screen itself must not move -- only a
@@ -963,7 +965,7 @@ body.cs-slides-locked {
   border-radius: 50%;
   background: #fff;
   color: #666;
-  font-size: 0.7rem;
+  font-size: var(--cs-font-xs);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -986,7 +988,7 @@ body.cs-slides-locked {
   border-radius: 3px;
   background: none;
   cursor: pointer;
-  font-size: 0.75rem;
+  font-size: var(--cs-font-sm);
   color: #555;
   padding: 0.05rem 0.5rem;
   margin-left: auto;
@@ -1002,7 +1004,7 @@ body.cs-slides-locked {
   background: #fafafa;
   padding: 0.75rem 1rem;
   margin: 0.5rem 0;
-  font-size: 0.85rem;
+  font-size: var(--cs-font-base);
 }
 
 .cs-edit-cell-error {
@@ -1073,7 +1075,7 @@ body.cs-slides-locked {
   background: none;
   color: #c0392b;
   cursor: pointer;
-  font-size: 1rem;
+  font-size: var(--cs-font-lg);
   line-height: 1;
   padding: 0 0.3rem;
 }
@@ -1088,7 +1090,7 @@ body.cs-slides-locked {
   border-radius: 3px;
   background: none;
   cursor: pointer;
-  font-size: 0.75rem;
+  font-size: var(--cs-font-sm);
   line-height: 1;
   padding: 0.1rem 0.3rem;
   color: #555;
@@ -1105,7 +1107,7 @@ body.cs-slides-locked {
   gap: 0.4rem;
   margin: 0.25rem 0 0.4rem 1.6rem;
   font-family: system-ui, sans-serif;
-  font-size: 0.8rem;
+  font-size: var(--cs-font-tight);
 }
 
 .cs-edit-cell-iframe-src label {

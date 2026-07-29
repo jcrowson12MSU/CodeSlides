@@ -134,7 +134,14 @@ export function CodeEditor({ source, onRunCell, onRunAll, readOnly = false }: Co
       ...(readOnly ? [] : [history(), indentOnInput(), closeBrackets()]),
       EditorView.editable.of(!readOnly),
       EditorView.theme({
-        '&': { fontSize: '13px', border: '1px solid #ddd', borderRadius: '4px' },
+        // fontSize reads the shared --cs-font-code custom property
+        // (fonts.css) rather than a literal value -- CodeMirror's own
+        // theme() just emits this as ordinary CSS, so var() works here
+        // exactly like it does in App.css. The Slides-view-only override
+        // (--cs-font-code-slides, larger for presenting) is applied
+        // separately in App.css (`.cs-slide .cs-code-editor .cm-editor`),
+        // not here.
+        '&': { fontSize: 'var(--cs-font-code)', border: '1px solid #ddd', borderRadius: '4px' },
         '.cm-content': { fontFamily: 'ui-monospace, monospace', textAlign: 'left' },
         '.cm-line': { textAlign: 'left' },
       }),

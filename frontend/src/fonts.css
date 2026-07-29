@@ -1,0 +1,32 @@
+/* Central font-size configuration. Every font-size in App.css (and the
+   Cells-view CodeMirror theme in CodeEditor.tsx, which reads
+   --cs-font-code directly) references one of these instead of a literal
+   value, so the whole app's type scale can be tuned from one place
+   without hunting down each individual rule.
+
+   Named by role, not raw size, since the same numeric value often
+   serves unrelated purposes (e.g. --cs-font-base covers editors, output,
+   and popovers alike) -- a future resize of one role's rule shouldn't
+   require renaming the variable everywhere else it happens to match. */
+:root {
+  --cs-font-xs: 0.7rem; /* smallest: the round cell-index badge */
+  --cs-font-sm: 0.75rem; /* small buttons/toggles/badges (notes edit/preview, minimize, tests badge) */
+  --cs-font-tight: 0.8rem; /* status text, collapsed-cell preview, minimized element label */
+  --cs-font-base: 0.85rem; /* the default UI text size: labels, popovers, editors, cell output, save status */
+  --cs-font-md: 0.9rem; /* a step up from base: notes' rendered markdown body, slideshow toolbar */
+  --cs-font-lg: 1rem; /* icon/remove buttons, Slides-view cell output */
+  --cs-font-xl: 1.15rem; /* notes heading, Slides-view body text size */
+  --cs-font-2xl: 1.75rem; /* app title, collapsed Slides-view header */
+  --cs-font-3xl: 2rem; /* slide title */
+  --cs-font-code: 13px; /* Cells-view code editor's own base size --
+                            CodeEditor.tsx's CodeMirror theme
+                            (EditorView.theme()) reads this directly, since
+                            it emits literal CSS and a var() reference
+                            works there too. Kept in px like the monospace
+                            editor's own sizing convention, rather than
+                            rem. */
+  --cs-font-code-slides: 16px; /* Slides-view override of the same editor,
+                                   larger for presenting/reading from a
+                                   distance (`.cs-slide .cs-code-editor
+                                   .cm-editor`). */
+}
