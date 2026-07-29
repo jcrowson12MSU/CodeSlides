@@ -12,6 +12,7 @@ export interface SlideMeta {
 export interface SlideShowProps {
   slides: SlideMeta[]
   headerCollapsed: boolean
+  onActiveSlideChange: (title: string) => void
   cellMeta: Record<string, CellMeta>
   cellState: Record<string, CellState | undefined>
   elementValues: Record<string, Record<string, unknown>>
@@ -44,6 +45,7 @@ export interface SlideShowProps {
 export function SlideShow({
   slides,
   headerCollapsed,
+  onActiveSlideChange,
   cellMeta,
   cellState,
   elementValues,
@@ -71,6 +73,14 @@ export function SlideShow({
   const atStart = index === 0
   const atEnd = index === slides.length - 1
   const revealed = revealOverrides[index] ?? slide?.reveal_code ?? false
+
+  // App.tsx renders the current slide's title in its own header row while
+  // the header is collapsed (SlideShow's own `.cs-slide-title` is hidden
+  // in that state, further down) -- this is how it finds out what that
+  // title is, since slide navigation/index is owned here, not in App.
+  useEffect(() => {
+    onActiveSlideChange(slide?.title ?? '')
+  }, [slide, onActiveSlideChange])
 
   useEffect(() => {
     // Cmd+Control+Left/Right only (TODO.md #19) -- deliberately *not*
@@ -130,7 +140,7 @@ export function SlideShow({
       )}
 
       <div className="cs-slide">
-        <h2 className="cs-slide-title">{slide.title}</h2>
+        {!headerCollapsed && <h2 className="cs-slide-title">{slide.title}</h2>}
         {slide.cells.map((cellId) => {
           const meta = cellMeta[cellId]
           if (!meta) return null

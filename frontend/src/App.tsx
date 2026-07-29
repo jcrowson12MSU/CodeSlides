@@ -46,6 +46,11 @@ function App() {
   useEffect(() => {
     if (viewMode !== 'slides') setHeaderCollapsed(false)
   }, [viewMode])
+  // The current slide's title, reported up by SlideShow (which owns slide
+  // navigation) so the header row can show it in place of the collapsed
+  // title row below -- see the header's own render for why it needs to
+  // live here rather than just inside SlideShow.
+  const [activeSlideTitle, setActiveSlideTitle] = useState('')
   // The header's "?" button (TODO.md #27, revised): the websocket
   // connection status it originally showed turned out not to matter day
   // to day (confirmed with the user), so it's now a real help popover
@@ -384,23 +389,60 @@ function App() {
     }
   }
 
+  const slidesHeaderCollapsed = viewMode === 'slides' && headerCollapsed
+
   return (
-    <main className={`app ${viewMode === 'slides' && headerCollapsed ? 'cs-header-is-collapsed' : ''}`}>
-      {viewMode === 'slides' && (
-        <button
-          type="button"
-          className="cs-header-collapse-toggle"
-          aria-pressed={headerCollapsed}
-          aria-label={headerCollapsed ? 'Show header' : 'Hide header'}
-          title={headerCollapsed ? 'Show header' : 'Hide header'}
-          onClick={() => setHeaderCollapsed((prev) => !prev)}
-        >
-          {headerCollapsed ? '▾' : '▴'}
-        </button>
+    <main className={`app ${slidesHeaderCollapsed ? 'cs-header-is-collapsed' : ''}`}>
+      {slidesHeaderCollapsed && (
+        <div className="cs-app-header cs-app-header-collapsed">
+          <button
+            type="button"
+            className="cs-header-collapse-toggle"
+            aria-pressed={headerCollapsed}
+            aria-label="Show header"
+            title="Show header"
+            onClick={() => setHeaderCollapsed(false)}
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path
+                d="M4 6l4 4 4-4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+          <h2 className="cs-slide-title cs-slide-title-in-header">{activeSlideTitle}</h2>
+        </div>
       )}
-      {!(viewMode === 'slides' && headerCollapsed) && (
+      {!slidesHeaderCollapsed && (
       <div className="cs-app-header">
-        <h1 className="cs-app-title">CodeSlides</h1>
+        <div className="cs-app-title-group">
+          {viewMode === 'slides' && (
+            <button
+              type="button"
+              className="cs-header-collapse-toggle"
+              aria-pressed={headerCollapsed}
+              aria-label="Hide header"
+              title="Hide header"
+              onClick={() => setHeaderCollapsed(true)}
+            >
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                <path
+                  d="M4 10l4-4 4 4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          )}
+          <h1 className="cs-app-title">CodeSlides</h1>
+        </div>
         <div className="cs-header-controls">
           {deck && (
             <>
@@ -503,6 +545,7 @@ function App() {
         <SlideShow
           slides={deck.slides}
           headerCollapsed={headerCollapsed}
+          onActiveSlideChange={setActiveSlideTitle}
           cellMeta={deck.cells}
           cellState={mergedCellState}
           elementValues={elementValues}

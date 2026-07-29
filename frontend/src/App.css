@@ -15,14 +15,6 @@
   margin-top: 1rem;
 }
 
-/* Clears the fixed-position collapse toggle in the corner -- without
-   this the slide title's text can render flush against/under it,
-   since both the toggle and `.app`'s own left padding otherwise line
-   up at exactly the same x-offset. */
-.cs-header-is-collapsed .cs-slide-title {
-  margin-top: 2rem;
-}
-
 /* TODO.md #24/#26: the title stays locked to the top-left of the screen
    in both views (Cells and Slides share this same top-level layout) --
    previously scrolled away with the rest of the page the moment a deck
@@ -49,19 +41,25 @@
   margin: 32px 0;
 }
 
-/* Slides-view-only header collapse toggle (TODO.md follow-up): fixed
-   (not sticky, unlike `.cs-app-header` itself) so it stays reachable at
-   the same spot regardless of scroll position even while collapsed --
-   `.cs-app-header` doesn't render at all in that state, so there's
-   nothing for a sticky toggle to be positioned relative to. Deliberately
-   plain/small (not styled like the header buttons) since it's meant to
-   fade into the corner rather than compete with slide content for
-   attention. */
+/* Groups the expanded header's collapse toggle with the title so
+   `.cs-app-header`'s `justify-content: space-between` treats them as one
+   unit on the left, opposite `.cs-header-controls` on the right --
+   without this wrapper the toggle, title, and controls would all end up
+   evenly spaced across the row as three separate items instead. */
+.cs-app-title-group {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* Slides-view-only header collapse toggle: a plain round icon button,
+   deliberately not styled like the header's action buttons since it's
+   secondary chrome, not a deck-level action. Lives inline in the header
+   row (both expanded and collapsed variants below) rather than fixed-
+   position, so it scrolls/sticks with whichever row it's currently
+   part of instead of needing its own independent positioning. */
 .cs-header-collapse-toggle {
-  position: fixed;
-  top: 0.75rem;
-  left: 0.75rem;
-  z-index: 20;
+  flex: 0 0 auto;
   width: 1.75rem;
   height: 1.75rem;
   padding: 0;
@@ -69,13 +67,32 @@
   border-radius: 50%;
   background: #fff;
   color: #666;
-  font-size: 0.9rem;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
 }
 
 .cs-header-collapse-toggle:hover {
   background: #f5f5f5;
+}
+
+/* The collapsed variant of the header: instead of disappearing entirely,
+   it shrinks to just the toggle plus the current slide's title (reported
+   up from SlideShow via onActiveSlideChange, since slide navigation/index
+   is owned there) -- reclaiming almost all the vertical space the full
+   header/toolbar took while still keeping the audience oriented on which
+   slide they're looking at. Reuses `.cs-slide-title`'s font size so the
+   title reads the same whether it's here or in its normal spot inside
+   `.cs-slide`, just remove that copy's own top/bottom margin since this
+   row already centers it via flex. */
+.cs-app-header-collapsed {
+  justify-content: flex-start;
+  gap: 0.75rem;
+}
+
+.cs-slide-title-in-header {
+  margin: 0;
 }
 
 .cs-header-controls {

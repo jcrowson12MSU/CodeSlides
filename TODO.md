@@ -1073,6 +1073,46 @@ reshape the plan below and are called out explicitly where they apply:
   is pixel-identical to before (no toggle, no layout change). No
   backend changes; frontend build/oxlint clean.
 
+  **Follow-up (same task): the user asked for the slide title to move
+  into the collapsed header (instead of just disappearing along with
+  the rest of the chrome) and for a real icon on the toggle instead of
+  the ▴/▾ glyphs.** Collapsing previously hid everything, including the
+  slide title, leaving the audience with no on-screen indication of
+  which slide they were looking at unless they expanded the header
+  again. Restructured the collapsed state to be a second, much
+  shorter header row instead of no row at all: the toggle plus the
+  current slide's title, left-aligned as one compact unit. Since slide
+  navigation/index state lives in `SlideShow`, not `App` (which owns
+  the header), added an `onActiveSlideChange` callback prop --
+  `SlideShow` reports the active slide's title up to `App` on mount
+  and on every navigation, and `App` stores it in a new
+  `activeSlideTitle` state used only while collapsed. Hid `SlideShow`'s
+  own in-slide `<h2 className="cs-slide-title">` while collapsed so
+  the title isn't rendered twice. Replaced the ▴/▾ text glyphs with an
+  inline SVG chevron (up when expanded, down when collapsed) matching
+  the weight/style of the rest of the app's iconography rather than
+  relying on a font's glyph rendering. Also wrapped the expanded
+  header's toggle+title in a new `.cs-app-title-group` so
+  `.cs-app-header`'s `justify-content: space-between` still treats
+  them as one unit on the left (opposite the header controls on the
+  right) instead of spacing three separate items evenly across the row.
+
+  Verified in a real browser via Playwright: confirmed the title
+  is absent from the header and only in `.cs-slide` while expanded;
+  confirmed collapsing moves it into the header, positioned to the
+  right of the toggle, and removes the in-slide copy (no duplicate);
+  confirmed navigating slides while collapsed updates the header title
+  live ("Setup" -> "Image Preview"); confirmed the toggle's icon is an
+  SVG chevron that flips direction (down arrow when collapsed, up when
+  expanded) rather than the old text glyphs; confirmed the collapsed
+  row still reclaims the large majority of the vertical space the full
+  header took (248px -> 78px before slide content, vs. 54px when the
+  title disappeared entirely -- the small increase is the mini-header
+  row itself, expected and correct); confirmed item 28's scroll lock
+  and the Cells-view-unaffected/reset-on-view-switch behavior from the
+  original writeup above still hold. No backend changes; frontend
+  build/oxlint clean.
+
 - [ ] **33. Write example decks for teaching scenarios**
   Author example code-slide decks demonstrating typical intro-programming
   lessons: variables & control flow, functions, a small data-viz example
