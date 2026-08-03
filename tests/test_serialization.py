@@ -1,3 +1,5 @@
+import ast
+
 import pytest
 
 from codeslides import ui
@@ -13,8 +15,10 @@ from codeslides.serialization import (
     new_cell_name,
     reattach_decorator,
     rebuild_cell_source,
+    remove_cell,
     remove_element,
     rename_cell,
+    reorder_cells,
     reorder_elements,
     save_edits,
     set_element_config,
@@ -471,6 +475,110 @@ def test_rename_cell_raises_if_the_old_name_does_not_exist(deck_file):
 def test_rename_cell_raises_if_the_new_name_already_exists(deck_file):
     with pytest.raises(SaveConflictError):
         rename_cell(str(deck_file), "live_demo", "setup")
+
+
+def test_remove_cell_deletes_the_cell_entirely(deck_file):
+    remove_cell(str(deck_file), "live_demo")
+
+    deck = load_deck(str(deck_file))
+    assert "live_demo" not in deck.cells
+    assert "setup" in deck.cells
+    assert "live_demo" not in deck_file.read_text()
+
+
+def test_remove_cell_preserves_the_remaining_cells_body(deck_file):
+    remove_cell(str(deck_file), "live_demo")
+
+    deck = load_deck(str(deck_file))
+    assert "base = 5" in deck.cells["setup"].source
+    # untouched: the module docstring and setup's own comment
+    text = deck_file.read_text()
+    assert "A tiny demo deck with a comment worth preserving" in text
+    assert "a comment that must survive untouched" in text
+
+
+def test_remove_cell_cascades_out_of_slide_references(deck_file):
+    remove_cell(str(deck_file), "live_demo")
+
+    deck = load_deck(str(deck_file))
+    assert deck.slides[0].cell_names == []
+    assert "live_demo" not in deck_file.read_text()
+
+
+def test_remove_cell_leaves_no_stray_blank_lines(deck_file):
+    remove_cell(str(deck_file), "live_demo")
+
+    text = deck_file.read_text()
+    assert "\n\n\n\n" not in text
+    # still parses cleanly
+    ast.parse(text)
+
+
+def test_remove_cell_raises_if_the_name_does_not_exist(deck_file):
+    with pytest.raises(SaveConflictError):
+        remove_cell(str(deck_file), "does_not_exist")
+
+
+def test_remove_cell_of_the_first_cell_leaves_the_preamble_intact(deck_file):
+    remove_cell(str(deck_file), "setup")
+
+    deck = load_deck(str(deck_file))
+    assert "setup" not in deck.cells
+    assert "live_demo" in deck.cells
+    text = deck_file.read_text()
+    assert "from codeslides import App, ui" in text
+    assert "app = App()" in text
+
+
+def test_reorder_cells_changes_the_files_own_definition_order(deck_file):
+    reorder_cells(str(deck_file), ["live_demo", "setup"])
+
+    text = deck_file.read_text()
+    assert text.index("def live_demo") < text.index("def setup")
+    # each cell's own body is byte-identical, just relocated
+    deck = load_deck(str(deck_file))
+    assert "base = 5" in deck.cells["setup"].source
+    assert "result = base * speed" in deck.cells["live_demo"].source
+
+
+def test_reorder_cells_preserves_content_before_the_first_and_after_the_last_block(deck_file):
+    reorder_cells(str(deck_file), ["live_demo", "setup"])
+
+    text = deck_file.read_text()
+    assert "A tiny demo deck with a comment worth preserving" in text
+    assert '@app.slide("Live Coding"' in text
+    # the slide (after the last cell block) still comes after both cells
+    assert text.index("def setup") < text.index("@app.slide")
+
+
+def test_reorder_cells_raises_if_cell_order_is_not_a_permutation(deck_file):
+    with pytest.raises(SaveConflictError):
+        reorder_cells(str(deck_file), ["live_demo"])
+    with pytest.raises(SaveConflictError):
+        reorder_cells(str(deck_file), ["live_demo", "setup", "does_not_exist"])
+
+
+def test_cell_line_spans_excludes_app_slide_functions():
+    """Regression test: caught by hand while testing `remove_cell`/
+    `reorder_cells` (both use every key in `_cell_line_spans`' return
+    value, unlike `rename_cell`/`append_cell`, which only ever look up
+    one already-known cell name) -- an `@app.slide(...)`-decorated
+    function is a perfectly ordinary top-level `FunctionDef`, same as
+    an `@app.cell(...)`-decorated one, so a naive "every top-level
+    function" scan misidentified a slide as a cell, and `reorder_cells`
+    then rejected the deck_file fixture's own valid permutation because
+    it demanded `slide_1` be included in `cell_order` too."""
+    from codeslides.serialization import _cell_line_spans
+
+    src = (
+        "from codeslides import App, ui\n\napp = App()\n\n"
+        "@app.cell\ndef setup():\n    base = 5\n    return base\n\n"
+        '@app.slide("Live Coding", cells=["setup"])\n'
+        "def slide_1():\n"
+        '    """Notes."""\n'
+    )
+    spans = _cell_line_spans(src)
+    assert set(spans) == {"setup"}
 
 
 def test_add_element_appends_to_an_existing_elements_list(deck_file):

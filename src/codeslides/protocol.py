@@ -155,6 +155,32 @@ class RenameCell:
 
 
 @dataclass
+class RemoveCell:
+    """Delete a cell entirely (TODO.md #54 -- "cells can be deleted and
+    rearranged"), on disk, immediately -- same write-immediately
+    precedent as `add_cell`/`rename_cell` (see `kernel.Kernel.remove_cell`'s
+    docstring): there's no staged/unsaved delete state."""
+
+    type: ClassVar[str] = "remove_cell"
+    session_id: str
+    cell_id: str
+
+
+@dataclass
+class ReorderCells:
+    """Reorder every cell in the deck to match `cell_order` exactly
+    (TODO.md #54), on disk, immediately -- `cell_order` must be a
+    permutation of the deck's current cell names, same "frontend only
+    ever hands back a full permutation, built from swapping two
+    adjacent entries" shape as `ReorderElements`, just at the whole-
+    deck level instead of within one cell's own element list."""
+
+    type: ClassVar[str] = "reorder_cells"
+    session_id: str
+    cell_order: list[str]
+
+
+@dataclass
 class AddElement:
     """Add a new element to an existing cell (TODO.md #22's element
     picker). `kind`/`config` mirror `deck.Element` exactly (config is
@@ -311,6 +337,29 @@ class CellRenamed:
 
 
 @dataclass
+class CellRemoved:
+    """Acknowledges a successful `remove_cell`: just the deleted cell's
+    id, so the client can drop it from local deck/cell-state maps (same
+    "here's what to delete" role `CellRenamed.old_cell_id` already
+    plays, but this cell has no replacement to splice back in)."""
+
+    type: ClassVar[str] = "cell_removed"
+    session_id: str
+    cell_id: str
+
+
+@dataclass
+class CellsReordered:
+    """Acknowledges a successful `reorder_cells`: the deck's full new
+    cell-name order, so the client can re-render its cell list in that
+    order without needing a full `/api/deck` refetch."""
+
+    type: ClassVar[str] = "cells_reordered"
+    session_id: str
+    cell_order: list[str]
+
+
+@dataclass
 class ElementAdded:
     """Acknowledges a successful `add_element`: the owning cell's full,
     updated static metadata (same shape as `CellAdded`), so the client
@@ -400,6 +449,8 @@ ClientMessage = (
     | SaveDeck
     | AddCell
     | RenameCell
+    | RemoveCell
+    | ReorderCells
     | AddElement
     | RemoveElement
     | ReorderElements
@@ -415,6 +466,8 @@ ServerMessage = (
     | DeckSaved
     | CellAdded
     | CellRenamed
+    | CellRemoved
+    | CellsReordered
     | ElementAdded
     | ElementRemoved
     | ElementsReordered
@@ -435,6 +488,8 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
         SaveDeck,
         AddCell,
         RenameCell,
+        RemoveCell,
+        ReorderCells,
         AddElement,
         RemoveElement,
         ReorderElements,

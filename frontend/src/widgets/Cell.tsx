@@ -79,6 +79,20 @@ export interface CellProps {
    * was rejected (e.g. renaming a cell another cell calls directly by
    * name) -- shown inline in the edit panel. */
   editError?: string
+  /** TODO.md #54: delete this cell entirely, and move it up/down in the
+   * deck's own cell order (not to be confused with `onReorderElements`,
+   * which reorders one cell's own elements). Both write to the deck's
+   * .py file immediately, same precedent as every other edit-panel
+   * action. Omitted (rather than always rendered, disabled) in
+   * `SlideShow.tsx`'s own use of `Cell` -- a slide already groups
+   * exactly one cell under its own title/prev-next navigation, so
+   * whole-deck cell position isn't a concept that view exposes at all;
+   * only the flat "Cells" view (`App.tsx`) passes these. */
+  onDeleteCell?: () => void
+  onMoveCellUp?: () => void
+  onMoveCellDown?: () => void
+  isFirstCell?: boolean
+  isLastCell?: boolean
 }
 
 function firstLine(source: string): string {
@@ -120,6 +134,11 @@ export function Cell({
   onReorderElements,
   onSetElementConfig,
   editError,
+  onDeleteCell,
+  onMoveCellUp,
+  onMoveCellDown,
+  isFirstCell = false,
+  isLastCell = false,
 }: CellProps) {
   const [editing, setEditing] = useState(false)
   // The code/elements split is per-cell, kept as local component state
@@ -192,6 +211,40 @@ export function Cell({
               aria-label={editing ? `Close ${cellId}'s edit panel` : `Edit ${cellId}`}
             >
               {editing ? 'Close' : 'Edit'}
+            </button>
+          )}
+          {!collapsed && onMoveCellUp && onMoveCellDown && (
+            <div className="cs-cell-reorder">
+              <button
+                type="button"
+                aria-label={`Move ${cellId} up`}
+                disabled={isFirstCell}
+                onClick={onMoveCellUp}
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                aria-label={`Move ${cellId} down`}
+                disabled={isLastCell}
+                onClick={onMoveCellDown}
+              >
+                ↓
+              </button>
+            </div>
+          )}
+          {!collapsed && onDeleteCell && (
+            <button
+              type="button"
+              className="cs-delete-cell-button"
+              aria-label={`Delete ${cellId}`}
+              onClick={() => {
+                if (window.confirm(`Delete cell "${cellId}"? This cannot be undone.`)) {
+                  onDeleteCell()
+                }
+              }}
+            >
+              Delete
             </button>
           )}
         </div>

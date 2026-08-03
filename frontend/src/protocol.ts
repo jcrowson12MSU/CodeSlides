@@ -74,6 +74,18 @@ export interface RenameCell {
   new_name: string
 }
 
+export interface RemoveCell {
+  type: 'remove_cell'
+  session_id: string
+  cell_id: string
+}
+
+export interface ReorderCells {
+  type: 'reorder_cells'
+  session_id: string
+  cell_order: string[]
+}
+
 export interface AddElement {
   type: 'add_element'
   session_id: string
@@ -116,6 +128,8 @@ export type ClientMessage =
   | SaveDeck
   | AddCell
   | RenameCell
+  | RemoveCell
+  | ReorderCells
   | AddElement
   | RemoveElement
   | ReorderElements
@@ -199,6 +213,18 @@ export interface CellRenamed {
   elements: ElementMeta[]
 }
 
+export interface CellRemoved {
+  type: 'cell_removed'
+  session_id: string
+  cell_id: string
+}
+
+export interface CellsReordered {
+  type: 'cells_reordered'
+  session_id: string
+  cell_order: string[]
+}
+
 export interface ElementAdded {
   type: 'element_added'
   session_id: string
@@ -252,6 +278,8 @@ export type ServerMessage =
   | DeckSaved
   | CellAdded
   | CellRenamed
+  | CellRemoved
+  | CellsReordered
   | ElementAdded
   | ElementRemoved
   | ElementsReordered

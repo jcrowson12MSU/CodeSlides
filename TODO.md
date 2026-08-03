@@ -2478,6 +2478,114 @@ reshape the plan below and are called out explicitly where they apply:
   in `assets/`, then did a genuine fresh page reload and confirmed the
   carousel still rendered correctly with all 3 images.
 
+- [x] **55. Make it so that cells can be deleted and rearranged.**
+  User's own explicit ask. Before this, a cell could only be added,
+  renamed, or edited in place -- there was no way to remove one
+  entirely or change which order cells run/display in, short of
+  hand-editing the `.py` file. This is a whole-*cell* operation,
+  distinct from the pre-existing per-*element* delete/reorder inside
+  one cell (#30).
+
+  `serialization.py` gained `remove_cell`/`reorder_cells`, mirroring
+  `rename_cell`/`append_cell`'s existing "mutate the on-disk `.py`
+  file immediately, no staged/unsaved state" precedent. `remove_cell`
+  deletes a cell's whole decorator-through-body block and collapses
+  the surrounding blank lines back down to the file's established
+  two-blank-line convention between top-level defs; it also cascades
+  into any `@app.slide(..., cells=[...])` that names the deleted cell,
+  stripping it from the list (a slide referencing a gone cell would
+  otherwise fail to load at all -- `Deck.add_slide`'s own `unknown =
+  [...]` check rejects it). `reorder_cells` takes a full permutation
+  of the deck's cell names and rewrites the file with each cell's own
+  block kept byte-identical, just reordered -- content that used to
+  sit between two specific blocks (e.g. a stray comment) is dropped
+  rather than guessed at, a documented limitation.
+
+  While writing this, found and fixed a real, previously-invisible bug
+  in `_cell_line_spans` (the shared primitive both new functions and
+  every pre-existing one -- `rename_cell`, `append_cell` -- rely on):
+  it treated *any* top-level `FunctionDef` as a cell, including one
+  decorated with `@app.slide(...)` instead of `@app.cell(...)`, since
+  both are syntactically identical `def name():` blocks at the same
+  level. This was invisible to every existing caller because they only
+  ever look up one already-known cell name in the result; `reorder_cells`
+  is the first caller that relies on the *entire* keyset being exactly
+  the deck's real cells, and it surfaced immediately as a spurious
+  `SaveConflictError` claiming a valid permutation wasn't one (a slide
+  function was sneaking into the "current cells" list). Fixed with a
+  new `_is_app_cell_decorator` helper that checks the decorator's own
+  `.attr == "cell"`, filtering the scan.
+
+  `Kernel.remove_cell` refuses the delete (raising `ValueError`, nothing
+  written) if any *other* cell still references the target -- either by
+  calling it directly (`other_cell()`) or by reading a name only the
+  target's own `return` binds (`Cell.writes` always includes both the
+  cell's own name and every return-bound name, per `graph.py`'s
+  `parse_cell`). The first draft of this check just mirrored
+  `rename_cell`'s existing `name in cell.reads` test, which only catches
+  the direct-call case -- confirmed by hand with a `producer`/`consumer`
+  deck (`producer` returns `shared_value`, `consumer` reads
+  `shared_value` without ever calling `producer()`) that this let
+  `producer` be deleted out from under `consumer` with no error at all.
+  Fixed by checking `cell.reads & removed_names` instead, where
+  `removed_names` is the target's own `writes` set. `rename_cell` has
+  this identical gap and was deliberately left as-is -- out of scope
+  for this change, documented in `remove_cell`'s own docstring.
+  `Kernel.reorder_cells` needs no such check (position isn't a
+  dependency) and no session-state cleanup (`session.instances`/
+  `source_overrides`/`namespace` are keyed by name, never by position).
+
+  Added `RemoveCell`/`ReorderCells` client messages and
+  `CellRemoved`/`CellsReordered` server acks to `protocol.py` (Python
+  and TypeScript), dispatched in `ws_handler.py` mirroring
+  `RenameCell`'s exact shape. The frontend's cell header gained ↑/↓
+  reorder buttons (disabled at the first/last position) and a Delete
+  button (behind a `window.confirm` guard) next to the existing Edit
+  toggle; `App.tsx` handles `cell_removed` by dropping the key from
+  local state and `cells_reordered` by rebuilding the cell-state object
+  with keys re-inserted in the server's new order (JS objects and
+  Python dicts both preserve string-key insertion order, and every
+  other cell-list render in the app already depends on that same
+  convention). Deliberately not wired into Slide-mode's per-slide view,
+  since a slide already groups exactly one cell under its own
+  title/prev-next navigation -- whole-deck position isn't a concept
+  exposed there.
+
+  Verified with 17 new tests: 9 in `test_serialization.py` (delete's
+  blank-line collapsing at the first/middle/last cell position, the
+  slide-reference cascade, a dedicated regression test pinning down
+  the `_is_app_cell_decorator` fix, reorder's permutation check and
+  content-preservation before/after the block range) plus 1 more
+  covering the `_cell_line_spans`/slide bug directly; 10 in
+  `test_kernel.py` (including the `producer`/`consumer`
+  return-value-reference regression test); 6 in `test_ws_handler.py`
+  covering the message dispatch and error paths. Full suite: 345
+  passed, 2 skipped (up from 328 before this feature). Frontend:
+  `npm run build`/`npm run lint` both clean.
+
+  Verified in a real running server via Playwright: with a 3-cell
+  scratch deck, moved the first cell down one position and confirmed
+  both the browser's cell order and the `.py` file's own definition
+  order updated to match; deleted the (now-)middle cell and confirmed
+  it vanished from both the DOM and the file; did a genuine fresh page
+  reload and confirmed the new order and the deletion both survived.
+  Separately, with a `producer`/`consumer` deck, clicked Delete on
+  `producer` and confirmed the backend correctly refused it (both
+  cells still present, file unchanged on disk) -- but the browser
+  showed **no visible feedback at all**: the header's existing
+  save-status banner only listened for messages while a `save_deck`
+  was in flight, and the per-cell error banner only renders inside an
+  open Edit panel, neither of which delete/reorder's buttons trigger.
+  A user clicking Delete on a referenced cell would see it silently
+  fail to do anything, with no indication why. Fixed by making the
+  save-status banner listen for *any* incoming error message rather
+  than gating on `saving`, reusing the existing banner instead of
+  building a new notification mechanism. Rebuilt, re-verified: the
+  same refused delete now shows "cannot remove cell 'producer': it's
+  referenced by ['consumer'] -- remove those references first" in the
+  header, and confirmed a *successful* delete shows no error banner
+  (no false positives).
+
 - [ ] **48. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local

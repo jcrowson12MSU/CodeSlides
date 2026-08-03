@@ -171,7 +171,6 @@ function App() {
   }, [sessionId])
 
   useEffect(() => {
-    if (!saving) return
     const last = messages[messages.length - 1]
     if (!last) return
     if (last.type === 'deck_saved') {
@@ -182,10 +181,15 @@ function App() {
           : { kind: 'saved', text: 'Nothing to save' },
       )
     } else if (last.type === 'error') {
+      // Not just a rejected save_deck -- a refused remove_cell/reorder_cells
+      // (e.g. deleting a cell another cell still reads from) also lands
+      // here, and those buttons live in the collapsed cell header with no
+      // edit panel open to show `editErrors` in, so this banner is the
+      // only place that failure is visible at all.
       setSaving(false)
       setSaveStatus({ kind: 'error', text: last.message })
     }
-    // only re-check when a new message arrives while a save is in flight
+    // only re-check when a new message arrives
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages])
 
@@ -223,6 +227,26 @@ function App() {
           changed = true
           delete cells[msg.old_cell_id]
           cells[msg.cell_id] = { instance: msg.instance, source: msg.source, elements: msg.elements }
+        } else if (msg.type === 'cell_removed') {
+          if (!changed) cells = { ...cells }
+          changed = true
+          delete cells[msg.cell_id]
+        } else if (msg.type === 'cells_reordered') {
+          changed = true
+          // Rebuild the object with keys re-inserted in the server's new
+          // order -- both JS objects (string keys) and the Python dict
+          // driving `msg.cell_order` preserve insertion order, and every
+          // other cell-list render in this app (the `Object.entries(deck
+          // .cells)` map below, `Object.keys` elsewhere) already relies
+          // on that same convention for display order, so this is the
+          // one place that convention needs to be actively re-asserted
+          // rather than just inherited from however `cells` happened to
+          // accumulate insertions so far.
+          const reordered: Record<string, CellMeta> = {}
+          for (const name of msg.cell_order) {
+            if (name in cells) reordered[name] = cells[name]
+          }
+          cells = reordered
         }
       }
       return changed ? { ...prev, cells } : prev
@@ -274,6 +298,27 @@ function App() {
   function handleAddCell() {
     if (!sessionId) return
     send({ type: 'add_cell', session_id: sessionId })
+  }
+
+  function handleDeleteCell(cellId: string) {
+    if (!sessionId) return
+    send({ type: 'remove_cell', session_id: sessionId, cell_id: cellId })
+  }
+
+  // Swaps `cellId` with its up/down neighbor in the deck's current
+  // display order and sends the whole resulting permutation -- same
+  // "local swap of an array built from current state, whole list sent
+  // back" shape EditCellPanel.tsx's own `moveElement` already uses for
+  // reordering one cell's *elements*, just at the deck level over
+  // `Object.keys(deck.cells)` instead of one cell's own element list.
+  function handleReorderCells(cellId: string, direction: -1 | 1) {
+    if (!sessionId || !deck) return
+    const order = Object.keys(deck.cells)
+    const index = order.indexOf(cellId)
+    const target = index + direction
+    if (index === -1 || target < 0 || target >= order.length) return
+    ;[order[index], order[target]] = [order[target], order[index]]
+    send({ type: 'reorder_cells', session_id: sessionId, cell_order: order })
   }
 
   function clearEditError(cellId: string) {
@@ -519,7 +564,7 @@ function App() {
       )}
       {deck && viewMode === 'cells' && (
         <section>
-          {Object.entries(deck.cells).map(([cellId, meta]) => (
+          {Object.entries(deck.cells).map(([cellId, meta], index, entries) => (
             <Cell
               key={cellId}
               cellId={cellId}
@@ -542,6 +587,11 @@ function App() {
               onReorderElements={(elementOrder) => handleReorderElements(cellId, elementOrder)}
               onSetElementConfig={(elementId, config) => handleSetElementConfig(cellId, elementId, config)}
               editError={editErrors[cellId]}
+              onDeleteCell={() => handleDeleteCell(cellId)}
+              onMoveCellUp={() => handleReorderCells(cellId, -1)}
+              onMoveCellDown={() => handleReorderCells(cellId, 1)}
+              isFirstCell={index === 0}
+              isLastCell={index === entries.length - 1}
             />
           ))}
         </section>

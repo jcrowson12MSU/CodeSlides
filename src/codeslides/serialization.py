@@ -38,6 +38,19 @@ class InvalidSourceError(ValueError):
     load of it, not just this one Session's view."""
 
 
+def _is_app_cell_decorator(dec: ast.expr) -> bool:
+    """True for `@app.cell` (a bare `ast.Attribute`) or `@app.cell(...)`
+    (an `ast.Call` wrapping one) -- specifically excludes `@app.slide(...)`,
+    which is also a top-level-function decorator in the exact same file
+    but names an entirely different kind of thing (`Deck.slides`, not
+    `Deck.cells`). Matches on the decorator's own `.attr` being `"cell"`,
+    not on the function being decorated at all -- a function decorated
+    with `@app.slide(...)` is never a cell, no matter how much it looks
+    like one syntactically (same `def name():` shape, same file)."""
+    target = dec.func if isinstance(dec, ast.Call) else dec
+    return isinstance(target, ast.Attribute) and target.attr == "cell"
+
+
 def _cell_line_spans(source: str) -> dict[str, tuple[int, int]]:
     """Map each top-level `@app.cell`-decorated function's name to its
     (start_line, end_line) span, 1-indexed and inclusive, covering its
@@ -45,11 +58,23 @@ def _cell_line_spans(source: str) -> dict[str, tuple[int, int]]:
     at the `def` line, not any decorator above it (true even as of Python
     3.13) -- the decorator's own `lineno` is what `inspect.getsource`
     actually uses to include it, so we do the same here.
+
+    Deliberately excludes a top-level function decorated with
+    `@app.slide(...)` instead of `@app.cell(...)` -- both are ordinary
+    `FunctionDef` nodes at the same syntactic level, so a naive "every
+    top-level function" scan would misidentify a slide as a cell (a
+    real bug caught by hand: `remove_cell`/`reorder_cells`, which use
+    every key in this dict's return value rather than looking up one
+    already-known cell name the way `rename_cell`/`append_cell` do,
+    would otherwise try to delete/reorder a slide function as if it
+    were a cell).
     """
     tree = ast.parse(source)
     spans: dict[str, tuple[int, int]] = {}
     for node in ast.iter_child_nodes(tree):
         if not isinstance(node, ast.FunctionDef):
+            continue
+        if not any(_is_app_cell_decorator(dec) for dec in node.decorator_list):
             continue
         start = node.decorator_list[0].lineno if node.decorator_list else node.lineno
         spans[node.name] = (start, node.end_lineno)
@@ -541,6 +566,143 @@ def rename_cell(deck_path: str, old_name: str, new_name: str) -> None:
         raise InvalidSourceError(
             f"renaming cell {old_name!r} to {new_name!r} would leave {deck_path!r} with invalid "
             f"Python syntax, not saved: {exc}"
+        ) from exc
+
+    path.write_text(updated)
+
+
+def remove_cell(deck_path: str, name: str) -> None:
+    """Delete a cell (its whole decorator+`def` block) from `deck_path`,
+    on disk, immediately -- the inverse of `append_cell`.
+
+    Also strips `name` out of every `@app.slide(..., cells=[...])` call
+    that references it, so a deleted cell never leaves a slide pointing
+    at a name that no longer exists (`Deck.add_slide`'s own `unknown =
+    [...]` check would otherwise reject the very next `load_deck`).
+    This is a plain cascade, not a refusal, unlike `Kernel.remove_cell`'s
+    own check for another *cell's code* referencing this one by name
+    (`reads`) -- a slide's `cells=[...]` is presentation grouping, not a
+    code dependency, so there's no "unsafe blind rewrite" risk the way
+    there is for rewriting an arbitrary identifier occurrence inside
+    someone else's function body (see `rename_cell`'s own docstring for
+    why *that* case is refused instead of cascaded).
+
+    Raises `SaveConflictError` if `name` doesn't exist, or
+    `InvalidSourceError` if the result doesn't parse.
+    """
+    path = Path(deck_path)
+    original = path.read_text()
+    spans = _cell_line_spans(original)
+    if name not in spans:
+        raise SaveConflictError(f"cannot remove cell {name!r}: it no longer exists")
+
+    start, end = spans[name]
+    lines = original.splitlines(keepends=True)
+    # Delete the cell's own block, then collapse whatever blank-line gap
+    # is left at the cut point down to exactly two blank lines (one
+    # blank line, i.e. "\n\n" between the two now-adjacent lines) --
+    # the same two-blank-lines-between-top-level-defs convention
+    # `append_cell` already establishes when it appends a new cell.
+    del lines[start - 1 : end]
+    # Trim any blank lines immediately surrounding the cut, then
+    # reinsert exactly two.
+    cut = start - 1
+    end_of_prev = cut
+    while end_of_prev > 0 and lines[end_of_prev - 1].strip() == "":
+        end_of_prev -= 1
+    end_of_next = cut
+    while end_of_next < len(lines) and lines[end_of_next].strip() == "":
+        end_of_next += 1
+    if end_of_prev > 0 and end_of_next < len(lines):
+        lines[end_of_prev:end_of_next] = ["\n", "\n"]
+    else:
+        # Deleted the first or last block in the file -- no "gap" to
+        # restore between two neighbors, just drop the extra blank
+        # lines left dangling at whichever edge this was.
+        lines[end_of_prev:end_of_next] = []
+    updated = "".join(lines)
+
+    slide_spans = _slide_cells_spans(updated)
+    if slide_spans:
+        slide_lines = updated.splitlines(keepends=True)
+        for s_start, s_end, s_col, e_col, names in sorted(slide_spans, key=lambda s: s[0], reverse=True):
+            if name not in names:
+                continue
+            new_names = [n for n in names if n != name]
+            literal = "[" + ", ".join(repr(n) for n in new_names) + "]"
+            if s_start == s_end:
+                line = slide_lines[s_start - 1]
+                slide_lines[s_start - 1] = line[:s_col] + literal + line[e_col:]
+            else:
+                first_line = slide_lines[s_start - 1][:s_col]
+                last_line = slide_lines[s_end - 1][e_col:]
+                slide_lines[s_start - 1 : s_end] = [first_line + literal + last_line]
+        updated = "".join(slide_lines)
+
+    try:
+        ast.parse(updated)
+    except SyntaxError as exc:
+        raise InvalidSourceError(
+            f"removing cell {name!r} would leave {deck_path!r} with invalid Python syntax, not saved: {exc}"
+        ) from exc
+
+    path.write_text(updated)
+
+
+def reorder_cells(deck_path: str, cell_order: list[str]) -> None:
+    """Reorder every top-level cell in `deck_path` to match `cell_order`
+    exactly, on disk, immediately -- each cell's own block (decorator
+    through end of body) is kept byte-identical, only which order the
+    blocks appear in the file changes. `cell_order` must be a
+    permutation of every cell currently in the file, matching
+    `reorder_elements`'s own "the frontend only ever hands back a full
+    permutation, built from swapping two adjacent entries" precedent.
+
+    Any top-level content that isn't part of a cell's own span (the
+    `app = App()` line, top-level imports, standalone comments, blank
+    lines) keeps its exact original position *outside* the region the
+    cell blocks occupy -- text before the first cell block and after
+    the last one is left completely untouched. Content that used to sit
+    *between* two specific cell blocks (e.g. a comment written directly
+    above one particular cell) is not preserved relative to that cell
+    once cells are reordered -- there's no principled way to know which
+    neighbor a mid-file comment "belongs to" after their relative order
+    changes, so it is dropped rather than guessed at, and every
+    adjacent pair in the reassembled sequence gets the same uniform
+    two-blank-line separator `append_cell`/`remove_cell` already use.
+    This is a deliberate, documented limitation, not an oversight: a
+    comment sitting directly above a cell does not travel with it.
+
+    Raises `SaveConflictError` if `cell_order` isn't exactly a
+    permutation of the file's current cells, or `InvalidSourceError` if
+    the result doesn't parse.
+    """
+    path = Path(deck_path)
+    original = path.read_text()
+    spans = _cell_line_spans(original)
+    if sorted(cell_order) != sorted(spans):
+        raise SaveConflictError(
+            f"cannot reorder cells: {cell_order!r} is not a permutation of the deck's "
+            f"current cells {sorted(spans)!r}"
+        )
+
+    lines = original.splitlines(keepends=True)
+    block_texts = {name: "".join(lines[start - 1 : end]) for name, (start, end) in spans.items()}
+
+    first_block_start = min(start for start, _ in spans.values())
+    last_block_end = max(end for _, end in spans.values())
+
+    before = "".join(lines[: first_block_start - 1])
+    after = "".join(lines[last_block_end:])
+
+    reassembled = "\n\n\n".join(block_texts[name].rstrip("\n") for name in cell_order) + "\n"
+    updated = before + reassembled + after
+
+    try:
+        ast.parse(updated)
+    except SyntaxError as exc:
+        raise InvalidSourceError(
+            f"reordering cells would leave {deck_path!r} with invalid Python syntax, not saved: {exc}"
         ) from exc
 
     path.write_text(updated)

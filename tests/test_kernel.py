@@ -940,6 +940,185 @@ def test_rename_cell_without_a_deck_path_raises():
         kernel.rename_cell(session, "live_demo", "coding_demo")
 
 
+def test_remove_cell_deletes_it_from_disk_and_kernel_and_cascades_the_slide(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    kernel.remove_cell(session, "live_demo")
+
+    assert "live_demo" not in kernel.deck.cells
+    assert "def live_demo" not in path.read_text()
+    assert kernel.deck.slides[0].cell_names == []
+
+
+def test_remove_cell_cleans_up_the_requesting_sessions_state(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    kernel.on_cell_edited("live_demo", 'def live_demo(speed):\n    result = speed * 3\n    return result\n', session)
+    assert "live_demo" in session.instances
+    assert "live_demo" in session.source_overrides
+    assert "live_demo" in session.namespace
+
+    kernel.remove_cell(session, "live_demo")
+
+    assert "live_demo" not in session.instances
+    assert "live_demo" not in session.source_overrides
+    assert "live_demo" not in session.namespace
+
+
+def test_remove_cell_blocked_when_another_cell_calls_it_directly(tmp_path):
+    from codeslides.loader import load_deck
+
+    source = (
+        "from codeslides import App\n\napp = App()\n\n"
+        "@app.cell\ndef drawSquare():\n    x = 1\n    return x\n\n"
+        "@app.cell\ndef drawSquares():\n    result = drawSquare() + 1\n    return result\n"
+    )
+    path = _write_deck_file(tmp_path, source)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    with pytest.raises(ValueError, match="drawSquares"):
+        kernel.remove_cell(session, "drawSquare")
+
+    # nothing was written -- the cell is still on disk
+    assert "def drawSquare()" in path.read_text()
+
+
+def test_remove_cell_blocked_when_another_cell_reads_a_name_only_its_return_binds(tmp_path):
+    """Regression test for the gap found by hand this session: a cell
+    that only *reads* a name bound by another cell's `return` (never
+    calling that cell directly) is just as real a code dependency as a
+    direct call, since `Cell.writes` always includes both the cell's
+    own name and every name its own `return` binds (graph.py's
+    `parse_cell`). The first draft of this check only tested `name in
+    cell.reads` (mirroring rename_cell's check), which misses this case
+    entirely -- confirmed by hand that it let `producer` be removed out
+    from under `consumer` with no error before the fix to `cell.reads &
+    removed_names`."""
+    from codeslides.loader import load_deck
+
+    source = (
+        "from codeslides import App\n\napp = App()\n\n"
+        "@app.cell\ndef producer():\n    shared_value = 42\n    return shared_value\n\n"
+        "@app.cell\ndef consumer():\n    result = shared_value * 2  # noqa: F821\n    return result\n"
+    )
+    path = _write_deck_file(tmp_path, source)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    with pytest.raises(ValueError, match="consumer"):
+        kernel.remove_cell(session, "producer")
+
+    # nothing was written -- the cell is still on disk
+    assert "def producer()" in path.read_text()
+
+
+def test_remove_cell_raises_if_the_name_does_not_exist(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    with pytest.raises(ValueError, match="does not exist|no longer exists"):
+        kernel.remove_cell(session, "does_not_exist")
+
+
+def test_remove_cell_without_a_deck_path_raises():
+    app = _build_deck()
+    kernel = Kernel(app.deck)  # no deck_path
+    session = Session(deck=app.deck)
+
+    with pytest.raises(ValueError, match="deck file"):
+        kernel.remove_cell(session, "live_demo")
+
+
+def test_reorder_cells_updates_the_deck_cells_dict_order(tmp_path):
+    from codeslides.loader import load_deck
+
+    source = (
+        "from codeslides import App\n\napp = App()\n\n"
+        "@app.cell\ndef a():\n    x = 1\n    return x\n\n"
+        "@app.cell\ndef b():\n    y = 2\n    return y\n\n"
+        "@app.cell\ndef c():\n    z = 3\n    return z\n"
+    )
+    path = _write_deck_file(tmp_path, source)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    kernel.reorder_cells(session, ["c", "a", "b"])
+
+    assert list(kernel.deck.cells) == ["c", "a", "b"]
+    text = path.read_text()
+    assert text.index("def c()") < text.index("def a()") < text.index("def b()")
+
+
+def test_reorder_cells_requires_no_session_side_cleanup(tmp_path):
+    from codeslides.loader import load_deck
+
+    source = (
+        "from codeslides import App\n\napp = App()\n\n"
+        "@app.cell\ndef a():\n    x = 1\n    return x\n\n"
+        "@app.cell\ndef b():\n    y = 2\n    return y\n"
+    )
+    path = _write_deck_file(tmp_path, source)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    kernel.reorder_cells(session, ["b", "a"])
+
+    # the cells' own instances/namespace entries are untouched -- keyed
+    # by name, not position, so nothing goes stale just from a reorder
+    assert "a" in session.instances
+    assert "b" in session.instances
+    # the next run_all must not KeyError on the reordered deck
+    kernel.run_all(session)
+
+
+def test_reorder_cells_raises_on_a_non_permutation(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    with pytest.raises(ValueError, match="permutation"):
+        kernel.reorder_cells(session, ["live_demo", "does_not_exist"])
+
+
+def test_reorder_cells_without_a_deck_path_raises():
+    app = _build_deck()
+    kernel = Kernel(app.deck)  # no deck_path
+    session = Session(deck=app.deck)
+
+    with pytest.raises(ValueError, match="deck file"):
+        kernel.reorder_cells(session, ["live_demo", "setup"])
+
+
 def test_add_element_updates_disk_kernel_and_session(tmp_path):
     from codeslides.loader import load_deck
 

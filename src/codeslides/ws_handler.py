@@ -19,7 +19,9 @@ from codeslides.protocol import (
     AddElement,
     CellAdded,
     CellOutput,
+    CellRemoved,
     CellRenamed,
+    CellsReordered,
     CellStatus,
     ClientMessage,
     CloneSession,
@@ -32,8 +34,10 @@ from codeslides.protocol import (
     ElementsReordered,
     ErrorMessage,
     NavigateSlide,
+    RemoveCell,
     RemoveElement,
     RenameCell,
+    ReorderCells,
     ReorderElements,
     RunAll,
     SaveDeck,
@@ -462,6 +466,26 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 ],
             )
         ]
+
+    if isinstance(message, RemoveCell):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        try:
+            registry.kernel.remove_cell(session, message.cell_id)
+        except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
+            return [ErrorMessage(message=str(exc), session_id=message.session_id, cell_id=message.cell_id)]
+        return [CellRemoved(session_id=message.session_id, cell_id=message.cell_id)]
+
+    if isinstance(message, ReorderCells):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        try:
+            registry.kernel.reorder_cells(session, message.cell_order)
+        except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
+            return [ErrorMessage(message=str(exc), session_id=message.session_id)]
+        return [CellsReordered(session_id=message.session_id, cell_order=list(registry.kernel.deck.cells))]
 
     if isinstance(message, AddElement):
         session = registry.get(message.session_id)

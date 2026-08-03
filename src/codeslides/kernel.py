@@ -944,6 +944,97 @@ class Kernel:
         session.seed_cell_instance(new_name, cell)
         return cell
 
+    def remove_cell(self, session: Session, name: str) -> None:
+        """Delete a cell entirely (TODO.md #54's "cells can be deleted
+        and rearranged"), on disk, immediately -- the inverse of
+        `add_cell`. Cascades into any `@app.slide(..., cells=[...])`
+        reference to `name` (`serialization.remove_cell` strips it out
+        of the list, a plain presentation-grouping fact, not a code
+        dependency, so this is always a safe cascade rather than a
+        refusal).
+
+        Refuses the delete (`ValueError`) if any *other* cell's already-
+        parsed `reads` names either `name` itself (calls this cell's
+        function directly, e.g. `name(...)`) or *any name this cell's
+        own `return` binds* (reads a value only this cell produces,
+        e.g. `def name(): ... return shared_value` and another cell's
+        body uses `shared_value`) -- both are real code dependencies
+        (ARCHITECTURE.md section 3's graph edges: a cell's own name is
+        an implicit write alongside whatever its `return` exposes, so
+        both are just different entries in the same `Cell.writes` set).
+        Deleting the cell out from under either would leave that other
+        cell's next run raising a plain `NameError` with no indication
+        why -- refusing up front and telling the author to remove the
+        reference first is the same honest tradeoff `rename_cell`
+        already makes, extended here to cover a return-value reference
+        too (confirmed by hand that `rename_cell` itself doesn't check
+        this either -- a pre-existing gap there, out of scope to fix as
+        part of this change, but one this method must not repeat, since
+        deleting a cell is a strictly more destructive operation than
+        renaming one).
+
+        Drops `name`'s own entries from `session.instances`/
+        `source_overrides`/`namespace` -- there's no "remap to a new
+        key" step the way `rename_cell` needs, since the cell (and
+        every name it ever wrote) is simply gone, not renamed."""
+        if self.deck_path is None:
+            raise ValueError("cannot remove a cell: this Kernel was not started from a deck file")
+        if name not in self.deck.cells:
+            raise ValueError(f"cannot remove cell {name!r}: it no longer exists")
+
+        removed_names = self.deck.cells[name].writes  # the cell's own name + every name its return binds
+        blockers = sorted(
+            other_name
+            for other_name, cell in self.deck.cells.items()
+            if other_name != name and cell.reads & removed_names
+        )
+        if blockers:
+            raise ValueError(
+                f"cannot remove cell {name!r}: it's referenced by {blockers} -- "
+                "remove those references first"
+            )
+
+        from codeslides.serialization import remove_cell as _remove_cell_on_disk
+
+        _remove_cell_on_disk(self.deck_path, name)
+
+        from codeslides.loader import load_deck
+
+        self.reload_deck(load_deck(self.deck_path))
+
+        session.instances.pop(name, None)
+        session.source_overrides.pop(name, None)
+        session.namespace.pop(name, None)
+
+    def reorder_cells(self, session: Session, cell_order: list[str]) -> None:
+        """Reorder every cell in the deck to match `cell_order` exactly
+        (TODO.md #54), on disk, immediately -- each cell's own source is
+        untouched, only which order the top-level definitions appear in
+        the file (and therefore `Deck.cells`' own dict order, which
+        `_effective_graph`/`_run_cells`/the browser's own cell list all
+        already read display/execution order from) changes.
+
+        No Session-side cleanup needed, unlike `rename_cell`/`remove_cell`
+        -- `session.instances`/`source_overrides`/`namespace` are all
+        keyed by cell *name*, never by position, so nothing about them
+        goes stale just because the underlying deck's cells changed
+        order."""
+        if self.deck_path is None:
+            raise ValueError("cannot reorder cells: this Kernel was not started from a deck file")
+        if sorted(cell_order) != sorted(self.deck.cells):
+            raise ValueError(
+                f"cannot reorder cells: {cell_order!r} is not a permutation of the deck's "
+                f"current cells {sorted(self.deck.cells)!r}"
+            )
+
+        from codeslides.serialization import reorder_cells as _reorder_cells_on_disk
+
+        _reorder_cells_on_disk(self.deck_path, cell_order)
+
+        from codeslides.loader import load_deck
+
+        self.reload_deck(load_deck(self.deck_path))
+
     def add_element(self, session: Session, cell_name: str, element: Element) -> tuple[Cell, ExecutionResult]:
         """Add `element` to `cell_name`'s `elements=[...]` list, on disk,
         immediately (TODO.md #22's element picker), then reload this

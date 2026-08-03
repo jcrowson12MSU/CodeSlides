@@ -1082,6 +1082,46 @@ body.cs-slides-locked {
   background: #f2f2f2;
 }
 
+/* TODO.md #54: move this cell up/down in the deck's own cell order --
+   distinct from `.cs-edit-cell-reorder`, which reorders one cell's own
+   elements inside the edit panel. Lives directly in the cell header,
+   next to the Edit toggle, since whole-deck position isn't a per-cell
+   "edit" concept the way rename/elements are. */
+.cs-cell-reorder {
+  display: flex;
+  gap: 0.15rem;
+}
+
+.cs-cell-reorder button {
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  background: none;
+  cursor: pointer;
+  font-size: var(--cs-font-sm);
+  line-height: 1;
+  padding: 0.1rem 0.3rem;
+  color: #555;
+}
+
+.cs-cell-reorder button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.cs-delete-cell-button {
+  border: 1px solid #e6b3ac;
+  border-radius: 3px;
+  background: none;
+  cursor: pointer;
+  font-size: var(--cs-font-sm);
+  color: #c0392b;
+  padding: 0.05rem 0.5rem;
+}
+
+.cs-delete-cell-button:hover {
+  background: #fbeae8;
+}
+
 .cs-edit-cell-panel {
   border: 1px solid #ddd;
   border-radius: 4px;

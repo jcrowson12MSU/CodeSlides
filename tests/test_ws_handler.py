@@ -6,7 +6,9 @@ from codeslides.protocol import (
     AddElement,
     CellAdded,
     CellOutput,
+    CellRemoved,
     CellRenamed,
+    CellsReordered,
     CellStatus,
     CloneSession,
     DeckSaved,
@@ -18,8 +20,10 @@ from codeslides.protocol import (
     ElementsReordered,
     ErrorMessage,
     NavigateSlide,
+    RemoveCell,
     RemoveElement,
     RenameCell,
+    ReorderCells,
     ReorderElements,
     RunAll,
     SaveDeck,
@@ -784,6 +788,89 @@ def test_rename_cell_blocked_when_referenced_produces_error_not_crash(tmp_path):
     assert len(messages) == 1
     assert isinstance(messages[0], ErrorMessage)
     assert "def drawSquare()" in path.read_text()
+
+
+def test_remove_cell_emits_cell_removed_and_writes_to_disk(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(registry, RemoveCell(session_id=session.session_id, cell_id="live_demo"))
+
+    assert isinstance(messages[0], CellRemoved)
+    assert messages[0].cell_id == "live_demo"
+    assert "def live_demo" not in path.read_text()
+    assert "live_demo" not in registry.kernel.deck.cells
+    assert "live_demo" not in session.instances
+
+
+def test_remove_cell_unknown_session_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+
+    messages = handle_message(registry, RemoveCell(session_id="does-not-exist", cell_id="live_demo"))
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_remove_cell_blocked_when_referenced_produces_error_not_crash(tmp_path):
+    path = tmp_path / "deck.py"
+    path.write_text(
+        "from codeslides import App\n\napp = App()\n\n"
+        "@app.cell\ndef drawSquare():\n    x = 1\n    return x\n\n"
+        "@app.cell\ndef drawSquares():\n    result = drawSquare() + 1\n    return result\n"
+    )
+    deck = load_deck(str(path))
+    registry = SessionRegistry(kernel=Kernel(deck, deck_path=str(path)))
+    session = registry.create()
+
+    messages = handle_message(registry, RemoveCell(session_id=session.session_id, cell_id="drawSquare"))
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+    assert "def drawSquare()" in path.read_text()
+
+
+def test_reorder_cells_emits_cells_reordered_and_writes_to_disk(tmp_path):
+    path = tmp_path / "deck.py"
+    path.write_text(
+        "from codeslides import App\n\napp = App()\n\n"
+        "@app.cell\ndef a():\n    x = 1\n    return x\n\n"
+        "@app.cell\ndef b():\n    y = 2\n    return y\n"
+    )
+    deck = load_deck(str(path))
+    registry = SessionRegistry(kernel=Kernel(deck, deck_path=str(path)))
+    session = registry.create()
+
+    messages = handle_message(registry, ReorderCells(session_id=session.session_id, cell_order=["b", "a"]))
+
+    assert isinstance(messages[0], CellsReordered)
+    assert messages[0].cell_order == ["b", "a"]
+    assert list(registry.kernel.deck.cells) == ["b", "a"]
+    text = path.read_text()
+    assert text.index("def b()") < text.index("def a()")
+
+
+def test_reorder_cells_unknown_session_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+
+    messages = handle_message(
+        registry, ReorderCells(session_id="does-not-exist", cell_order=["live_demo", "setup"])
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_reorder_cells_non_permutation_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(
+        registry, ReorderCells(session_id=session.session_id, cell_order=["live_demo"])
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
 
 
 def test_add_element_emits_element_added_and_writes_to_disk(tmp_path):
