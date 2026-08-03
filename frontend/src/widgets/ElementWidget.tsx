@@ -6,7 +6,12 @@ export interface ElementWidgetDispatchProps {
   element: ElementMeta
   value: unknown
   onSetValue: (elementId: string, value: unknown) => void
-  onToggleMinimize: () => void
+  /** Omitted by Cell.tsx's tabbed layout (TODO.md #56) -- once only one
+   * element renders at a time via tab selection, a per-element minimize
+   * toggle has nothing left to save space for. Kept optional rather than
+   * removed outright so any other future caller stacking multiple
+   * elements at once can still opt back in. */
+  onToggleMinimize?: () => void
 }
 
 // Dispatches an element's (kind, config) to the matching input widget
@@ -60,14 +65,16 @@ export function ElementWidget({ element, value, onSetValue, onToggleMinimize }: 
   return (
     <div className="cs-element-wrapper">
       {widget}
-      <button
-        type="button"
-        className="cs-minimize-toggle"
-        onClick={onToggleMinimize}
-        aria-label={`Minimize ${element.name}`}
-      >
-        {'▾'}
-      </button>
+      {onToggleMinimize && (
+        <button
+          type="button"
+          className="cs-minimize-toggle"
+          onClick={onToggleMinimize}
+          aria-label={`Minimize ${element.name}`}
+        >
+          {'▾'}
+        </button>
+      )}
     </div>
   )
 }

@@ -85,11 +85,10 @@ function App() {
   const [testSourceOverrides, setTestSourceOverrides] = useState<Record<string, Record<string, string>>>(
     {},
   )
-  // Collapse/minimize (ARCHITECTURE.md section 8): pure UI state, kept
-  // client-side same as notesOverrides above, since set_ui_state produces
-  // no server reply to sync from either.
+  // Collapse (ARCHITECTURE.md section 8): pure UI state, kept client-side
+  // same as notesOverrides above, since set_ui_state produces no server
+  // reply to sync from either.
   const [collapsedCells, setCollapsedCells] = useState<Record<string, boolean>>({})
-  const [minimizedElements, setMinimizedElements] = useState<Record<string, Record<string, boolean>>>({})
   // Feedback for a rejected rename_cell/add_element/remove_element (TODO.md
   // #22) -- e.g. renaming a cell another cell calls directly by name.
   // Keyed by cell_id since ErrorMessage carries one, so each cell's edit
@@ -405,23 +404,6 @@ function App() {
     }
   }
 
-  function handleToggleMinimize(cellId: string, elementId: string) {
-    const next = !minimizedElements[cellId]?.[elementId]
-    setMinimizedElements((prev) => ({
-      ...prev,
-      [cellId]: { ...prev[cellId], [elementId]: next },
-    }))
-    if (sessionId) {
-      send({
-        type: 'set_ui_state',
-        session_id: sessionId,
-        cell_id: cellId,
-        element_id: elementId,
-        minimized: next,
-      })
-    }
-  }
-
   // Merge notes overrides into cell state once, shared by both views.
   const mergedCellState: Record<string, ReturnType<typeof useDeckState>[string] | undefined> = {}
   if (deck) {
@@ -573,14 +555,12 @@ function App() {
               elementValues={elementValues[cellId] ?? {}}
               testSourceValues={testSourceOverrides[cellId] ?? {}}
               collapsed={collapsedCells[cellId] ?? false}
-              minimizedElements={minimizedElements[cellId] ?? {}}
               onRunCell={(source) => handleRunCell(cellId, source)}
               onRunAll={handleRunAll}
               onSetElementValue={(elementId, value) => handleSetElementValue(cellId, elementId, value)}
               onChangeNotesSource={(elementId, source) => handleChangeNotesSource(cellId, elementId, source)}
               onChangeTestSource={(elementId, source) => handleChangeTestSource(cellId, elementId, source)}
               onToggleCollapse={() => handleToggleCollapse(cellId)}
-              onToggleMinimize={(elementId) => handleToggleMinimize(cellId, elementId)}
               onRenameCell={(newName) => handleRenameCell(cellId, newName)}
               onAddElement={(name, kind, config) => handleAddElement(cellId, name, kind, config)}
               onRemoveElement={(elementName) => handleRemoveElement(cellId, elementName)}
@@ -605,14 +585,12 @@ function App() {
           cellState={mergedCellState}
           elementValues={elementValues}
           testSourceValues={testSourceOverrides}
-          minimizedElements={minimizedElements}
           onRunCell={handleRunCell}
           onRunAll={handleRunAll}
           onSetElementValue={handleSetElementValue}
           onChangeNotesSource={handleChangeNotesSource}
           onChangeTestSource={handleChangeTestSource}
           onToggleCollapse={handleToggleCollapse}
-          onToggleMinimize={handleToggleMinimize}
           onRenameCell={handleRenameCell}
           onAddElement={handleAddElement}
           onRemoveElement={handleRemoveElement}

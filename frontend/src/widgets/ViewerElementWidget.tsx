@@ -7,7 +7,9 @@ export interface ViewerElementWidgetProps {
   element: ElementMeta
   content: unknown
   onChangeNotesSource: (elementId: string, source: string) => void
-  onToggleMinimize: () => void
+  /** Omitted by Cell.tsx's tabbed layout (TODO.md #56) -- see
+   * ElementWidget's identical prop for why. */
+  onToggleMinimize?: () => void
 }
 
 // Dispatches a viewer element's (kind, config) to the matching component
@@ -63,14 +65,16 @@ export function ViewerElementWidget({
   return (
     <div className="cs-element-wrapper">
       {widget}
-      <button
-        type="button"
-        className="cs-minimize-toggle"
-        onClick={onToggleMinimize}
-        aria-label={`Minimize ${element.name}`}
-      >
-        {'▾'}
-      </button>
+      {onToggleMinimize && (
+        <button
+          type="button"
+          className="cs-minimize-toggle"
+          onClick={onToggleMinimize}
+          aria-label={`Minimize ${element.name}`}
+        >
+          {'▾'}
+        </button>
+      )}
     </div>
   )
 }

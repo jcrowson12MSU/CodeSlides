@@ -17,14 +17,12 @@ export interface SlideShowProps {
   cellState: Record<string, CellState | undefined>
   elementValues: Record<string, Record<string, unknown>>
   testSourceValues: Record<string, Record<string, string>>
-  minimizedElements: Record<string, Record<string, boolean>>
   onRunCell: (cellId: string, source: string) => void
   onRunAll: () => void
   onSetElementValue: (cellId: string, elementId: string, value: unknown) => void
   onChangeNotesSource: (cellId: string, elementId: string, source: string) => void
   onChangeTestSource: (cellId: string, elementId: string, source: string) => void
   onToggleCollapse: (cellId: string) => void
-  onToggleMinimize: (cellId: string, elementId: string) => void
   onRenameCell: (cellId: string, newName: string) => void
   onAddElement: (cellId: string, name: string, kind: string, config: Record<string, unknown>) => void
   onRemoveElement: (cellId: string, elementName: string) => void
@@ -39,8 +37,7 @@ export interface SlideShowProps {
 // is a live, embedded, runnable part of the presentation (R1) -- not a
 // static snippet -- so navigating slides never touches the kernel;
 // prev/next/reveal-code are all pure client-side view state, same
-// isolation-respecting shape as collapse/minimize (ARCHITECTURE.md
-// section 8).
+// isolation-respecting shape as collapse (ARCHITECTURE.md section 8).
 export function SlideShow({
   slides,
   headerCollapsed,
@@ -49,14 +46,12 @@ export function SlideShow({
   cellState,
   elementValues,
   testSourceValues,
-  minimizedElements,
   onRunCell,
   onRunAll,
   onSetElementValue,
   onChangeNotesSource,
   onChangeTestSource,
   onToggleCollapse,
-  onToggleMinimize,
   onRenameCell,
   onAddElement,
   onRemoveElement,
@@ -216,7 +211,6 @@ export function SlideShow({
               // below) -- a cell collapsed in Cells view must not render
               // stuck collapsed here with no way to expand it back.
               collapsed={false}
-              minimizedElements={minimizedElements[cellId] ?? {}}
               hideCode={!revealed}
               hideHeader
               onRunCell={(source) => onRunCell(cellId, source)}
@@ -225,7 +219,6 @@ export function SlideShow({
               onChangeNotesSource={(elementId, source) => onChangeNotesSource(cellId, elementId, source)}
               onChangeTestSource={(elementId, source) => onChangeTestSource(cellId, elementId, source)}
               onToggleCollapse={() => onToggleCollapse(cellId)}
-              onToggleMinimize={(elementId) => onToggleMinimize(cellId, elementId)}
               onRenameCell={(newName) => onRenameCell(cellId, newName)}
               onAddElement={(name, kind, config) => onAddElement(cellId, name, kind, config)}
               onRemoveElement={(elementName) => onRemoveElement(cellId, elementName)}

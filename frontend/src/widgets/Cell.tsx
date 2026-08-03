@@ -35,7 +35,6 @@ export interface CellProps {
    * text inputs. */
   testSourceValues: Record<string, string>
   collapsed: boolean
-  minimizedElements: Record<string, boolean>
   /** Hide just the code editor while still showing elements/output --
    * distinct from `collapsed` (which hides everything). Used by slideshow
    * mode's "reveal code" toggle (TODO.md #10): a slide's output/widgets
@@ -61,7 +60,6 @@ export interface CellProps {
   onChangeNotesSource: (elementId: string, source: string) => void
   onChangeTestSource: (elementId: string, source: string) => void
   onToggleCollapse: () => void
-  onToggleMinimize: (elementId: string) => void
   /** TODO.md #22's edit button: rename the cell's own identity and add/
    * remove attached elements. Both write to the deck's .py file
    * immediately -- see EditCellPanel's own docstring for why there's no
@@ -118,7 +116,6 @@ export function Cell({
   elementValues,
   testSourceValues,
   collapsed,
-  minimizedElements,
   hideCode = false,
   hideHeader = false,
   onRunCell,
@@ -127,7 +124,6 @@ export function Cell({
   onChangeNotesSource,
   onChangeTestSource,
   onToggleCollapse,
-  onToggleMinimize,
   onRenameCell,
   onAddElement,
   onRemoveElement,
@@ -153,6 +149,20 @@ export function Cell({
   const [codeFraction, setCodeFraction] = useState(DEFAULT_CODE_FRACTION)
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const draggingRef = useRef(false)
+
+  // TODO.md #56: every view item (each element, plus the cell's own
+  // output) is a tab in the right-hand column -- only one is visible at a
+  // time, selected here. Pure display state, same "local to this Cell,
+  // not lifted to App.tsx, no server round-trip" precedent as
+  // codeFraction above: which tab is showing has no effect on execution
+  // or reactivity, it's purely which already-computed thing is on
+  // screen. `'__output__'` is a synthetic id (never a valid element
+  // name, since element names come from `ui.slider("name", ...)`-style
+  // calls that share the same namespace cells write into) rather than a
+  // separate `activeTab: string | null` union, so the "which tab" state
+  // stays a single plain string throughout.
+  const OUTPUT_TAB = '__output__'
+  const [activeTab, setActiveTab] = useState<string>(OUTPUT_TAB)
 
   const handleResizeMove = useCallback((event: PointerEvent) => {
     const body = bodyRef.current
@@ -310,102 +320,89 @@ export function Cell({
             className="cs-cell-side"
             style={{ flexBasis: hideCode ? '100%' : `${(1 - codeFraction) * 100}%` }}
           >
-            {meta.elements.length > 0 && (
-              <div className="cs-cell-elements">
-                {/* Rendered in the exact order they're declared in the
-                    cell's `elements=[...]` list, not grouped by kind --
-                    an author who writes `ui.notes(...)` before
-                    `ui.slider(...)` sees notes rendered first in the
-                    browser too. Previously input/viewer/test elements
-                    were each their own separately-ordered block, so a
-                    notes element declared first in the source could
-                    still render *after* a slider declared later. */}
-                {meta.elements.map((element) => {
-                  if (minimizedElements[element.name]) {
-                    return (
-                      <MinimizedElement
-                        key={element.name}
-                        elementId={element.name}
-                        onToggleMinimize={() => onToggleMinimize(element.name)}
-                      />
-                    )
-                  }
-                  if (isInputElement(element.kind)) {
-                    return (
-                      <ElementWidget
-                        key={element.name}
-                        element={element}
-                        value={elementValues[element.name]}
-                        onSetValue={onSetElementValue}
-                        onToggleMinimize={() => onToggleMinimize(element.name)}
-                      />
-                    )
-                  }
-                  if (isViewerElement(element.kind)) {
-                    return (
-                      <ViewerElementWidget
-                        key={element.name}
-                        element={element}
-                        content={state?.elementContent[element.name]}
-                        onChangeNotesSource={onChangeNotesSource}
-                        onToggleMinimize={() => onToggleMinimize(element.name)}
-                      />
-                    )
-                  }
-                  if (isTestElement(element.kind)) {
-                    const content = state?.elementContent[element.name]
-                    return (
-                      <div className="cs-element-wrapper" key={element.name}>
-                        <TestsElementWidget
-                          elementId={element.name}
-                          source={
-                            testSourceValues[element.name] ?? String(element.config.default ?? '')
-                          }
-                          result={isTestResult(content) ? content : null}
-                          onChangeSource={(source) => onChangeTestSource(element.name, source)}
-                        />
-                        <button
-                          type="button"
-                          className="cs-minimize-toggle"
-                          onClick={() => onToggleMinimize(element.name)}
-                          aria-label={`Minimize ${element.name}`}
-                        >
-                          {'▾'}
-                        </button>
-                      </div>
-                    )
-                  }
-                  return null
-                })}
-              </div>
-            )}
+            {/* TODO.md #56: one tab per element (in the exact order
+                they're declared in the cell's `elements=[...]` list, same
+                as the pre-tab stacked layout) plus a trailing Output tab
+                -- only the selected tab's content renders below, so
+                per-element minimize (which existed to save vertical
+                space in the old always-stacked layout) has nothing left
+                to do here and is intentionally not consulted. If the
+                previously-active tab no longer exists (its element was
+                just removed via the edit panel), `find` falls through to
+                `undefined` and the `??`s below fall back to the Output
+                tab rather than rendering a dead selection. */}
+            <div className="cs-cell-tabs" role="tablist">
+              {meta.elements.map((element) => (
+                <button
+                  key={element.name}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === element.name}
+                  className={`cs-cell-tab ${activeTab === element.name ? 'cs-cell-tab-active' : ''}`}
+                  onClick={() => setActiveTab(element.name)}
+                >
+                  {element.name}
+                </button>
+              ))}
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === OUTPUT_TAB}
+                className={`cs-cell-tab ${activeTab === OUTPUT_TAB ? 'cs-cell-tab-active' : ''}`}
+                onClick={() => setActiveTab(OUTPUT_TAB)}
+              >
+                Output
+              </button>
+            </div>
 
-            <CellOutputView
-              error={state?.error ?? null}
-              kind={state?.kind ?? null}
-              data={state?.data}
-              value={state?.value}
-            />
+            <div className="cs-cell-tab-content">
+              {(() => {
+                const element = meta.elements.find((e) => e.name === activeTab)
+                if (!element) {
+                  return (
+                    <CellOutputView
+                      error={state?.error ?? null}
+                      kind={state?.kind ?? null}
+                      data={state?.data}
+                      value={state?.value}
+                    />
+                  )
+                }
+                if (isInputElement(element.kind)) {
+                  return (
+                    <ElementWidget
+                      element={element}
+                      value={elementValues[element.name]}
+                      onSetValue={onSetElementValue}
+                    />
+                  )
+                }
+                if (isViewerElement(element.kind)) {
+                  return (
+                    <ViewerElementWidget
+                      element={element}
+                      content={state?.elementContent[element.name]}
+                      onChangeNotesSource={onChangeNotesSource}
+                    />
+                  )
+                }
+                if (isTestElement(element.kind)) {
+                  const content = state?.elementContent[element.name]
+                  return (
+                    <TestsElementWidget
+                      elementId={element.name}
+                      source={testSourceValues[element.name] ?? String(element.config.default ?? '')}
+                      result={isTestResult(content) ? content : null}
+                      onChangeSource={(source) => onChangeTestSource(element.name, source)}
+                    />
+                  )
+                }
+                return null
+              })()}
+            </div>
           </div>
         </div>
       )}
-    </div>
-  )
-}
-
-function MinimizedElement({
-  elementId,
-  onToggleMinimize,
-}: {
-  elementId: string
-  onToggleMinimize: () => void
-}) {
-  return (
-    <div className="cs-element cs-element-minimized">
-      <button type="button" className="cs-minimize-toggle" onClick={onToggleMinimize} aria-label="Restore element">
-        {'▸'}
-      </button>
-      <span className="cs-element-label">{elementId}</span>
     </div>
   )
 }

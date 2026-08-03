@@ -2586,6 +2586,67 @@ reshape the plan below and are called out explicitly where they apply:
   header, and confirmed a *successful* delete shows no error banner
   (no false positives).
 
+- [x] **56. Make it so that the view items are in tabs across the right side.**
+  User's own explicit ask. Before this, a cell's right-hand column
+  (`.cs-cell-side`) stacked everything vertically and always -- every
+  input widget (sliders, buttons, text inputs), every viewer element
+  (notes, images, tests, iframes, turtle canvases), then the cell's own
+  printed/plotted output at the bottom, all visible at once. A cell
+  with several elements plus a long output could run quite tall,
+  pushing the code editor beside it to match (`.cs-cell-body`'s
+  `align-items: stretch`, #29) and making a "Cells" view with more than
+  a couple of busy cells require a lot of scrolling.
+
+  Asked the user directly which things should become tabs, since "view
+  items" was ambiguous between "just the output" and "everything
+  including input widgets" -- confirmed the latter: every element and
+  the output each get their own tab, one visible at a time, in
+  `Cell.tsx`. Tabs render in the exact order elements are declared in
+  the cell's `elements=[...]` list (same ordering guarantee the old
+  stacked layout had), with a synthetic trailing "Output" tab that's
+  selected by default. Applies uniformly to both the flat "Cells" view
+  and the "Slides" presentation view, since both render through the
+  same `Cell` component with no view-specific branching needed.
+
+  Per-element minimize (ARCHITECTURE.md section 8, #17) existed to
+  save vertical space in the old always-stacked layout -- once tab
+  selection already means "show one thing, hide the rest," it has
+  nothing left to do, so it's removed end-to-end from the frontend:
+  `Cell`'s `minimizedElements`/`onToggleMinimize` props, the
+  `MinimizedElement` component, `App.tsx`'s `minimizedElements` state
+  and `handleToggleMinimize` (which sent `set_ui_state`'s `minimized`
+  field), and the matching plumbing through `SlideShow.tsx`.
+  `ElementWidget`/`ViewerElementWidget`'s own `onToggleMinimize` prop
+  was made optional rather than deleted outright, since a future caller
+  stacking multiple elements at once could still opt back in; the
+  backend's `SetUiState.minimized` field, `Session`'s per-element
+  `minimized` bool, and their existing tests were deliberately left
+  alone -- this was a frontend layout change, and removing otherwise-
+  working backend infrastructure nobody asked to remove would have
+  been well outside the ask's scope.
+
+  Verified in a real running server via Playwright with a cell
+  carrying a slider, a notes element, and its own output: confirmed 3
+  tabs appeared in the declared order (`speed`, the notes element's own
+  name, `Output`) with Output selected by default; clicking each tab
+  swapped in exactly that element/output and nothing else; dragging the
+  slider while a *different* tab was active still correctly updated
+  the Output tab's value when switched back to (reactivity is
+  independent of which tab happens to be showing); confirmed a
+  zero-element cell shows only the Output tab, with no empty tab strip
+  above it; confirmed adding a new element live via the edit panel
+  (TODO.md #22) immediately produced a new tab with no page reload
+  needed; confirmed the same 3 tabs render identically in Slides view.
+  Along the way, caught my own test-deck mistake, not a real bug:
+  `ui.notes(name)`'s one positional argument is the element's *name*
+  (its content comes from the cell's own docstring, #47's precedent),
+  not the notes text -- passing notes text as if it were a name
+  produced a very long, clearly-wrong tab label, which was the tab
+  strip correctly surfacing a misuse of the API rather than a bug in
+  the tabs themselves. Frontend: `npm run build`/`npm run lint` both
+  clean, no type errors. Full Python suite unaffected (345 passed, 2
+  skipped), as expected for a frontend-only change.
+
 - [ ] **48. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
