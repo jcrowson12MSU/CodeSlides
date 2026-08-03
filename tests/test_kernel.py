@@ -276,9 +276,9 @@ def test_cs_image_writes_element_content():
     results = kernel.run_all(session)
 
     assert session.instances["make_plot"].status == "idle"
-    assert session.instances["make_plot"].elements["plot"].content == "/tmp/figure.png"
+    assert session.instances["make_plot"].elements["plot"].content == ["/tmp/figure.png"]
     assert results["make_plot"].element_writes == [
-        cs.ElementWrite(element_name="plot", kind="image", content="/tmp/figure.png")
+        cs.ElementWrite(element_name="plot", kind="image", content=["/tmp/figure.png"])
     ]
 
 
@@ -449,10 +449,10 @@ def test_element_writes_isolated_across_cloned_sessions():
 
     # mutate b's element content directly (simulating a later write) and
     # confirm a is untouched -- same isolation guarantee as namespace/value
-    session_b.instances["make_plot"].elements["plot"].content = "/tmp/different.png"
+    session_b.instances["make_plot"].elements["plot"].content = ["/tmp/different.png"]
 
-    assert session_a.instances["make_plot"].elements["plot"].content == "/tmp/figure.png"
-    assert session_b.instances["make_plot"].elements["plot"].content == "/tmp/different.png"
+    assert session_a.instances["make_plot"].elements["plot"].content == ["/tmp/figure.png"]
+    assert session_b.instances["make_plot"].elements["plot"].content == ["/tmp/different.png"]
 
 
 def test_reload_deck_affects_new_sessions():
@@ -1157,7 +1157,9 @@ def test_set_element_config_pushes_an_images_new_src_into_the_sessions_content(t
     and written to a real file in `assets/` next to the deck
     (`_save_data_uri_as_asset`) rather than stored inline -- the
     Session's own `content` (what the browser is told to fetch) is the
-    matching `/deck-assets/...` URL, not the data URI itself."""
+    matching `/deck-assets/...` URL, not the data URI itself. An
+    image's `src`/`content` is always a list (even one image), so a
+    second upload can extend it into a carousel."""
     import base64
 
     from codeslides.loader import load_deck
@@ -1173,20 +1175,60 @@ def test_set_element_config_pushes_an_images_new_src_into_the_sessions_content(t
     assert session.instances["live_demo"].elements["photo"].content is None
 
     kernel.set_element_config(
-        session, "live_demo", "photo", {"src": "data:image/png;base64,iVBORw0KGgo="}
+        session, "live_demo", "photo", {"src": ["data:image/png;base64,iVBORw0KGgo="]}
     )
 
     content = session.instances["live_demo"].elements["photo"].content
-    assert content.startswith("/deck-assets/")
-    assert content.endswith(".png")
+    assert len(content) == 1
+    assert content[0].startswith("/deck-assets/")
+    assert content[0].endswith(".png")
     # the real file was actually written next to the deck
-    asset_path = tmp_path / "assets" / content.removeprefix("/deck-assets/")
+    asset_path = tmp_path / "assets" / content[0].removeprefix("/deck-assets/")
     assert asset_path.exists()
     assert asset_path.read_bytes() == base64.b64decode("iVBORw0KGgo=")
     # and the .py file's own src= is the small, portable relative path,
     # never the raw data URI
     saved_element = next(e for e in kernel.deck.cells["live_demo"].elements if e.name == "photo")
-    assert saved_element.config["src"] == f"assets/{content.removeprefix('/deck-assets/')}"
+    assert saved_element.config["src"] == [f"assets/{content[0].removeprefix('/deck-assets/')}"]
+
+
+def test_set_element_config_appends_a_second_image_into_a_carousel(tmp_path):
+    """The user's own request: multiple uploaded images become a
+    carousel. Multi-selecting files in the picker sends the *whole*
+    list (existing images plus newly-picked ones) in one
+    set_element_config call -- confirm the first image's already-
+    written file is left untouched (not re-decoded/re-hashed) while the
+    second, still a fresh data URI, gets its own new file."""
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+    kernel.add_element(session, "live_demo", ui.image("photo"))
+    kernel.set_element_config(session, "live_demo", "photo", {"src": ["data:image/png;base64,iVBORw0KGgo="]})
+    first_content = list(session.instances["live_demo"].elements["photo"].content)
+    # the .py file's own relative src= list, mirroring what
+    # EditCellPanel.tsx echoes back as element.config.src before
+    # appending newly-picked files to it
+    existing_relative_srcs = next(
+        e for e in kernel.deck.cells["live_demo"].elements if e.name == "photo"
+    ).config["src"]
+
+    kernel.set_element_config(
+        session,
+        "live_demo",
+        "photo",
+        {"src": [*existing_relative_srcs, "data:image/png;base64,aVBORw0KGgo="]},
+    )
+
+    content = session.instances["live_demo"].elements["photo"].content
+    assert len(content) == 2
+    assert content[0] == first_content[0]  # untouched, not re-written
+    assert content[1] != content[0]
+    assert content[1].startswith("/deck-assets/")
+    assert len(list((tmp_path / "assets").iterdir())) == 2
 
 
 def test_image_element_with_a_static_src_is_seeded_at_construction(tmp_path):
@@ -1207,7 +1249,7 @@ def test_image_element_with_a_static_src_is_seeded_at_construction(tmp_path):
     kernel = Kernel(deck, deck_path=str(path))
     session = Session(deck=deck)
 
-    assert session.instances["show"].elements["photo"].content == "data:image/png;base64,abc"
+    assert session.instances["show"].elements["photo"].content == ["data:image/png;base64,abc"]
 
 
 def test_save_data_uri_as_asset_writes_a_real_file(tmp_path):

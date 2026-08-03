@@ -30,7 +30,7 @@ from codeslides.deck import Cell, Deck, Element
 from codeslides.graph import DependencyGraph, build_graph
 from codeslides.output import resolve_output, wire_safe_value
 from codeslides.serialization import reattach_decorator, set_notes_docstring, set_tests_default
-from codeslides.session import CellInstance, Session
+from codeslides.session import CellInstance, Session, _deck_asset_url
 
 _NESTED_SCOPE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
 
@@ -1062,28 +1062,33 @@ class Kernel:
         is left alone -- their config isn't rendered directly, only
         interpreted the next time the owning cell runs.
 
-        An `image` element whose new `src` is a freshly-uploaded
-        `data:image/...;base64,...` URI (EditCellPanel.tsx's file
-        picker) is written to a real file on disk first
-        (`_save_data_uri_as_asset`, in an `assets/` folder next to the
-        deck), and `config["src"]` is rewritten to that file's
-        deck-relative path *before* anything is serialized -- so the
-        `.py` file itself only ever gains a small, portable, human-
-        readable `src="assets/<hash>.png"`, never a giant inline blob.
-        Already-relative `src` values (a previously-uploaded image being
-        re-saved, or one hand-written in the source) pass through
-        untouched -- only a literal `data:` URI triggers a new write, so
-        this is safe to call repeatedly for the same element. The
-        browser itself still needs an *absolute URL* to actually fetch
-        the file (a relative disk path means nothing to `<img src>`), so
-        `instance.content` below gets `/deck-assets/<relative path
-        with the "assets/" prefix stripped>` -- the matching
-        `StaticFiles` mount `server.py`'s `create_app` registers at that
-        same prefix, rooted at the deck's own `assets/` directory. The
-        `.py` file's own `src=` and the browser's `instance.content` are
-        deliberately different strings for exactly this reason: one is
-        for a human reading the source, the other is for a running
-        browser tab.
+        An `image` element's `src` is always a *list* (`ui.image`'s own
+        constructor normalizes it, so this holds regardless of how the
+        element was originally written) -- more than one image renders
+        as a carousel (`ImageViewer`), the normal result of multi-
+        selecting files in the upload picker (EditCellPanel.tsx's file
+        input). Each item in the list is handled independently: a
+        freshly-uploaded `data:image/...;base64,...` URI is written to
+        a real file on disk (`_save_data_uri_as_asset`, in an `assets/`
+        folder next to the deck) and replaced with that file's deck-
+        relative path *before* anything is serialized, while an already-
+        relative path (an existing image passing through untouched, or
+        one hand-written into the source) is left alone -- so the `.py`
+        file itself only ever gains small, portable, human-readable
+        `src=["assets/<hash>.png", ...]` entries, never inline blobs,
+        and calling this repeatedly with the same list (e.g. re-saving
+        after adding one more image) never re-writes files that are
+        already on disk. The browser itself still needs *absolute URLs*
+        to actually fetch each file (a relative disk path means nothing
+        to `<img src>`), so `instance.content` below becomes the list of
+        `/deck-assets/...` URLs (`_deck_asset_url`, shared with
+        `Session.seed_cell_instance`'s equivalent pre-upload seeding) --
+        the matching `StaticFiles` mount `server.py`'s `create_app`
+        registers at that same prefix, rooted at the deck's own
+        `assets/` directory. The `.py` file's own `src=` and the
+        browser's `instance.content` are deliberately different strings
+        for exactly this reason: one is for a human reading the source,
+        the other is for a running browser tab.
 
         Also resyncs any pending, unsaved `session.source_overrides`
         entry for this cell (`_resync_stale_override`), same reasoning
@@ -1095,14 +1100,21 @@ class Kernel:
 
         cell_before = self.deck.cells[cell_name]
         element_before = next((e for e in cell_before.elements if e.name == element_name), None)
-        if (
-            element_before is not None
-            and element_before.kind == "image"
-            and isinstance(config.get("src"), str)
-            and config["src"].startswith("data:")
-        ):
-            relative_src = _save_data_uri_as_asset(self.deck_path, config["src"])
-            config = {**config, "src": relative_src}
+        if element_before is not None and element_before.kind == "image" and isinstance(config.get("src"), list):
+            # Each item is independently either a fresh data: URI (a
+            # newly-picked file -- EditCellPanel.tsx's multi-select
+            # upload sends the *whole* list, existing images plus
+            # newly-picked ones, in one call) or an already-relative
+            # asset path (an existing image passing through untouched)
+            # -- only the former triggers a new write, so this is safe
+            # to call repeatedly for the same list of images.
+            config = {
+                **config,
+                "src": [
+                    _save_data_uri_as_asset(self.deck_path, s) if isinstance(s, str) and s.startswith("data:") else s
+                    for s in config["src"]
+                ],
+            }
 
         from codeslides.serialization import set_element_config as _set_element_config_on_disk
 
@@ -1118,10 +1130,10 @@ class Kernel:
         if element is not None and element.kind in ("iframe", "image") and cell_name in session.instances:
             instance = session.instances[cell_name].elements.get(element_name)
             if instance is not None:
-                src = config.get("src", "")
-                if element.kind == "image" and isinstance(src, str) and src.startswith("assets/"):
-                    src = f"/deck-assets/{src[len('assets/') :]}"
-                instance.content = src
+                if element.kind == "image":
+                    instance.content = [_deck_asset_url(s) for s in config.get("src", [])]
+                else:
+                    instance.content = config.get("src", "")
         return cell
 
     def _resync_stale_override(self, session: Session, cell_name: str) -> None:

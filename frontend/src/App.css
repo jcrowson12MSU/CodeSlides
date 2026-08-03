@@ -500,6 +500,44 @@ body.cs-resizing {
   border: 1px solid #ddd;
 }
 
+.cs-image-carousel-frame {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cs-image-carousel-prev,
+.cs-image-carousel-next {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 1px solid #ddd;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  width: 2rem;
+  height: 2rem;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cs-image-carousel-prev {
+  left: 0.4rem;
+}
+
+.cs-image-carousel-next {
+  right: 0.4rem;
+}
+
+.cs-image-carousel-counter {
+  align-self: center;
+  margin-top: 0.3rem;
+  font-family: system-ui, sans-serif;
+  font-size: var(--cs-font-tight);
+  color: #666;
+}
+
 .cs-iframe-viewer {
   width: 100%;
   height: 240px;

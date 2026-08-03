@@ -14,8 +14,23 @@ export interface ImageViewerProps {
   content: unknown
 }
 
+// An image element's content is always a list of sources (kernel.py's
+// cs.image()/set_element_config both normalize to this, even for a
+// single image) -- one item renders as a plain image with no carousel
+// chrome; more than one (the result of multi-selecting files in the
+// upload picker, or several cs.image() calls across a deck's lifetime)
+// renders as a carousel with prev/next arrows and a position counter.
+// The current slide index is local UI state (ARCHITECTURE.md section
+// 8: never sent to the server, same as notes' edit/preview toggle) --
+// clamped on every render rather than just at mount, since `content`
+// can shrink (a re-run with fewer images) out from under whatever
+// slide was showing.
 export function ImageViewer({ elementId, content }: ImageViewerProps) {
-  if (!content || typeof content !== 'string') {
+  const sources = Array.isArray(content) ? content.filter((s): s is string => typeof s === 'string') : []
+  const [rawIndex, setIndex] = useState(0)
+  const index = sources.length === 0 ? 0 : Math.min(rawIndex, sources.length - 1)
+
+  if (sources.length === 0) {
     return (
       <div className="cs-element cs-element-viewer cs-element-empty">
         <span className="cs-element-label">{elementId}</span>
@@ -23,10 +38,41 @@ export function ImageViewer({ elementId, content }: ImageViewerProps) {
       </div>
     )
   }
+
+  if (sources.length === 1) {
+    return (
+      <div className="cs-element cs-element-viewer">
+        <span className="cs-element-label">{elementId}</span>
+        <img className="cs-image-viewer" src={sources[0]} alt={elementId} />
+      </div>
+    )
+  }
+
   return (
-    <div className="cs-element cs-element-viewer">
+    <div className="cs-element cs-element-viewer cs-image-carousel">
       <span className="cs-element-label">{elementId}</span>
-      <img className="cs-image-viewer" src={content} alt={elementId} />
+      <div className="cs-image-carousel-frame">
+        <img className="cs-image-viewer" src={sources[index]} alt={`${elementId} (${index + 1} of ${sources.length})`} />
+        <button
+          type="button"
+          className="cs-image-carousel-prev"
+          aria-label="Previous image"
+          onClick={() => setIndex((i) => (i - 1 + sources.length) % sources.length)}
+        >
+          {'‹'}
+        </button>
+        <button
+          type="button"
+          className="cs-image-carousel-next"
+          aria-label="Next image"
+          onClick={() => setIndex((i) => (i + 1) % sources.length)}
+        >
+          {'›'}
+        </button>
+      </div>
+      <span className="cs-image-carousel-counter">
+        {index + 1} / {sources.length}
+      </span>
     </div>
   )
 }

@@ -2417,6 +2417,67 @@ reshape the plan below and are called out explicitly where they apply:
   clicked Save, then did a genuine fresh page reload and confirmed the
   image still rendered correctly, served from the real file.
 
+- [x] **54. Multiple uploaded images on one element become a carousel.**
+  User's own explicit ask, following #52/#53's single-image upload:
+  "If multiple images are uploaded, they need to be put in an image
+  carousel." Before this, an `image` element held exactly one `src` --
+  uploading a second image just replaced the first, since both
+  `ui.image`'s config and `cs.image()`'s runtime write were single
+  strings all the way through `seed_cell_instance`, `set_element_config`,
+  and `ImageViewer`.
+
+  Confirmed the trigger with the user first: multi-selecting several
+  files in one upload builds the carousel (not "each individual
+  re-upload appends one more"), since that's the more predictable,
+  Explorer/Finder-native gesture.
+
+  `ui.image`'s own `src` config is now always a `list[str]`, regardless
+  of how it's given -- a bare string (`src="assets/x.png"`, the shape
+  every pre-existing single-image deck already uses) is wrapped in a
+  one-element list at construction, so old decks load with zero changes
+  needed. `cs.image(name, path)` (a cell's own runtime call) likewise
+  always records a one-item list -- same uniform shape whether an
+  image came from code or from an upload, so `ImageViewer` never has
+  to tell the two apart. `Kernel.set_element_config` now handles a
+  *list* of `src` values: each item is decoded independently only if
+  it's a fresh `data:` URI (`_save_data_uri_as_asset`, unchanged from
+  #53) -- an already-relative path (an existing image passing through
+  untouched) is left alone, so re-saving after adding one more image
+  never re-writes files already on disk. `Session.seed_cell_instance`
+  and `Kernel.set_element_config` both translate every item in the
+  list from its deck-relative `assets/...` path to the browser-facing
+  `/deck-assets/...` URL via one new shared helper,
+  `session.py`'s `_deck_asset_url` (previously this translation was a
+  small duplicated one-liner in two places; now that both need to map
+  a *list*, it's one function instead of two copies that could drift).
+
+  EditCellPanel.tsx's file input gained the `multiple` attribute --
+  selecting several files at once reads all of them via
+  `FileReader.readAsDataURL`, then sends the *whole* resulting list
+  (existing images plus newly-picked ones, in order) as one
+  `set_element_config` call. `ImageViewer` now renders a plain image
+  with no extra chrome when there's exactly one source (unchanged
+  appearance for every existing single-image deck), or a carousel --
+  prev/next arrows, a "N / total" counter, wrapping at both ends --
+  whenever there's more than one.
+
+  Verified with 5 new tests (`ui.image`'s bare-string/list-normalizing
+  constructor; `Kernel.set_element_config` appending a second image
+  without re-writing the first; a full multi-file `SetElementConfig`
+  round trip through `ws_handler.py` producing 3 distinct real files)
+  plus 10 existing tests updated for the new always-a-list shape
+  (`cs.image`'s own `ElementWrite`, `execute_cell`'s content, seeding,
+  and every `set_element_config`/`element_output` assertion that
+  previously expected a bare string). Full suite: 319 passed, 2
+  skipped. Frontend: `npm run build`/`npm run lint` both clean, no
+  type errors. Verified in a real running server via Playwright:
+  selected 3 distinct PNGs at once in the file picker, confirmed the
+  carousel showed "1 / 3" with working prev/next navigation
+  (including wraparound), clicked Save, confirmed the `.py` file
+  gained a 3-item `src=[...]` list and 3 real, distinct files appeared
+  in `assets/`, then did a genuine fresh page reload and confirmed the
+  carousel still rendered correctly with all 3 images.
+
 - [ ] **48. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local

@@ -96,7 +96,7 @@ def test_run_all_emits_element_output_for_cs_image_write():
     assert len(element_outputs) == 1
     assert element_outputs[0].cell_id == "make_plot"
     assert element_outputs[0].element_id == "plot"
-    assert element_outputs[0].content == "/tmp/figure.png"
+    assert element_outputs[0].content == ["/tmp/figure.png"]
 
 
 def test_run_all_surfaces_an_images_static_src_without_any_cs_image_call():
@@ -124,7 +124,7 @@ def test_run_all_surfaces_an_images_static_src_without_any_cs_image_call():
     assert len(element_outputs) == 1
     assert element_outputs[0].cell_id == "show_photo"
     assert element_outputs[0].element_id == "photo"
-    assert element_outputs[0].content == "data:image/png;base64,abc"
+    assert element_outputs[0].content == ["data:image/png;base64,abc"]
 
 
 def test_run_all_surfaces_notes_docstring_without_any_write():
@@ -1083,7 +1083,7 @@ def test_set_element_config_on_an_image_emits_element_config_set_and_element_out
             cell_id="live_demo",
             element_name="photo",
             kind="image",
-            config={"src": ""},
+            config={"src": []},
         ),
     )
 
@@ -1093,7 +1093,7 @@ def test_set_element_config_on_an_image_emits_element_config_set_and_element_out
             session_id=session.session_id,
             cell_id="live_demo",
             element_id="photo",
-            config={"src": "data:image/png;base64,iVBORw0KGgo="},
+            config={"src": ["data:image/png;base64,iVBORw0KGgo="]},
         ),
     )
 
@@ -1102,11 +1102,55 @@ def test_set_element_config_on_an_image_emits_element_config_set_and_element_out
     assert ElementOutput in kinds
     output = next(m for m in messages if isinstance(m, ElementOutput))
     assert output.element_id == "photo"
-    assert output.content.startswith("/deck-assets/")
-    assert output.content.endswith(".png")
-    saved_src = f"assets/{output.content.removeprefix('/deck-assets/')}"
+    assert len(output.content) == 1
+    assert output.content[0].startswith("/deck-assets/")
+    assert output.content[0].endswith(".png")
+    saved_src = f"assets/{output.content[0].removeprefix('/deck-assets/')}"
     assert saved_src in path.read_text()
     assert "data:image" not in path.read_text()
+
+
+def test_set_element_config_with_multiple_new_images_builds_a_carousel(tmp_path):
+    """The user's own request: selecting multiple files at once in the
+    upload picker (EditCellPanel.tsx's multi-select file input) sends
+    every new image as one `SetElementConfig` call -- confirm all of
+    them land as separate real files and separate `/deck-assets/`
+    entries, in the order they were picked."""
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    handle_message(
+        registry,
+        AddElement(
+            session_id=session.session_id,
+            cell_id="live_demo",
+            element_name="gallery",
+            kind="image",
+            config={"src": []},
+        ),
+    )
+
+    messages = handle_message(
+        registry,
+        SetElementConfig(
+            session_id=session.session_id,
+            cell_id="live_demo",
+            element_id="gallery",
+            config={
+                "src": [
+                    "data:image/png;base64,iVBORw0KGgo=",
+                    "data:image/png;base64,aVBORw0KGgo=",
+                    "data:image/png;base64,bVBORw0KGgo=",
+                ]
+            },
+        ),
+    )
+
+    output = next(m for m in messages if isinstance(m, ElementOutput))
+    assert output.element_id == "gallery"
+    assert len(output.content) == 3
+    assert len(set(output.content)) == 3  # three distinct files, not duplicates
+    assert all(c.startswith("/deck-assets/") for c in output.content)
+    assert len(list((tmp_path / "assets").iterdir())) == 3
 
 
 def test_set_element_config_unknown_session_produces_error_not_crash(tmp_path):

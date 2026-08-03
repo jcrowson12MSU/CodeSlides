@@ -14,7 +14,11 @@ def test_execution_context_collects_writes():
         cs.iframe("frame", "https://example.com")
 
     assert writes == [
-        cs.ElementWrite(element_name="plot", kind="image", content="/tmp/a.png"),
+        # a one-item list, not a bare string -- an image element's
+        # content is always a list, uniform with the multi-image
+        # carousel a browser upload can produce (cs.image's own
+        # docstring)
+        cs.ElementWrite(element_name="plot", kind="image", content=["/tmp/a.png"]),
         cs.ElementWrite(element_name="frame", kind="iframe", content="https://example.com"),
     ]
 

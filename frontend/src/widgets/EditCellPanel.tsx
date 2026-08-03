@@ -12,7 +12,7 @@ const ELEMENT_KIND_DEFAULTS: Record<string, Record<string, unknown>> = {
   button: { label: '' },
   text_input: { default: '' },
   turtle_canvas: { width: 400, height: 400 },
-  image: { src: '' },
+  image: { src: [] },
   iframe: { src: '', height: 240 },
   // No config keys at all -- a notes element's content is always its
   // owning cell's own docstring (ui.py's notes(), deck.py's
@@ -103,25 +103,39 @@ export function EditCellPanel({
     onSetElementConfig(element.name, { ...element.config, src })
   }
 
-  // Reads the chosen file as a base64 data URI (FileReader.readAsDataURL)
-  // and sends it through the same set_element_config path the iframe URL
-  // textbox already uses -- so an uploaded image is stored directly in
-  // the element's own config (`ui.image(name, src="data:...")`), no
-  // separate upload endpoint/asset folder needed. Pushed immediately on
-  // file selection (no separate submit step) since a file picker has no
-  // meaningful "draft" state the way a text field does -- picking a file
-  // *is* the action.
+  // Reads every chosen file (the input allows multi-select) as a base64
+  // data URI (FileReader.readAsDataURL) and sends the whole resulting
+  // list -- the element's existing images plus the newly-picked ones,
+  // in that order -- through the same set_element_config path the
+  // iframe URL textbox already uses. `Kernel.set_element_config`
+  // decodes only the freshly-added `data:` entries (existing entries
+  // are already-relative asset paths and pass through untouched), so
+  // repeated uploads onto the same element accumulate into a carousel
+  // (`ImageViewer`) rather than each one replacing the last. Pushed
+  // immediately on file selection (no separate submit step) since a
+  // file picker has no meaningful "draft" state the way a text field
+  // does -- picking files *is* the action.
   function handleImageFileChange(event: React.ChangeEvent<HTMLInputElement>, element: ElementMeta) {
-    const file = event.target.files?.[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        onSetElementConfig(element.name, { ...element.config, src: reader.result })
-      }
-    }
-    reader.readAsDataURL(file)
-    event.target.value = '' // allow re-selecting the same file later
+    const files = Array.from(event.target.files ?? [])
+    if (files.length === 0) return
+    const existing = Array.isArray(element.config.src) ? element.config.src : []
+    Promise.all(
+      files.map(
+        (file) =>
+          new Promise<string>((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => {
+              if (typeof reader.result === 'string') resolve(reader.result)
+              else reject(new Error('FileReader did not produce a data URI'))
+            }
+            reader.onerror = () => reject(reader.error ?? new Error('FileReader failed'))
+            reader.readAsDataURL(file)
+          }),
+      ),
+    ).then((dataUris) => {
+      onSetElementConfig(element.name, { ...element.config, src: [...existing, ...dataUris] })
+    })
+    event.target.value = '' // allow re-selecting the same file(s) later
   }
 
   function handleIframeHeightSubmit(event: React.FormEvent, element: ElementMeta) {
@@ -209,6 +223,7 @@ export function EditCellPanel({
                     id={`${cellId}-${element.name}-upload`}
                     type="file"
                     accept="image/*"
+                    multiple
                     onChange={(event) => handleImageFileChange(event, element)}
                   />
                 </div>

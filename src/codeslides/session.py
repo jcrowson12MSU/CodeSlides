@@ -21,6 +21,25 @@ from typing import Any
 from codeslides.deck import Cell, Deck
 
 
+def _deck_asset_url(src: str) -> str:
+    """Translate an `image` element's own deck-relative asset path
+    (`assets/<hash>.ext`, written by `Kernel.set_element_config`'s
+    upload handling -- see `kernel.py`'s `_save_data_uri_as_asset`)
+    into the absolute URL a running browser tab can actually fetch:
+    `server.py`'s `create_app` mounts a `StaticFiles` route at
+    `/deck-assets/`, rooted at that same `assets/` directory. Anything
+    that isn't a bare `assets/...` path (a full URL, or one hand-
+    written into the deck's source) passes through unchanged -- this
+    mount only ever serves uploaded files, never arbitrary URLs.
+
+    Shared between `seed_cell_instance` below (an image's static `src=`
+    seeded before any upload happens in *this* Session) and
+    `kernel.py`'s `Kernel.set_element_config` (a fresh upload's content,
+    pushed the moment it's set) -- both need the exact same mapping,
+    so it lives in one place rather than two copies that could drift."""
+    return f"/deck-assets/{src[len('assets/') :]}" if src.startswith("assets/") else src
+
+
 @dataclass
 class ElementInstance:
     """An Element's live state within one Session.
@@ -118,19 +137,18 @@ class Session:
             elif element.kind == "iframe" and element.config.get("src"):
                 seeded_content = element.config["src"]
             elif element.kind == "image" and element.config.get("src"):
-                # An image's own `src=` is a deck-relative disk path
-                # (`assets/<hash>.ext`, written by Kernel.set_element_config's
-                # upload handling) -- the browser needs the matching
-                # absolute URL server.py's `/deck-assets/` static mount
-                # actually serves, not the raw relative path a person
-                # reading the .py file sees. Same translation
-                # Kernel.set_element_config applies when pushing a fresh
-                # upload's content; this is the "seeded before any
-                # upload in *this* Session" version of the same rule.
-                src = element.config["src"]
-                seeded_content = (
-                    f"/deck-assets/{src[len('assets/') :]}" if src.startswith("assets/") else src
-                )
+                # An image element's own `src=` is a list of deck-
+                # relative disk paths (`assets/<hash>.ext`, written by
+                # Kernel.set_element_config's upload handling) -- more
+                # than one renders as a carousel (ImageViewer). The
+                # browser needs the matching absolute URL server.py's
+                # `/deck-assets/` static mount actually serves, not the
+                # raw relative path a person reading the .py file sees.
+                # Same per-item translation Kernel.set_element_config
+                # applies when pushing a fresh upload's content; this is
+                # the "seeded before any upload in *this* Session"
+                # version of the same rule.
+                seeded_content = [_deck_asset_url(src) for src in element.config["src"]]
             instance.elements.setdefault(
                 element.name,
                 # `notes` elements are authored content, not computed

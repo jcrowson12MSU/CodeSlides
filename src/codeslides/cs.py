@@ -79,8 +79,19 @@ def _record(element_name: str, kind: str, content: Any) -> None:
 
 def image(element_name: str, path_or_bytes: Any) -> None:
     """Write image content (a file path, URL, or raw bytes) to the named
-    `image` viewer element on the currently-executing cell."""
-    _record(element_name, "image", path_or_bytes)
+    `image` viewer element on the currently-executing cell.
+
+    Always recorded as a one-item list, even for this single call --
+    an `image` element's content is always a list (`ui.image`'s own
+    config, and a browser upload's `set_element_config` handling, both
+    normalize to one), so the frontend's `ImageViewer` never has to
+    tell apart "a single image from code" and "one image from an
+    upload" as two different content shapes. Calling `cs.image(...)`
+    again for the same element on a later run *replaces* this list
+    wholesale (exactly one call's worth of content) -- it does not
+    append to whatever a previous upload put there; only the browser's
+    own multi-select upload builds a multi-image carousel."""
+    _record(element_name, "image", [path_or_bytes])
 
 
 def iframe(element_name: str, src: str) -> None:

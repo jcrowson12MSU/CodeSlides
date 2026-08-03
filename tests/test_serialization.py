@@ -621,26 +621,40 @@ def test_ui_iframe_defaults_to_a_240px_height():
     assert element.config == {"src": "", "height": 240}
 
 
-def test_ui_image_defaults_to_an_empty_src():
+def test_ui_image_defaults_to_no_images():
     element = ui.image("photo")
-    assert element.config == {"src": ""}
+    assert element.config == {"src": []}
+
+
+def test_ui_image_wraps_a_bare_string_src_in_a_one_item_list():
+    """A pre-existing single-image deck (written before multi-image
+    support) calls `ui.image(name, src="assets/x.png")` with a bare
+    string -- must still parse correctly, normalized the same way a
+    list would be."""
+    element = ui.image("photo", src="assets/x.png")
+    assert element.config == {"src": ["assets/x.png"]}
+
+
+def test_ui_image_accepts_a_list_of_multiple_sources():
+    element = ui.image("photo", src=["assets/a.png", "assets/b.png"])
+    assert element.config == {"src": ["assets/a.png", "assets/b.png"]}
 
 
 def test_set_element_config_updates_an_images_src(deck_file):
     """Same round trip as iframe's own version of this test.
     `serialization.set_element_config` itself is kind-agnostic --
-    it serializes whatever `src` string it's given verbatim, whether
-    that's a URL, a deck-relative asset path (the normal shape once
+    it serializes whatever `src` list it's given verbatim, whether
+    that's URLs, deck-relative asset paths (the normal shape once
     `Kernel.set_element_config` has decoded an upload -- see
     kernel.py's `_save_data_uri_as_asset`), or (as tested directly
-    here, bypassing the Kernel layer) a raw data URI."""
+    here, bypassing the Kernel layer) raw data URIs."""
     add_element(str(deck_file), "live_demo", ui.image("photo"))
 
-    set_element_config(str(deck_file), "live_demo", "photo", {"src": "data:image/png;base64,abc"})
+    set_element_config(str(deck_file), "live_demo", "photo", {"src": ["data:image/png;base64,abc"]})
 
     deck = load_deck(str(deck_file))
     photo = next(e for e in deck.cells["live_demo"].elements if e.name == "photo")
-    assert photo.config == {"src": "data:image/png;base64,abc"}
+    assert photo.config == {"src": ["data:image/png;base64,abc"]}
 
 
 def test_set_element_config_updates_an_iframes_height(deck_file):
