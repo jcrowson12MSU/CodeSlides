@@ -2354,6 +2354,69 @@ reshape the plan below and are called out explicitly where they apply:
   genuine fresh page load (brand-new Session, no upload interaction)
   and confirmed the image still rendered correctly from disk.
 
+- [x] **53. Store uploaded images as real files next to the deck, not embedded base64 -- "when Save is clicked, make sure all view items are saved including images."**
+  Follow-up to #52's image uploader. That version embedded an uploaded
+  image directly as `ui.image(name, src="data:image/png;base64,...")`
+  in the `.py` file -- correct and already independent of the Save
+  button (uploads write to disk immediately via `set_element_config`),
+  but the user's actual ask, once clarified, was for a real image file
+  on disk next to the deck, not an inline blob bloating the source file.
+
+  Investigated the "images aren't saved" framing first: tried every
+  ordering I could construct (upload-then-edit-code, edit-code-then-
+  upload, add-element-then-upload, multiple cells at once) and Save
+  correctly persisted the image's `src` in every case already --
+  `Kernel.set_element_config`'s existing `_resync_stale_override` call
+  keeps a pending code edit's own decorator in sync with whatever the
+  image's config currently is, regardless of ordering. The real ask
+  turned out to be about *how* the image is stored, not a persistence
+  bug -- confirmed directly with the user before implementing.
+
+  Added `Kernel._save_data_uri_as_asset(deck_path, data_uri)`: decodes
+  a `data:<mime>;base64,...` URI and writes it to `<deck dir>/assets/`,
+  named `sha256(bytes)[:16] + extension` (extension inferred from the
+  MIME type) -- re-uploading the identical image is a no-op (same
+  hash, same filename, existing file left alone), two different
+  images can't realistically collide, and there's no need for the
+  browser to send an original filename at all. `Kernel.set_element_config`
+  now intercepts an `image` element's new `src` when (and only when)
+  it's a fresh `data:` URI -- an already-relative `src` (a previously-
+  uploaded image being re-saved, or one hand-written in the source)
+  passes through untouched, so this is safe to call repeatedly for the
+  same element. The `.py` file's own `src=` becomes the small, portable,
+  human-readable relative path (`src="assets/<hash>.png"`) -- a person
+  copying the whole deck folder elsewhere still has working images.
+
+  The browser still needs an absolute URL to actually fetch the file
+  (a relative disk path means nothing to `<img src>`), so
+  `server.py`'s `create_app` now mounts a second `StaticFiles` route,
+  `/deck-assets/`, rooted at `<deck dir>/assets/` (added whenever
+  `deck_path` is given, alongside the existing frontend-bundle mount
+  at `/`) -- and `Kernel.set_element_config`/`Session.seed_cell_instance`
+  both translate `assets/<hash>.png` to `/deck-assets/<hash>.png` when
+  pushing into `ElementInstance.content`, the one thing that actually
+  reaches a running browser tab. The `.py` file and the live browser
+  deliberately hold two different strings for the same image, for
+  exactly this reason -- one is for a human reading the source, the
+  other is for `<img src>`.
+
+  Verified with 12 new tests (`_save_data_uri_as_asset` directly:
+  writes a real file, dedups identical uploads, gives different images
+  different files, infers the right extension, rejects a non-data-URI
+  and an unsupported MIME type; `Kernel.set_element_config`'s full
+  decode-write-translate path; two new `test_server_api.py` tests
+  confirming the `/deck-assets/` mount actually serves a real file and
+  404s for a missing one) plus 3 existing tests updated for the new
+  on-disk shape (a data URI is no longer what ends up in the `.py`
+  file or the Session's own `content`). Full suite: 315 passed, 2
+  skipped. Verified in a real running server via Playwright: uploaded
+  a real PNG, confirmed a real file appeared at
+  `<deck dir>/assets/<hash>.png` with byte-identical content, confirmed
+  the `.py` file gained the clean relative-path `src=`, confirmed the
+  browser's `<img>` tag correctly resolved `/deck-assets/<hash>.png`,
+  clicked Save, then did a genuine fresh page reload and confirmed the
+  image still rendered correctly, served from the real file.
+
 - [ ] **48. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local

@@ -15,11 +15,14 @@ are unpacked back into the Session's namespace. This avoids relying on
 from __future__ import annotations
 
 import ast
+import base64
+import hashlib
 import io
 import textwrap
 import traceback
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from codeslides import cs, turtle
@@ -30,6 +33,62 @@ from codeslides.serialization import reattach_decorator, set_notes_docstring, se
 from codeslides.session import CellInstance, Session
 
 _NESTED_SCOPE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+
+# Extension for each image MIME type a browser's <input type="file"
+# accept="image/*"> can plausibly hand back via FileReader.readAsDataURL.
+_IMAGE_MIME_EXTENSIONS = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/svg+xml": ".svg",
+    "image/bmp": ".bmp",
+    "image/x-icon": ".ico",
+}
+
+
+def _save_data_uri_as_asset(deck_path: str, data_uri: str) -> str:
+    """Decode an uploaded image's `data:<mime>;base64,<data>` URI
+    (EditCellPanel.tsx's file picker, via `FileReader.readAsDataURL`)
+    and write it as a real file in an `assets/` folder next to the deck
+    file, returning the new file's path relative to the deck's own
+    directory (e.g. `"assets/1f2e3d4c5b6a7988.png"`) -- this is what
+    actually gets stored as `ui.image(name, src=...)` in the `.py` file,
+    so the deck stays a small, readable text file (and portable if its
+    whole directory is copied elsewhere) instead of embedding
+    potentially-large base64 blobs inline.
+
+    Named by a truncated sha256 of the decoded bytes, not the browser's
+    original filename (which the data URI never carries anyway, and
+    which could collide across two unrelated images) -- re-uploading
+    the exact same image byte-for-byte reuses the same file rather than
+    accumulating duplicates, while two different images have no
+    realistic chance of colliding. If a file with that name already
+    exists, it's assumed identical (same hash) and left untouched
+    rather than rewritten.
+
+    Raises `ValueError` if `data_uri` isn't a well-formed
+    `data:<mime>;base64,...` URI, or if `<mime>` isn't one of the image
+    types `_IMAGE_MIME_EXTENSIONS` recognizes."""
+    header, _, encoded = data_uri.partition(",")
+    if not header.startswith("data:") or ";base64" not in header:
+        raise ValueError(f"not a base64 data URI: {data_uri[:40]!r}...")
+    mime = header[len("data:") : header.index(";")]
+    ext = _IMAGE_MIME_EXTENSIONS.get(mime)
+    if ext is None:
+        raise ValueError(f"unsupported image MIME type for upload: {mime!r}")
+
+    raw = base64.b64decode(encoded)
+    digest = hashlib.sha256(raw).hexdigest()[:16]
+    filename = f"{digest}{ext}"
+
+    assets_dir = Path(deck_path).resolve().parent / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    asset_path = assets_dir / filename
+    if not asset_path.exists():
+        asset_path.write_bytes(raw)
+
+    return f"assets/{filename}"
 
 
 def strip_noop_turtle_imports(stmts: list[ast.stmt]) -> list[ast.stmt]:
@@ -1003,6 +1062,29 @@ class Kernel:
         is left alone -- their config isn't rendered directly, only
         interpreted the next time the owning cell runs.
 
+        An `image` element whose new `src` is a freshly-uploaded
+        `data:image/...;base64,...` URI (EditCellPanel.tsx's file
+        picker) is written to a real file on disk first
+        (`_save_data_uri_as_asset`, in an `assets/` folder next to the
+        deck), and `config["src"]` is rewritten to that file's
+        deck-relative path *before* anything is serialized -- so the
+        `.py` file itself only ever gains a small, portable, human-
+        readable `src="assets/<hash>.png"`, never a giant inline blob.
+        Already-relative `src` values (a previously-uploaded image being
+        re-saved, or one hand-written in the source) pass through
+        untouched -- only a literal `data:` URI triggers a new write, so
+        this is safe to call repeatedly for the same element. The
+        browser itself still needs an *absolute URL* to actually fetch
+        the file (a relative disk path means nothing to `<img src>`), so
+        `instance.content` below gets `/deck-assets/<relative path
+        with the "assets/" prefix stripped>` -- the matching
+        `StaticFiles` mount `server.py`'s `create_app` registers at that
+        same prefix, rooted at the deck's own `assets/` directory. The
+        `.py` file's own `src=` and the browser's `instance.content` are
+        deliberately different strings for exactly this reason: one is
+        for a human reading the source, the other is for a running
+        browser tab.
+
         Also resyncs any pending, unsaved `session.source_overrides`
         entry for this cell (`_resync_stale_override`), same reasoning
         as `add_element`."""
@@ -1010,6 +1092,17 @@ class Kernel:
             raise ValueError("cannot set element config: this Kernel was not started from a deck file")
         if cell_name not in self.deck.cells:
             raise ValueError(f"cannot set config for an element in cell {cell_name!r}: it no longer exists")
+
+        cell_before = self.deck.cells[cell_name]
+        element_before = next((e for e in cell_before.elements if e.name == element_name), None)
+        if (
+            element_before is not None
+            and element_before.kind == "image"
+            and isinstance(config.get("src"), str)
+            and config["src"].startswith("data:")
+        ):
+            relative_src = _save_data_uri_as_asset(self.deck_path, config["src"])
+            config = {**config, "src": relative_src}
 
         from codeslides.serialization import set_element_config as _set_element_config_on_disk
 
@@ -1025,7 +1118,10 @@ class Kernel:
         if element is not None and element.kind in ("iframe", "image") and cell_name in session.instances:
             instance = session.instances[cell_name].elements.get(element_name)
             if instance is not None:
-                instance.content = config.get("src", "")
+                src = config.get("src", "")
+                if element.kind == "image" and isinstance(src, str) and src.startswith("assets/"):
+                    src = f"/deck-assets/{src[len('assets/') :]}"
+                instance.content = src
         return cell
 
     def _resync_stale_override(self, session: Session, cell_name: str) -> None:

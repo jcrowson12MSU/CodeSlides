@@ -627,9 +627,13 @@ def test_ui_image_defaults_to_an_empty_src():
 
 
 def test_set_element_config_updates_an_images_src(deck_file):
-    """Same round trip as iframe's own version of this test -- the
-    browser's file-picker (EditCellPanel.tsx) sends a data-URI `src`
-    through this exact path."""
+    """Same round trip as iframe's own version of this test.
+    `serialization.set_element_config` itself is kind-agnostic --
+    it serializes whatever `src` string it's given verbatim, whether
+    that's a URL, a deck-relative asset path (the normal shape once
+    `Kernel.set_element_config` has decoded an upload -- see
+    kernel.py's `_save_data_uri_as_asset`), or (as tested directly
+    here, bypassing the Kernel layer) a raw data URI."""
     add_element(str(deck_file), "live_demo", ui.image("photo"))
 
     set_element_config(str(deck_file), "live_demo", "photo", {"src": "data:image/png;base64,abc"})

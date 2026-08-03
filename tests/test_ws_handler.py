@@ -1067,7 +1067,13 @@ def test_set_element_config_on_an_image_emits_element_config_set_and_element_out
     picker sends a data-URI `src` through this same message) must
     immediately show up -- confirm the full websocket round trip, not
     just the Kernel-level Session state the equivalent test_kernel.py
-    test already checked."""
+    test already checked.
+
+    The data URI is decoded to a real file in `assets/` next to the
+    deck (`Kernel.set_element_config`'s `_save_data_uri_as_asset`) --
+    the browser is told to fetch the matching `/deck-assets/...` URL,
+    and the `.py` file's own `src=` is the small relative path, never
+    the raw data URI."""
     registry, path = _build_file_backed_registry(tmp_path)
     session = registry.create()
     handle_message(
@@ -1096,8 +1102,11 @@ def test_set_element_config_on_an_image_emits_element_config_set_and_element_out
     assert ElementOutput in kinds
     output = next(m for m in messages if isinstance(m, ElementOutput))
     assert output.element_id == "photo"
-    assert output.content == "data:image/png;base64,iVBORw0KGgo="
-    assert "data:image/png;base64,iVBORw0KGgo=" in path.read_text()
+    assert output.content.startswith("/deck-assets/")
+    assert output.content.endswith(".png")
+    saved_src = f"assets/{output.content.removeprefix('/deck-assets/')}"
+    assert saved_src in path.read_text()
+    assert "data:image" not in path.read_text()
 
 
 def test_set_element_config_unknown_session_produces_error_not_crash(tmp_path):

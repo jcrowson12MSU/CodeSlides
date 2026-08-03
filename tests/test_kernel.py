@@ -1149,10 +1149,17 @@ def test_set_element_config_pushes_an_iframes_new_src_into_the_sessions_content(
 
 def test_set_element_config_pushes_an_images_new_src_into_the_sessions_content(tmp_path):
     """The user's own request: uploading an image through the browser's
-    file picker (which lands here as a data-URI `src`, same mechanism as
-    iframe's URL textbox) must show up immediately -- an image's
-    rendered content otherwise only ever changes via the owning cell's
-    own cs.image(...) call during a run."""
+    file picker must show up immediately -- an image's rendered content
+    otherwise only ever changes via the owning cell's own
+    cs.image(...) call during a run.
+
+    A data-URI `src` (what the file picker actually sends) is decoded
+    and written to a real file in `assets/` next to the deck
+    (`_save_data_uri_as_asset`) rather than stored inline -- the
+    Session's own `content` (what the browser is told to fetch) is the
+    matching `/deck-assets/...` URL, not the data URI itself."""
+    import base64
+
     from codeslides.loader import load_deck
 
     path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
@@ -1169,10 +1176,17 @@ def test_set_element_config_pushes_an_images_new_src_into_the_sessions_content(t
         session, "live_demo", "photo", {"src": "data:image/png;base64,iVBORw0KGgo="}
     )
 
-    assert (
-        session.instances["live_demo"].elements["photo"].content
-        == "data:image/png;base64,iVBORw0KGgo="
-    )
+    content = session.instances["live_demo"].elements["photo"].content
+    assert content.startswith("/deck-assets/")
+    assert content.endswith(".png")
+    # the real file was actually written next to the deck
+    asset_path = tmp_path / "assets" / content.removeprefix("/deck-assets/")
+    assert asset_path.exists()
+    assert asset_path.read_bytes() == base64.b64decode("iVBORw0KGgo=")
+    # and the .py file's own src= is the small, portable relative path,
+    # never the raw data URI
+    saved_element = next(e for e in kernel.deck.cells["live_demo"].elements if e.name == "photo")
+    assert saved_element.config["src"] == f"assets/{content.removeprefix('/deck-assets/')}"
 
 
 def test_image_element_with_a_static_src_is_seeded_at_construction(tmp_path):
@@ -1194,6 +1208,84 @@ def test_image_element_with_a_static_src_is_seeded_at_construction(tmp_path):
     session = Session(deck=deck)
 
     assert session.instances["show"].elements["photo"].content == "data:image/png;base64,abc"
+
+
+def test_save_data_uri_as_asset_writes_a_real_file(tmp_path):
+    import base64
+
+    from codeslides.kernel import _save_data_uri_as_asset
+
+    deck_path = str(tmp_path / "deck.py")
+    (tmp_path / "deck.py").write_text("from codeslides import App\n\napp = App()\n")
+
+    relative = _save_data_uri_as_asset(deck_path, "data:image/png;base64,iVBORw0KGgo=")
+
+    assert relative.startswith("assets/")
+    assert relative.endswith(".png")
+    asset_path = tmp_path / relative
+    assert asset_path.exists()
+    assert asset_path.read_bytes() == base64.b64decode("iVBORw0KGgo=")
+
+
+def test_save_data_uri_as_asset_reuses_the_file_for_identical_bytes(tmp_path):
+    """Re-uploading the exact same image byte-for-byte must not
+    accumulate duplicate files -- same content hashes to the same
+    filename, so the second call is a no-op write that reuses the
+    first call's file."""
+    from codeslides.kernel import _save_data_uri_as_asset
+
+    deck_path = str(tmp_path / "deck.py")
+    (tmp_path / "deck.py").write_text("from codeslides import App\n\napp = App()\n")
+
+    first = _save_data_uri_as_asset(deck_path, "data:image/png;base64,iVBORw0KGgo=")
+    second = _save_data_uri_as_asset(deck_path, "data:image/png;base64,iVBORw0KGgo=")
+
+    assert first == second
+    assert len(list((tmp_path / "assets").iterdir())) == 1
+
+
+def test_save_data_uri_as_asset_gives_different_images_different_files(tmp_path):
+    from codeslides.kernel import _save_data_uri_as_asset
+
+    deck_path = str(tmp_path / "deck.py")
+    (tmp_path / "deck.py").write_text("from codeslides import App\n\napp = App()\n")
+
+    first = _save_data_uri_as_asset(deck_path, "data:image/png;base64,iVBORw0KGgo=")
+    second = _save_data_uri_as_asset(deck_path, "data:image/png;base64,aVBORw0KGgo=")
+
+    assert first != second
+    assert len(list((tmp_path / "assets").iterdir())) == 2
+
+
+def test_save_data_uri_as_asset_infers_extension_from_mime_type(tmp_path):
+    from codeslides.kernel import _save_data_uri_as_asset
+
+    deck_path = str(tmp_path / "deck.py")
+    (tmp_path / "deck.py").write_text("from codeslides import App\n\napp = App()\n")
+
+    relative = _save_data_uri_as_asset(deck_path, "data:image/jpeg;base64,/9k=")
+
+    assert relative.endswith(".jpg")
+
+
+def test_save_data_uri_as_asset_raises_on_a_non_data_uri(tmp_path):
+    from codeslides.kernel import _save_data_uri_as_asset
+
+    deck_path = str(tmp_path / "deck.py")
+    (tmp_path / "deck.py").write_text("from codeslides import App\n\napp = App()\n")
+
+    with pytest.raises(ValueError, match="not a base64 data URI"):
+        _save_data_uri_as_asset(deck_path, "https://example.com/photo.png")
+
+
+def test_save_data_uri_as_asset_raises_on_an_unsupported_mime_type(tmp_path):
+    from codeslides.kernel import _save_data_uri_as_asset
+
+    deck_path = str(tmp_path / "deck.py")
+    (tmp_path / "deck.py").write_text("from codeslides import App\n\napp = App()\n")
+
+    with pytest.raises(ValueError, match="unsupported image MIME type"):
+        _save_data_uri_as_asset(deck_path, "data:application/pdf;base64,JVBER=")
 
 
 def test_set_element_config_does_not_touch_a_non_iframe_non_image_elements_content(tmp_path):

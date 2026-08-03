@@ -115,8 +115,22 @@ class Session:
             seeded_content: object = None
             if element.kind == "notes":
                 seeded_content = cell.docstring
-            elif element.kind in ("image", "iframe") and element.config.get("src"):
+            elif element.kind == "iframe" and element.config.get("src"):
                 seeded_content = element.config["src"]
+            elif element.kind == "image" and element.config.get("src"):
+                # An image's own `src=` is a deck-relative disk path
+                # (`assets/<hash>.ext`, written by Kernel.set_element_config's
+                # upload handling) -- the browser needs the matching
+                # absolute URL server.py's `/deck-assets/` static mount
+                # actually serves, not the raw relative path a person
+                # reading the .py file sees. Same translation
+                # Kernel.set_element_config applies when pushing a fresh
+                # upload's content; this is the "seeded before any
+                # upload in *this* Session" version of the same rule.
+                src = element.config["src"]
+                seeded_content = (
+                    f"/deck-assets/{src[len('assets/') :]}" if src.startswith("assets/") else src
+                )
             instance.elements.setdefault(
                 element.name,
                 # `notes` elements are authored content, not computed

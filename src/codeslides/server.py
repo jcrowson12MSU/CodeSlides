@@ -123,6 +123,23 @@ def create_app(deck: Deck | None = None, deck_path: str | None = None) -> FastAP
         except WebSocketDisconnect:
             pass
 
+    if deck_path is not None:
+        # Serves uploaded images back to the browser (TODO.md #52's
+        # image uploader, TODO.md #53's real-file storage):
+        # Kernel.set_element_config writes an upload to
+        # <deck dir>/assets/<hash>.ext and stores that path, relative to
+        # the deck file, as `ui.image(...)`'s own `src=` -- readable and
+        # portable in the .py file, but meaningless to a browser's
+        # `<img src>` on its own. This mount is the other half: it's
+        # what turns the `/deck-assets/<hash>.ext` URL
+        # `Kernel.set_element_config`/`Session.seed_cell_instance` push
+        # into `instance.content` into something that actually resolves.
+        # Created eagerly (even for a deck with no uploads yet) since
+        # `StaticFiles` requires its directory to exist at mount time.
+        assets_dir = Path(deck_path).resolve().parent / "assets"
+        assets_dir.mkdir(parents=True, exist_ok=True)
+        api.mount("/deck-assets", StaticFiles(directory=assets_dir), name="deck-assets")
+
     if FRONTEND_DIST.exists():
         api.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="static")
     else:
