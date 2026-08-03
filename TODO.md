@@ -2714,6 +2714,37 @@ reshape the plan below and are called out explicitly where they apply:
   a genuine fresh page reload still renders the note's full 3-line
   content correctly.
 
+- [x] **58. Make the notes preview render newlines as actual line breaks.**
+  Direct follow-up to #57: notes now save as real multi-line docstrings
+  on disk, but the *rendered preview* (`NotesViewer`'s non-editing view)
+  still visually collapsed them back into one run-on line -- standard
+  CommonMark markdown treats a single `\n` as a soft break (rendered as
+  a plain space), only a blank line starts a new paragraph. `renderMarkdown`
+  (`markdown.ts`) is shared by `NotesViewer` and `CellOutputView` (a
+  cell's own `cs.md(...)`-returned output); asked the user whether the
+  fix should apply to notes only or everywhere `renderMarkdown` is used
+  -- confirmed everywhere, both for consistency (one code path, not two)
+  and because the same "a single Enter should visibly break the line"
+  expectation applies equally to a cell's own printed markdown output.
+
+  One-line change: `marked.parse(source, { async: false, breaks: true })`
+  -- `breaks: true` is `marked`'s GFM-style option that turns a single
+  embedded newline into a real `<br>` instead of a collapsed space,
+  matching how GitHub comments/Slack render markdown (and matching the
+  "notes are now real multi-line text" expectation #57 already
+  established on the write side).
+
+  Verified in a real running server via Playwright: a 3-line notes
+  element's non-editing preview rendered as `<p>Line
+  one<br>Line two<br>Line three</p>` (2 `<br>` tags, confirmed via
+  `innerHTML`) instead of one run-on paragraph; separately, a cell
+  returning `cs.md("Output line 1\nOutput line 2\nOutput line 3")`
+  rendered its Output tab the same way (2 `<br>` tags), confirming the
+  shared fix applies to both call sites as intended. `npx tsc -b`,
+  `npm run build`, `npm run lint` all clean. Full Python suite
+  unaffected (352 passed, 2 skipped), as expected for a one-line
+  frontend-only change.
+
 - [ ] **48. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
