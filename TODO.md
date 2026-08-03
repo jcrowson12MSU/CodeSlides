@@ -2647,6 +2647,73 @@ reshape the plan below and are called out explicitly where they apply:
   clean, no type errors. Full Python suite unaffected (345 passed, 2
   skipped), as expected for a frontend-only change.
 
+- [x] **57. The markdown notes editor needs to support newline characters, and saved notes need to be written as triple-quoted docstrings.**
+  User's own explicit ask. Investigated first rather than assuming the
+  bug was where the request implied: the `<textarea>` in `NotesViewer`
+  (`viewerElements.tsx`) already accepted newlines fine, and the
+  websocket transport (`notes_source` in `set_ui_state`) is a plain
+  JSON string, which natively carries `\n` with no mangling. The real
+  gap was entirely in `set_notes_docstring` (`serialization.py`), which
+  wrote the new docstring via `notes_text!r}` -- `repr()` -- producing
+  a single-quoted literal with a *literal backslash-n escape sequence*
+  for any embedded newline, not real line breaks. This round-tripped
+  correctly in memory (Python's own parser recovers the same string
+  either way), so nothing was semantically broken, but the on-disk
+  `.py` file never showed a multi-line note as an actual multi-line
+  block -- exactly the "needs to be saved as docstrings using triple
+  quotes" gap. This tradeoff was even called out by name in the
+  function's own prior docstring as a deliberate choice at the time.
+
+  Added `_triple_quote_literal(text)`: picks `"""` normally, falls back
+  to `'''` if `text` contains a run of 3+ double quotes or ends in one
+  (either would otherwise close the literal early or merge into an
+  ambiguous 4+-quote run), and if *both* triple-quote styles are
+  dangerous (pasted text containing another docstring, most likely),
+  keeps `'''` and individually escapes the remaining dangerous `'`
+  occurrences -- some valid delimiter choice always exists, unlike the
+  "avoid it entirely" strategy the first two branches use. Every
+  literal backslash is escaped first, unconditionally, before any quote
+  character is examined -- otherwise text already ending in an odd
+  number of backslashes would silently swallow the backslash this
+  function inserts to escape a trailing quote, rather than that
+  backslash actually escaping the quote as intended (caught by hand:
+  the very first version of this function tried appending a bare
+  trailing `\\` for exactly this case and produced invalid, unparseable
+  Python for text ending in `\"`).
+
+  Deliberately does *not* re-indent a multi-line note's continuation
+  lines to match the surrounding code -- also caught by hand, from an
+  earlier draft that did: `display_docstring`/`Cell.docstring` both
+  read the literal's exact parsed string value back out as the note's
+  content, so injecting leading whitespace on line 2+ for cosmetic
+  on-disk alignment was silently splicing that whitespace into the
+  *semantic text* of the note itself (confirmed via
+  `display_docstring(updated) == 'line1\n    line2\n    line3'` instead
+  of the original `'line1\nline2\nline3'` -- a real content-corruption
+  bug the first draft would have shipped).
+
+  Verified by hand against 10 constructed cases before trusting the
+  fix (multi-line text, embedded `"""`, embedded both `"""` and `'''`,
+  a trailing `"`, a trailing `\`, a trailing `\"` together -- the case
+  that broke the first version -- and a plain safe `""` pair that must
+  NOT get over-escaped) -- each was round-tripped through `ast.parse`
+  (must stay valid Python) and `display_docstring` (must recover the
+  exact original text). Added 7 new tests to `test_serialization.py`
+  covering the same cases, plus updated one existing test
+  (`test_set_notes_docstring_inserts_before_leading_comments_not_after`)
+  whose assertion literally pinned the old `repr()`-style single-quoted
+  output. Full suite: 352 passed, 2 skipped (up from 345).
+
+  Verified in a real running server via Playwright: opened a notes
+  element's edit textarea, typed a 3-line note containing embedded
+  `"quotes"`, clicked Save, and confirmed the `.py` file on disk showed
+  a real `\"\"\"Line one\nLine two\nLine three with "quotes" and
+  stuff\"\"\"` triple-quoted block with actual line breaks (no `\\n`
+  anywhere in the file); confirmed the file still parses and
+  `load_deck` recovers the exact original multi-line string; confirmed
+  a genuine fresh page reload still renders the note's full 3-line
+  content correctly.
+
 - [ ] **48. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local

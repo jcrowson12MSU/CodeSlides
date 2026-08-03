@@ -272,6 +272,48 @@ def _docstring_node(source: str) -> ast.Expr | None:
     return None
 
 
+def _triple_quote_literal(text: str) -> str:
+    """Format `text` as a triple-quoted Python string literal (real line
+    breaks for an embedded newline, not an escaped `\\n`), the same
+    quote-style-picking precedent `repr()` itself uses for single/double
+    quotes: prefer `\"\"\"`, fall back to `'''` if `text` contains a run
+    of 3+ double quotes or ends in one (either would otherwise close the
+    literal early or merge into an ambiguous 4+-quote run). Every
+    literal backslash is escaped first (`\\` -> `\\\\`), before the
+    quote character is examined at all -- otherwise a text already
+    ending in an odd number of backslashes would itself swallow the
+    backslash this function inserts to escape a trailing quote, instead
+    of that backslash actually escaping the quote as intended.
+
+    If `text` contains 3+-in-a-row (or a trailing single) of *both*
+    quote characters -- pasted code containing another docstring, most
+    likely -- `'''` is picked anyway and every remaining dangerous `'`
+    run/trailing `'` is individually escaped, since some valid choice
+    of delimiter always exists (escaping can't fail the way "avoid the
+    delimiter entirely" can when both characters are present).
+
+    Deliberately does *not* re-indent continuation lines to match the
+    surrounding code -- `display_docstring`/`Cell.docstring` both read
+    the literal's exact parsed value back out as the note's content, so
+    injecting extra leading whitespace on line 2+ would silently splice
+    that whitespace into the semantic text of the note itself, not just
+    its on-disk formatting."""
+    text = text.replace("\\", "\\\\")
+
+    def is_dangerous(s: str, ch: str) -> bool:
+        return ch * 3 in s or s.endswith(ch)
+
+    if not is_dangerous(text, '"'):
+        quote = '"""'
+    elif not is_dangerous(text, "'"):
+        quote = "'''"
+    else:
+        quote = "'''"
+        text = "".join(f"\\{ch}" if ch == "'" else ch for ch in text)
+
+    return f"{quote}{text}{quote}"
+
+
 def set_notes_docstring(current_full_source: str, notes_text: str) -> str:
     """Regenerate a cell's full source with its docstring replaced by
     `notes_text` (a `notes` element's markdown content, edited in the
@@ -285,12 +327,10 @@ def set_notes_docstring(current_full_source: str, notes_text: str) -> str:
     doesn't have one yet; replaces it in place (preserving indentation)
     if it does; removes it entirely if `notes_text` is empty (an absent
     docstring and an empty one both read back as `""`, so writing one
-    out for empty text would just be inert boilerplate). Uses `repr()`
-    for the literal rather than hand-formatting a triple-quoted block --
-    a single escaped string literal can hold embedded quotes/newlines
-    safely with no risk of a markdown body accidentally closing the
-    string early, at the cost of the source `.py` file showing escaped
-    `\\n`s instead of real line breaks in a multi-line note."""
+    out for empty text would just be inert boilerplate). Writes a real
+    triple-quoted block via `_triple_quote_literal` -- a multi-line note
+    shows up in the `.py` file with actual line breaks, not a single
+    repr()'d line with escaped `\\n`s, per the user's own explicit ask."""
     tree = ast.parse(textwrap.dedent(current_full_source))
     func_defs = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
     func = func_defs[0]
@@ -302,7 +342,8 @@ def set_notes_docstring(current_full_source: str, notes_text: str) -> str:
         indent = lines[start][: len(lines[start]) - len(lines[start].lstrip())]
         del lines[start:end]
         if notes_text:
-            lines.insert(start, f"{indent}{notes_text!r}")
+            literal = _triple_quote_literal(notes_text)
+            lines.insert(start, f"{indent}{literal}")
     elif notes_text:
         # No existing docstring -- insert one immediately after the `def`
         # line, i.e. the true first line of the body, *not* necessarily
@@ -317,7 +358,8 @@ def set_notes_docstring(current_full_source: str, notes_text: str) -> str:
         body_start = func.lineno  # 0-indexed line right after the `def` line
         first_body_line = lines[func.body[0].lineno - 1]
         indent = first_body_line[: len(first_body_line) - len(first_body_line.lstrip())]
-        lines.insert(body_start, f"{indent}{notes_text!r}")
+        literal = _triple_quote_literal(notes_text)
+        lines.insert(body_start, f"{indent}{literal}")
 
     return "\n".join(lines) + "\n"
 

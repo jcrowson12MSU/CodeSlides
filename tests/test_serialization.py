@@ -229,8 +229,8 @@ def test_reattach_decorator_reinserts_the_current_docstring():
 
 
 def test_reattach_decorator_round_trips_through_display_source_with_a_docstring():
-    # set_notes_docstring always writes the literal via repr() (single
-    # quotes) regardless of how the original was quoted, so this isn't a
+    # set_notes_docstring always writes a triple-quoted literal
+    # regardless of how the original was quoted, so this isn't a
     # byte-identical round trip like the no-docstring case above --
     # assert semantic equivalence instead: same code body, same notes text.
     original = '@app.cell\ndef setup():\n    "Some notes."\n    base = 5\n    return base\n'
@@ -322,7 +322,7 @@ def test_set_notes_docstring_inserts_before_leading_comments_not_after():
     source = "@app.cell\ndef setup():\n    # a leading comment\n    base = 5\n    return base\n"
     updated = set_notes_docstring(source, "Title")
     lines = updated.splitlines()
-    assert lines[2] == "    'Title'"
+    assert lines[2] == '    """Title"""'
     assert lines[3] == "    # a leading comment"
 
 
@@ -366,6 +366,71 @@ def test_set_notes_docstring_round_trips_multiple_edits():
     second = set_notes_docstring(first, "v2")
     assert display_docstring(second) == "v2"
     assert display_docstring(first) == "v1"  # first edit's result is untouched by the second
+
+
+def test_set_notes_docstring_writes_a_real_triple_quoted_block_for_multiline_text():
+    # The user's own explicit ask: a multi-line note must show up in the
+    # .py file with actual line breaks inside a triple-quoted literal,
+    # not a single repr()'d line with escaped \n sequences.
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    updated = set_notes_docstring(source, "line1\nline2\nline3")
+    assert '"""line1\nline2\nline3"""' in updated
+    assert "\\n" not in updated
+    ast.parse(updated)
+    assert display_docstring(updated) == "line1\nline2\nline3"
+
+
+def test_set_notes_docstring_falls_back_to_single_quotes_if_text_contains_triple_double_quotes():
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    updated = set_notes_docstring(source, 'has """ inside')
+    assert "'''has \"\"\" inside'''" in updated
+    ast.parse(updated)
+    assert display_docstring(updated) == 'has """ inside'
+
+
+def test_set_notes_docstring_escapes_when_text_contains_both_triple_quote_styles():
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    notes_text = "has \"\"\" and ''' both"
+    updated = set_notes_docstring(source, notes_text)
+    ast.parse(updated)
+    assert display_docstring(updated) == notes_text
+
+
+def test_set_notes_docstring_handles_a_trailing_quote_character():
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    notes_text = 'ends with quote"'
+    updated = set_notes_docstring(source, notes_text)
+    ast.parse(updated)
+    assert display_docstring(updated) == notes_text
+
+
+def test_set_notes_docstring_handles_a_trailing_backslash():
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    notes_text = "ends with backslash\\"
+    updated = set_notes_docstring(source, notes_text)
+    ast.parse(updated)
+    assert display_docstring(updated) == notes_text
+
+
+def test_set_notes_docstring_handles_a_trailing_backslash_then_quote():
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    notes_text = "ends with backslash then quote\\\""
+    updated = set_notes_docstring(source, notes_text)
+    ast.parse(updated)
+    assert display_docstring(updated) == notes_text
+
+
+def test_set_notes_docstring_does_not_over_escape_a_safe_double_quote_pair():
+    # Two consecutive double quotes is fine inside a triple-quoted
+    # string as long as it's not a run of 3+ or trailing -- confirm the
+    # common case (an ordinary "quoted phrase" in a note) isn't escaped
+    # unnecessarily.
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    notes_text = 'a "" pair, fine'
+    updated = set_notes_docstring(source, notes_text)
+    assert '\\"' not in updated
+    ast.parse(updated)
+    assert display_docstring(updated) == notes_text
 
 
 def test_append_cell_writes_a_new_blank_cell_to_disk(deck_file):
