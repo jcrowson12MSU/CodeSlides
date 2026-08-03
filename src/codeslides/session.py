@@ -101,6 +101,22 @@ class Session:
         instance = self.instances.setdefault(name, CellInstance())
         for element in cell.elements:
             default = element.config.get("default")
+            # `image`/`iframe` elements' own `src=` config is a static
+            # default set at construction time (or via the browser's
+            # own file-picker/URL box -- set_element_config), same
+            # authored-content precedent as `notes`' docstring below --
+            # without seeding it here, it would stay invisible (`content`
+            # stuck at `None`) until the owning cell's own
+            # `cs.image(...)`/`cs.iframe(...)` call runs at least once,
+            # which may never happen for a cell whose body never writes
+            # to that element at all (e.g. an image meant to be uploaded
+            # once and just displayed, or an iframe with no code driving
+            # it, like the exact case that surfaced this).
+            seeded_content: object = None
+            if element.kind == "notes":
+                seeded_content = cell.docstring
+            elif element.kind in ("image", "iframe") and element.config.get("src"):
+                seeded_content = element.config["src"]
             instance.elements.setdefault(
                 element.name,
                 # `notes` elements are authored content, not computed
@@ -116,9 +132,7 @@ class Session:
                 # every other non-notes kind already does) -- `content`
                 # (the pass/fail result) starts empty since no run has
                 # happened yet.
-                ElementInstance(
-                    value=default, content=cell.docstring if element.kind == "notes" else None
-                ),
+                ElementInstance(value=default, content=seeded_content),
             )
         return instance
 

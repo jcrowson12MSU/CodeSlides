@@ -987,19 +987,21 @@ class Kernel:
         self, session: Session, cell_name: str, element_name: str, config: dict[str, object]
     ) -> Cell:
         """Replace the element named `element_name`'s config wholesale
-        (TODO.md #23's iframe URL textbox), on disk, immediately, then
-        reload this Kernel's baseline synchronously.
+        (TODO.md #23's iframe URL textbox, TODO.md #52's image-upload
+        picker), on disk, immediately, then reload this Kernel's
+        baseline synchronously.
 
-        For an `iframe` element specifically, also pushes the new `src`
-        straight into *this* session's own `ElementInstance.content` --
-        an iframe's rendered content otherwise only ever changes via the
-        owning cell's own `cs.iframe(...)` call during a run
-        (ARCHITECTURE.md section 3a), so without this, editing the URL
-        here would correctly update the Deck's static default but never
-        actually show up in the browser unless the cell happened to
-        re-run afterward. Other element kinds' `content` is left alone
-        -- their config isn't rendered directly, only interpreted the
-        next time the owning cell runs.
+        For an `iframe` or `image` element specifically, also pushes the
+        new `src` straight into *this* session's own
+        `ElementInstance.content` -- either one's rendered content
+        otherwise only ever changes via the owning cell's own
+        `cs.iframe(...)`/`cs.image(...)` call during a run
+        (ARCHITECTURE.md section 3a), so without this, setting the URL/
+        uploading an image here would correctly update the Deck's static
+        default but never actually show up in the browser unless the
+        cell happened to re-run afterward. Other element kinds' `content`
+        is left alone -- their config isn't rendered directly, only
+        interpreted the next time the owning cell runs.
 
         Also resyncs any pending, unsaved `session.source_overrides`
         entry for this cell (`_resync_stale_override`), same reasoning
@@ -1020,7 +1022,7 @@ class Kernel:
 
         cell = self.deck.cells[cell_name]
         element = next((e for e in cell.elements if e.name == element_name), None)
-        if element is not None and element.kind == "iframe" and cell_name in session.instances:
+        if element is not None and element.kind in ("iframe", "image") and cell_name in session.instances:
             instance = session.instances[cell_name].elements.get(element_name)
             if instance is not None:
                 instance.content = config.get("src", "")

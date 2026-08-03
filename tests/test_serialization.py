@@ -621,6 +621,24 @@ def test_ui_iframe_defaults_to_a_240px_height():
     assert element.config == {"src": "", "height": 240}
 
 
+def test_ui_image_defaults_to_an_empty_src():
+    element = ui.image("photo")
+    assert element.config == {"src": ""}
+
+
+def test_set_element_config_updates_an_images_src(deck_file):
+    """Same round trip as iframe's own version of this test -- the
+    browser's file-picker (EditCellPanel.tsx) sends a data-URI `src`
+    through this exact path."""
+    add_element(str(deck_file), "live_demo", ui.image("photo"))
+
+    set_element_config(str(deck_file), "live_demo", "photo", {"src": "data:image/png;base64,abc"})
+
+    deck = load_deck(str(deck_file))
+    photo = next(e for e in deck.cells["live_demo"].elements if e.name == "photo")
+    assert photo.config == {"src": "data:image/png;base64,abc"}
+
+
 def test_set_element_config_updates_an_iframes_height(deck_file):
     add_element(str(deck_file), "live_demo", ui.iframe("preview", src="https://example.com", height=240))
 

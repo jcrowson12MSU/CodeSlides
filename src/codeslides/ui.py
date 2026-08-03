@@ -27,8 +27,16 @@ def turtle_canvas(name: str, *, width: int = 400, height: int = 400) -> Element:
     return Element(name=name, kind="turtle_canvas", config={"width": width, "height": height})
 
 
-def image(name: str) -> Element:
-    return Element(name=name, kind="image", config={})
+def image(name: str, *, src: str = "") -> Element:
+    """`src` is a browser-displayable image source -- typically a data
+    URI (`data:image/png;base64,...`) written by the browser's own
+    image-upload picker in the cell's "Edit" panel (`set_element_config`,
+    same mechanism `iframe`'s URL textbox already uses), so an image can
+    be attached without any code running at all. A cell's own
+    `cs.image(name, ...)` call still overwrites this at runtime, exactly
+    like `iframe`'s `src` is likewise just a static default until the
+    cell writes to it."""
+    return Element(name=name, kind="image", config={"src": src})
 
 
 def iframe(name: str, *, src: str = "", height: int = 240) -> Element:

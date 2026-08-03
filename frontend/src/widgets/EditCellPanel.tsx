@@ -12,7 +12,7 @@ const ELEMENT_KIND_DEFAULTS: Record<string, Record<string, unknown>> = {
   button: { label: '' },
   text_input: { default: '' },
   turtle_canvas: { width: 400, height: 400 },
-  image: {},
+  image: { src: '' },
   iframe: { src: '', height: 240 },
   // No config keys at all -- a notes element's content is always its
   // owning cell's own docstring (ui.py's notes(), deck.py's
@@ -103,6 +103,27 @@ export function EditCellPanel({
     onSetElementConfig(element.name, { ...element.config, src })
   }
 
+  // Reads the chosen file as a base64 data URI (FileReader.readAsDataURL)
+  // and sends it through the same set_element_config path the iframe URL
+  // textbox already uses -- so an uploaded image is stored directly in
+  // the element's own config (`ui.image(name, src="data:...")`), no
+  // separate upload endpoint/asset folder needed. Pushed immediately on
+  // file selection (no separate submit step) since a file picker has no
+  // meaningful "draft" state the way a text field does -- picking a file
+  // *is* the action.
+  function handleImageFileChange(event: React.ChangeEvent<HTMLInputElement>, element: ElementMeta) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        onSetElementConfig(element.name, { ...element.config, src: reader.result })
+      }
+    }
+    reader.readAsDataURL(file)
+    event.target.value = '' // allow re-selecting the same file later
+  }
+
   function handleIframeHeightSubmit(event: React.FormEvent, element: ElementMeta) {
     event.preventDefault()
     const draft = iframeHeightDrafts[element.name] ?? String(element.config.height ?? 240)
@@ -180,6 +201,17 @@ export function EditCellPanel({
                   />
                   <button type="submit">Set URL</button>
                 </form>
+              )}
+              {element.kind === 'image' && (
+                <div className="cs-edit-cell-image-upload">
+                  <label htmlFor={`${cellId}-${element.name}-upload`}>Image</label>
+                  <input
+                    id={`${cellId}-${element.name}-upload`}
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) => handleImageFileChange(event, element)}
+                  />
+                </div>
               )}
               {element.kind === 'iframe' && (
                 <form

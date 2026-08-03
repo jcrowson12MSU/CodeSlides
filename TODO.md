@@ -2294,6 +2294,66 @@ reshape the plan below and are called out explicitly where they apply:
   canvas calls it via a `ui.tests(...)` box and the line segment draws
   correctly with the test showing `PASS`.
 
+- [x] **52. Add an image uploader for `image` elements -- picking a file in the browser should attach it to the cell, no code required.**
+  User's own explicit ask: "When a cell is given an image, there needs
+  to be an image uploader to add an image to the cell." Before this, an
+  `image` element only ever got content from the owning cell's own
+  `cs.image(name, path_or_bytes)` call at runtime -- there was no way
+  for someone using the app (not writing code) to just attach an image.
+
+  Extended `ui.image(name)` to `ui.image(name, *, src="")`, matching
+  `ui.iframe`'s existing shape exactly. Added a file-picker (`<input
+  type="file" accept="image/*">`) to the "Edit" panel next to any
+  `image` element (`EditCellPanel.tsx`), reusing the *exact* backend
+  path iframe's URL textbox already has: the browser reads the chosen
+  file via `FileReader.readAsDataURL`, and sends the resulting base64
+  data URI through the existing `set_element_config` websocket message
+  -- no new upload endpoint or asset-file storage needed; the whole
+  image lives as a `src="data:image/png;base64,..."` string directly in
+  the deck's `.py` file, the same place iframe's `src` already lives.
+  `Kernel.set_element_config`'s existing iframe-only content-push
+  special case was extended to `("iframe", "image")`.
+
+  Along the way, found and fixed two real, pre-existing gaps this
+  feature would otherwise have inherited (both affect `iframe` too, not
+  just the new `image` capability):
+  1. `session.py`'s `seed_cell_instance` never seeded `content` from an
+     `image`/`iframe` element's own static `src=` config at all --
+     construction always left `content` at `None` regardless of what
+     `src=` said, so a static default was invisible until the owning
+     cell's own `cs.image(...)`/`cs.iframe(...)` call happened to run
+     at least once. Now seeded at construction, same precedent `notes`
+     already had for its own docstring-as-content.
+  2. `ws_handler.py`'s `_element_output_messages` only had a "surface
+     this element's current content even with no `cs.*` write this run"
+     fallback for `notes`/`tests` elements -- `image`/`iframe` were
+     missing from that list entirely. This meant even after fix #1
+     correctly seeded the *Session's* Python state, the *browser* would
+     never actually be told about it (the websocket protocol is the
+     only way Python state reaches the browser at all) -- a fresh page
+     load/Session showed "no image yet" despite the uploaded image
+     being correctly saved to disk. Caught by an end-to-end Playwright
+     reload test, not by unit tests alone -- the unit-level fix (seeding)
+     looked complete in isolation but the browser-visible symptom
+     persisted until this second fix.
+
+  Verified with 8 new tests (`test_ui_image_defaults_to_an_empty_src`,
+  `test_set_element_config_updates_an_images_src` in
+  `test_serialization.py`; `test_set_element_config_pushes_an_images_new_src_into_the_sessions_content`,
+  `test_image_element_with_a_static_src_is_seeded_at_construction` in
+  `test_kernel.py`; `test_set_element_config_on_an_image_emits_element_config_set_and_element_output`
+  in `test_ws_handler.py`; `test_run_all_surfaces_an_images_static_src_without_any_cs_image_call`
+  -- the regression test for gap #2 above) plus 2 existing tests
+  updated for behavior that's now strictly better (an iframe's static
+  `src=` is no longer invisible pre-run). Full suite: 307 passed, 2
+  skipped. Verified in a real running server via Playwright: added an
+  `image` element, used the file picker to upload a real PNG, confirmed
+  it rendered immediately (no cell re-run needed), clicked Save,
+  confirmed the `.py` file correctly gained
+  `ui.image('photo', src='data:image/png;base64,...')`, then did a
+  genuine fresh page load (brand-new Session, no upload interaction)
+  and confirmed the image still rendered correctly from disk.
+
 - [ ] **48. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local

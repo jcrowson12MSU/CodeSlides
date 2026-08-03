@@ -141,6 +141,18 @@ def _element_output_messages(session: Session, results: dict[str, ExecutionResul
     without this fallback a freshly-run cell's test result would never
     reach the browser at all.
 
+    An `image`/`iframe` element with a static `src=` and a cell body
+    that never calls `cs.image(...)`/`cs.iframe(...)` at all (e.g. an
+    image meant only to be uploaded once and displayed, no code driving
+    it) needs the exact same fallback: `session.py`'s
+    `seed_cell_instance` already seeds `ElementInstance.content` from
+    that `src=` at construction time, but that's pure Python state --
+    the browser only ever learns about content through an explicit
+    `ElementOutput` message, so without this, a freshly-created Session
+    (a page (re)load, or a `set_element_config` upload followed by
+    `run_all` re-running everything) would show "no image yet" even
+    though the Session's own state already has the right content.
+
     A cell's `turtle_canvas` needs a *forced* resend (not skipped just
     because `result.element_writes` already includes it), but only when
     the cell has a `tests` element: a test's own turtle drawing
@@ -175,9 +187,11 @@ def _element_output_messages(session: Session, results: dict[str, ExecutionResul
             continue
         written_names = {w.element_name for w in result.element_writes}
         for element in cell.elements:
-            is_notes_or_tests_fallback = element.kind in ("notes", "tests") and element.name not in written_names
+            is_static_content_fallback = (
+                element.kind in ("notes", "tests", "image", "iframe") and element.name not in written_names
+            )
             is_forced_turtle_resend = element.kind == "turtle_canvas" and has_tests_element
-            if is_notes_or_tests_fallback or is_forced_turtle_resend:
+            if is_static_content_fallback or is_forced_turtle_resend:
                 messages.append(
                     ElementOutput(
                         session_id=session.session_id,
@@ -539,14 +553,15 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 ],
             )
         ]
-        # Kernel.set_element_config already pushed an iframe's new src
-        # straight into session.instances[...].content -- surface that
-        # to the browser the same way a cell's own cs.iframe() write
-        # would, so the change actually renders without needing the
-        # cell to separately re-run.
+        # Kernel.set_element_config already pushed an iframe/image's new
+        # src straight into session.instances[...].content -- surface
+        # that to the browser the same way a cell's own
+        # cs.iframe()/cs.image() write would, so the change actually
+        # renders (an uploaded image shows up immediately) without
+        # needing the cell to separately re-run.
         instance = session.instances.get(cell.name)
         element = next((e for e in cell.elements if e.name == message.element_id), None)
-        if instance is not None and element is not None and element.kind == "iframe":
+        if instance is not None and element is not None and element.kind in ("iframe", "image"):
             element_instance = instance.elements.get(message.element_id)
             if element_instance is not None:
                 replies.append(

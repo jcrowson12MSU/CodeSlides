@@ -1166,6 +1166,19 @@ body.cs-slides-locked {
   padding: 0.1rem 0.35rem;
 }
 
+.cs-edit-cell-image-upload {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.25rem 0 0.4rem 1.6rem;
+  font-family: system-ui, sans-serif;
+  font-size: var(--cs-font-tight);
+}
+
+.cs-edit-cell-image-upload label {
+  color: #666;
+}
+
 .cs-edit-cell-add-element {
   display: flex;
   align-items: center;

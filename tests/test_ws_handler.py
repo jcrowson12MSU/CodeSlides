@@ -99,6 +99,34 @@ def test_run_all_emits_element_output_for_cs_image_write():
     assert element_outputs[0].content == "/tmp/figure.png"
 
 
+def test_run_all_surfaces_an_images_static_src_without_any_cs_image_call():
+    """Regression test for the reported "uploaded image disappears on
+    reload" bug: an image element's own static `src=` (set via the
+    browser's file-picker/set_element_config, or given at construction
+    time) must reach the browser even when the owning cell's body never
+    calls cs.image(...) at all -- seed_cell_instance already seeds the
+    Session-side content correctly, but without this fallback (mirroring
+    notes'/tests' own below), _element_output_messages never actually
+    tells the browser about it, so a fresh page load/Session shows "no
+    image yet" despite the Session's own state being correct."""
+    app = App()
+
+    @app.cell(elements=[ui.image("photo", src="data:image/png;base64,abc")])
+    def show_photo():
+        pass
+
+    registry = SessionRegistry(kernel=Kernel(app.deck))
+    session = registry.create()
+
+    messages = handle_message(registry, RunAll(session_id=session.session_id))
+
+    element_outputs = [m for m in messages if isinstance(m, ElementOutput)]
+    assert len(element_outputs) == 1
+    assert element_outputs[0].cell_id == "show_photo"
+    assert element_outputs[0].element_id == "photo"
+    assert element_outputs[0].content == "data:image/png;base64,abc"
+
+
 def test_run_all_surfaces_notes_docstring_without_any_write():
     app = App()
 
@@ -1016,7 +1044,7 @@ def test_set_element_config_emits_element_config_set_and_writes_to_disk(tmp_path
     assert "@app.cell" not in config_set.source
 
 
-def test_set_element_config_on_a_non_iframe_emits_no_element_output(tmp_path):
+def test_set_element_config_on_a_non_iframe_non_image_emits_no_element_output(tmp_path):
     registry, _ = _build_file_backed_registry(tmp_path)
     session = registry.create()
 
@@ -1032,6 +1060,44 @@ def test_set_element_config_on_a_non_iframe_emits_no_element_output(tmp_path):
 
     assert len(messages) == 1
     assert isinstance(messages[0], ElementConfigSet)
+
+
+def test_set_element_config_on_an_image_emits_element_config_set_and_element_output(tmp_path):
+    """The user's own request: uploading an image (the browser's file
+    picker sends a data-URI `src` through this same message) must
+    immediately show up -- confirm the full websocket round trip, not
+    just the Kernel-level Session state the equivalent test_kernel.py
+    test already checked."""
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    handle_message(
+        registry,
+        AddElement(
+            session_id=session.session_id,
+            cell_id="live_demo",
+            element_name="photo",
+            kind="image",
+            config={"src": ""},
+        ),
+    )
+
+    messages = handle_message(
+        registry,
+        SetElementConfig(
+            session_id=session.session_id,
+            cell_id="live_demo",
+            element_id="photo",
+            config={"src": "data:image/png;base64,iVBORw0KGgo="},
+        ),
+    )
+
+    kinds = [type(m) for m in messages]
+    assert ElementConfigSet in kinds
+    assert ElementOutput in kinds
+    output = next(m for m in messages if isinstance(m, ElementOutput))
+    assert output.element_id == "photo"
+    assert output.content == "data:image/png;base64,iVBORw0KGgo="
+    assert "data:image/png;base64,iVBORw0KGgo=" in path.read_text()
 
 
 def test_set_element_config_unknown_session_produces_error_not_crash(tmp_path):

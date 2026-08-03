@@ -1137,17 +1137,69 @@ def test_set_element_config_pushes_an_iframes_new_src_into_the_sessions_content(
     session = Session(deck=deck)
     kernel.run_all(session)
     kernel.add_element(session, "live_demo", ui.iframe("preview", src="https://old.example.com"))
-    assert session.instances["live_demo"].elements["preview"].content is None
+    # seed_cell_instance now seeds an iframe/image element's own static
+    # `src=` config as its initial content (session.py) -- an author-set
+    # default is no longer invisible until the cell happens to run.
+    assert session.instances["live_demo"].elements["preview"].content == "https://old.example.com"
 
     kernel.set_element_config(session, "live_demo", "preview", {"src": "https://new.example.com"})
 
     assert session.instances["live_demo"].elements["preview"].content == "https://new.example.com"
 
 
-def test_set_element_config_does_not_touch_a_non_iframe_elements_content(tmp_path):
-    """The content-push is deliberately iframe-only -- a slider's config
-    change (e.g. min/max) has no analogous "content" to push, and must
-    not clobber whatever `value` it's currently holding."""
+def test_set_element_config_pushes_an_images_new_src_into_the_sessions_content(tmp_path):
+    """The user's own request: uploading an image through the browser's
+    file picker (which lands here as a data-URI `src`, same mechanism as
+    iframe's URL textbox) must show up immediately -- an image's
+    rendered content otherwise only ever changes via the owning cell's
+    own cs.image(...) call during a run."""
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+    kernel.add_element(session, "live_demo", ui.image("photo"))
+    # no src yet -- seed_cell_instance only seeds content for a truthy
+    # src (an empty default has nothing to show, same as "no image yet")
+    assert session.instances["live_demo"].elements["photo"].content is None
+
+    kernel.set_element_config(
+        session, "live_demo", "photo", {"src": "data:image/png;base64,iVBORw0KGgo="}
+    )
+
+    assert (
+        session.instances["live_demo"].elements["photo"].content
+        == "data:image/png;base64,iVBORw0KGgo="
+    )
+
+
+def test_image_element_with_a_static_src_is_seeded_at_construction(tmp_path):
+    """Regression test: an image (or iframe) element's own static `src=`
+    -- set at construction time, or via the file picker/URL box before
+    this Session even existed -- must be visible immediately, not stuck
+    at `None` until the owning cell happens to run at least once
+    (session.py's seed_cell_instance)."""
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(
+        tmp_path,
+        "from codeslides import App, ui\n\napp = App()\n\n"
+        '@app.cell(elements=[ui.image("photo", src="data:image/png;base64,abc")])\n'
+        "def show():\n    pass\n",
+    )
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+
+    assert session.instances["show"].elements["photo"].content == "data:image/png;base64,abc"
+
+
+def test_set_element_config_does_not_touch_a_non_iframe_non_image_elements_content(tmp_path):
+    """The content-push is deliberately iframe/image-only -- a slider's
+    config change (e.g. min/max) has no analogous "content" to push, and
+    must not clobber whatever `value` it's currently holding."""
     from codeslides.loader import load_deck
 
     path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
