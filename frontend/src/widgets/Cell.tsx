@@ -15,6 +15,14 @@ const MIN_CODE_FRACTION = 0.15
 const MAX_CODE_FRACTION = 0.85
 const DEFAULT_CODE_FRACTION = 0.5
 
+// The synthetic tab id for a cell's own output, alongside one tab per
+// element (TODO.md #56) -- module-level (not just local to Cell) so
+// App.tsx's own header tab row (rendered instead of Cell's, for a
+// single-cell slide with the header collapsed) can select/compare
+// against the exact same id rather than re-deriving a matching literal
+// by hand.
+export const OUTPUT_TAB = '__output__'
+
 export interface CellMeta {
   instance: 'static' | 'editable'
   source: string
@@ -91,6 +99,23 @@ export interface CellProps {
   onMoveCellDown?: () => void
   isFirstCell?: boolean
   isLastCell?: boolean
+  /** Controls which view-item tab (an element's name, or the synthetic
+   * Output tab) is showing, and hides Cell's own `.cs-cell-tabs` row --
+   * used when Slides view's collapsed header shows this same tab strip
+   * itself instead (App.tsx), so the tab buttons aren't duplicated
+   * on-screen. Selected content (`.cs-cell-tab-content`) still renders
+   * normally here regardless -- only the clickable tab row itself moves.
+   * `activeTab`/`onActiveTabChange` must be provided together (both or
+   * neither); omitted, Cell falls back to its own local `activeTab`
+   * state and always renders its own tab row, same as before this was
+   * added. `App.tsx` only ever supplies these for a single-cell slide
+   * with the header collapsed (SlideShow.tsx) -- everywhere else (the
+   * flat Cells view, a multi-cell slide, an expanded header) each cell
+   * keeps owning and showing its own tabs, since there's no single
+   * unambiguous header slot to promote more than one cell's tabs into. */
+  activeTab?: string
+  onActiveTabChange?: (tab: string) => void
+  hideTabs?: boolean
 }
 
 function firstLine(source: string): string {
@@ -135,6 +160,9 @@ export function Cell({
   onMoveCellDown,
   isFirstCell = false,
   isLastCell = false,
+  activeTab: controlledActiveTab,
+  onActiveTabChange,
+  hideTabs = false,
 }: CellProps) {
   const [editing, setEditing] = useState(false)
   // The code/elements split is per-cell, kept as local component state
@@ -161,8 +189,18 @@ export function Cell({
   // calls that share the same namespace cells write into) rather than a
   // separate `activeTab: string | null` union, so the "which tab" state
   // stays a single plain string throughout.
-  const OUTPUT_TAB = '__output__'
-  const [activeTab, setActiveTab] = useState<string>(OUTPUT_TAB)
+  //
+  // Uncontrolled by default (`uncontrolledActiveTab`, this Cell's own
+  // state) -- App.tsx only ever supplies `controlledActiveTab`/
+  // `onActiveTabChange` for a single-cell slide with the header
+  // collapsed, so its own tab row (rendered in the header instead of
+  // here) has somewhere to write the selection back to. Every other
+  // caller (the flat Cells view, a multi-cell slide, an expanded header)
+  // passes neither, and this falls back to owning the selection itself,
+  // identical to before controlled mode existed.
+  const [uncontrolledActiveTab, setUncontrolledActiveTab] = useState<string>(OUTPUT_TAB)
+  const activeTab = controlledActiveTab ?? uncontrolledActiveTab
+  const setActiveTab = onActiveTabChange ?? setUncontrolledActiveTab
 
   const handleResizeMove = useCallback((event: PointerEvent) => {
     const body = bodyRef.current
@@ -330,30 +368,36 @@ export function Cell({
                 previously-active tab no longer exists (its element was
                 just removed via the edit panel), `find` falls through to
                 `undefined` and the `??`s below fall back to the Output
-                tab rather than rendering a dead selection. */}
-            <div className="cs-cell-tabs" role="tablist">
-              {meta.elements.map((element) => (
+                tab rather than rendering a dead selection. `hideTabs`
+                (App.tsx's collapsed-header case) suppresses just this
+                row -- the tab *content* below still renders normally,
+                driven by `activeTab`/`setActiveTab` regardless of
+                whether they're controlled or local. */}
+            {!hideTabs && (
+              <div className="cs-cell-tabs" role="tablist">
+                {meta.elements.map((element) => (
+                  <button
+                    key={element.name}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === element.name}
+                    className={`cs-cell-tab ${activeTab === element.name ? 'cs-cell-tab-active' : ''}`}
+                    onClick={() => setActiveTab(element.name)}
+                  >
+                    {element.name}
+                  </button>
+                ))}
                 <button
-                  key={element.name}
                   type="button"
                   role="tab"
-                  aria-selected={activeTab === element.name}
-                  className={`cs-cell-tab ${activeTab === element.name ? 'cs-cell-tab-active' : ''}`}
-                  onClick={() => setActiveTab(element.name)}
+                  aria-selected={activeTab === OUTPUT_TAB}
+                  className={`cs-cell-tab ${activeTab === OUTPUT_TAB ? 'cs-cell-tab-active' : ''}`}
+                  onClick={() => setActiveTab(OUTPUT_TAB)}
                 >
-                  {element.name}
+                  Output
                 </button>
-              ))}
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeTab === OUTPUT_TAB}
-                className={`cs-cell-tab ${activeTab === OUTPUT_TAB ? 'cs-cell-tab-active' : ''}`}
-                onClick={() => setActiveTab(OUTPUT_TAB)}
-              >
-                Output
-              </button>
-            </div>
+              </div>
+            )}
 
             <div className="cs-cell-tab-content">
               {(() => {

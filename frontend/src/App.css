@@ -916,6 +916,23 @@ button.cs-add-cell-button {
   font-variant-numeric: tabular-nums;
 }
 
+/* View-item tabs promoted into the collapsed header (App.tsx, per the
+   user's request) reuse `.cs-cell-tabs`/`.cs-cell-tab`'s own look, but
+   this second class strips the properties that only make sense as the
+   top of a cell's own elements column -- `border-bottom`/
+   `padding-bottom` existed there to visually separate the tab row from
+   the content below it, which would draw a stray line and misaligned
+   gap in a single-row header strip that has no "content below" of its
+   own. Pushed to the row's far right via `margin-left: auto` (the
+   collapsed header uses `justify-content: flex-start`, so nothing else
+   does this automatically the way `.cs-app-header`'s own `space-between`
+   does for the expanded header's title-group vs. controls). */
+.cs-header-cell-tabs {
+  margin-left: auto;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
 /* Now rendered in the header row (`.cs-header-controls`), next to the
    Cells/Slides toggle, rather than in SlideShow's own toolbar -- moved
    per the user's request so it's reachable without navigating into

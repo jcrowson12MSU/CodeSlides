@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import { useDeckState } from './deckState'
 import { useCodeSlidesSocket } from './useCodeSlidesSocket'
-import { Cell, type CellMeta } from './widgets/Cell'
+import { Cell, OUTPUT_TAB, type CellMeta } from './widgets/Cell'
 import { EditSlideDeckPanel } from './widgets/EditSlideDeckPanel'
+import type { ElementMeta } from './widgets/elementMeta'
 import { SlideShow, type SlideMeta } from './widgets/SlideShow'
 
 interface DeckSummary {
@@ -65,6 +66,19 @@ function App() {
   // (and still owns the Cmd+Control+Left/Right keyboard shortcut), but
   // no longer owns the index itself.
   const [slideIndex, setSlideIndex] = useState(0)
+  // The current slide's sole cell's elements (SlideShow reports this,
+  // `undefined` unless the slide has exactly one cell -- see
+  // SlideShowProps' own docstring for why more than one cell has no
+  // single unambiguous tab row to promote), and which of that cell's
+  // view-item tabs is active -- both only ever rendered/used when the
+  // header is collapsed too (per the user's request: move the tab
+  // buttons up to the collapsed header's right side, still visible,
+  // rather than only below the code). Reset alongside `slideIndex`
+  // whenever leaving Slides view or navigating to a different slide, so
+  // a stale tab selection from a previous slide's different element set
+  // never lingers.
+  const [singleCellElements, setSingleCellElements] = useState<ElementMeta[] | undefined>(undefined)
+  const [activeTab, setActiveTab] = useState<string>(OUTPUT_TAB)
   // The "Edit slide deck" panel (rename of TODO's "+ New slide" button,
   // per the user's request): reorder existing slides and create new
   // ones, from the header row next to the Cells/Slides toggle.
@@ -74,6 +88,7 @@ function App() {
       setHeaderCollapsed(false)
       setEditSlideDeckOpen(false)
       setSlideIndex(0)
+      setActiveTab(OUTPUT_TAB)
     }
   }, [viewMode])
   // Guards against `slideIndex` pointing past the end of the deck's
@@ -379,6 +394,19 @@ function App() {
     }
   }, [messages])
 
+  // SlideShow reports the current slide's sole cell's elements here
+  // (undefined for a multi-cell slide) every time the active slide
+  // changes -- also resets `activeTab` back to Output, since a
+  // previously-selected element tab may not exist on the new cell at
+  // all (different slide, different elements=[...]), and even when it
+  // does happen to share a name, defaulting back to Output on every
+  // navigation matches Cell.tsx's own per-cell default (a freshly
+  // mounted Cell always starts on Output too).
+  function handleSingleCellElementsChange(elements: ElementMeta[] | undefined) {
+    setSingleCellElements(elements)
+    setActiveTab(OUTPUT_TAB)
+  }
+
   function handleSetElementValue(cellId: string, elementId: string, value: unknown) {
     if (!sessionId) return
     setElementValues((prev) => ({
@@ -620,6 +648,41 @@ function App() {
               {slideIndex + 1} / {deck.slides.length}
             </span>
           )}
+          {/* View-item tabs (each element, plus Output), moved up here
+              per the user's request: "still visible" when the header
+              collapses, rather than only reachable by scrolling down to
+              the cell itself. Only rendered when SlideShow reported a
+              sole cell for this slide (`singleCellElements` is
+              `undefined` for a multi-cell slide -- see
+              SlideShowProps' own docstring) -- Cell.tsx's matching
+              `hideTabs`/controlled `activeTab` suppresses its own copy
+              of this same row exactly when this one is shown, so the
+              tabs never render twice. */}
+          {singleCellElements && (
+            <div className="cs-cell-tabs cs-header-cell-tabs" role="tablist">
+              {singleCellElements.map((element) => (
+                <button
+                  key={element.name}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === element.name}
+                  className={`cs-cell-tab ${activeTab === element.name ? 'cs-cell-tab-active' : ''}`}
+                  onClick={() => setActiveTab(element.name)}
+                >
+                  {element.name}
+                </button>
+              ))}
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === OUTPUT_TAB}
+                className={`cs-cell-tab ${activeTab === OUTPUT_TAB ? 'cs-cell-tab-active' : ''}`}
+                onClick={() => setActiveTab(OUTPUT_TAB)}
+              >
+                Output
+              </button>
+            </div>
+          )}
         </div>
       )}
       {!slidesHeaderCollapsed && (
@@ -830,6 +893,9 @@ function App() {
           onRevealedChange={setRevealed}
           index={slideIndex}
           onIndexChange={setSlideIndex}
+          activeTab={activeTab}
+          onActiveTabChange={setActiveTab}
+          onSingleCellElementsChange={handleSingleCellElementsChange}
           cellMeta={deck.cells}
           cellState={mergedCellState}
           elementValues={elementValues}

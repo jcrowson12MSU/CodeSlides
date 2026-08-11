@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { CellState } from '../deckState'
 import { Cell, type CellMeta } from './Cell'
+import type { ElementMeta } from './elementMeta'
 
 export interface SlideMeta {
   title: string
@@ -30,6 +31,23 @@ export interface SlideShowProps {
   // keyboard handler), so either input path stays in bounds identically.
   index: number
   onIndexChange: (index: number) => void
+  // The active view-item tab, lifted up the same way `index` was, but
+  // only ever meaningful (and only ever supplied by App.tsx) when the
+  // current slide has exactly one cell AND the header is collapsed --
+  // that's the one case with a single unambiguous header slot for a tab
+  // row (App.tsx's collapsed header, right side, per the user's
+  // request). Every other case (a multi-cell slide, or the header
+  // expanded) leaves this `undefined`/no-op and each Cell keeps owning
+  // its own tab selection locally, same as before this existed.
+  activeTab?: string
+  onActiveTabChange?: (tab: string) => void
+  // Reports the current slide's elements up to App.tsx, but ONLY when
+  // there's exactly one cell to report on -- App.tsx uses this (rather
+  // than reaching into `cellMeta`/`slide.cells` itself) to know what
+  // tabs to render in the collapsed header, and `undefined` here is
+  // also the signal it uses to fall back to "don't render a header tab
+  // row at all" for a multi-cell slide.
+  onSingleCellElementsChange: (elements: ElementMeta[] | undefined) => void
   cellMeta: Record<string, CellMeta>
   cellState: Record<string, CellState | undefined>
   elementValues: Record<string, Record<string, unknown>>
@@ -63,6 +81,9 @@ export function SlideShow({
   onRevealedChange,
   index,
   onIndexChange,
+  activeTab,
+  onActiveTabChange,
+  onSingleCellElementsChange,
   cellMeta,
   cellState,
   elementValues,
@@ -158,9 +179,15 @@ export function SlideShow({
     // SlideShow drives it the same way it used to derive
     // `revealOverrides[index] ?? slide.reveal_code` locally.
     onRevealedChange(slide?.reveal_code ?? false)
+    // Only report elements when the slide has exactly one cell -- with
+    // more than one, there's no single unambiguous cell to build a
+    // header tab row out of (per the user's own scoping decision), so
+    // `undefined` tells App.tsx to fall back to not rendering one at all.
+    const soleCellId = slide?.cells.length === 1 ? slide.cells[0] : undefined
+    onSingleCellElementsChange(soleCellId ? cellMeta[soleCellId]?.elements : undefined)
     // only re-derive when the slide identity/content actually changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slide, onActiveSlideChange])
+  }, [slide, onActiveSlideChange, cellMeta])
 
   useEffect(() => {
     // Cmd+Control+Left/Right only (TODO.md #19) -- deliberately *not*
@@ -195,6 +222,21 @@ export function SlideShow({
     )
   }
 
+  // App.tsx's `activeTab` is the source of truth whenever this slide has
+  // exactly one cell -- regardless of whether the header is currently
+  // collapsed -- so the selection survives toggling the header back and
+  // forth (a real bug caught by hand: gating this on `headerCollapsed`
+  // too left Cell's own local `uncontrolledActiveTab` frozen at its
+  // initial value the whole time the header's own copy was driving
+  // selection, so expanding the header back showed the wrong tab as
+  // active). Only *rendering* a second copy of the tab row -- the
+  // header's -- is gated on `headerCollapsed`; `hideTabs` alone controls
+  // whether this cell's own row also renders, since exactly one of the
+  // two (header vs. in-cell) must ever be visible at a time when
+  // App.tsx's state is in control at all.
+  const isSoleCell = slide.cells.length === 1
+  const hideOwnTabs = isSoleCell && headerCollapsed
+
   return (
     <div className="cs-slideshow">
       <div className="cs-slide" ref={slideRef}>
@@ -216,6 +258,9 @@ export function SlideShow({
               collapsed={false}
               hideCode={!revealed}
               hideHeader
+              activeTab={isSoleCell ? activeTab : undefined}
+              onActiveTabChange={isSoleCell ? onActiveTabChange : undefined}
+              hideTabs={hideOwnTabs}
               onRunCell={(source) => onRunCell(cellId, source)}
               onRunAll={onRunAll}
               onSetElementValue={(elementId, value) => onSetElementValue(cellId, elementId, value)}
