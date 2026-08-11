@@ -147,6 +147,44 @@ slider-driven cell whose test flips between pass and fail as the slider
 moves, and a cell whose turtle-canvas drawing comes entirely from its
 test's own turtle calls.
 
+### Grouping cells into slides
+
+`@app.cell` defines the reactive units of a deck; `@app.slide` groups
+existing cells (by name) into a slide for the Slides presentation view.
+The decorated function itself isn't executed as part of the deck --
+only its docstring is used, as the slide's presenter notes:
+
+```python
+app = App()
+
+@app.cell
+def intro():
+    x = 5
+    return x
+
+@app.cell
+def explain():
+    y = x * 2
+    return y
+
+@app.slide("Variables", cells=["intro", "explain"])
+def slide_1():
+    """Notes shown alongside the slide in presentation mode."""
+```
+
+- `title` (positional) is the slide's heading.
+- `cells` (required, keyword-only) is a list of cell function names,
+  already registered with `@app.cell`, to display together on this
+  slide.
+- `reveal_code` (optional, default `False`) controls whether the
+  slide shows each cell's source code or just its rendered output.
+
+A slide can reference more than one cell -- see `examples/marchingSquares.py`,
+where `@app.slide("Setup", cells=["setup", "explain"])` groups two
+setup cells onto a single slide. Slide order in the deck follows
+`@app.slide` declaration order, independent of where the referenced
+cells were defined.
+
 ### Frontend development
 
 If you're changing anything in `frontend/`, run the dev server for fast
