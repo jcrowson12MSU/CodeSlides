@@ -53,6 +53,23 @@ def test_deck_endpoint_reports_cell_instance_source_and_elements():
     assert "@app.cell" not in live_demo_meta["source"]
 
 
+def test_deck_endpoint_reports_title_as_the_deck_files_own_stem(tmp_path):
+    deck_path = tmp_path / "my_lesson.py"
+    deck_path.write_text("from codeslides import App\n\napp = App()\n")
+
+    client = TestClient(create_app(deck_path=str(deck_path)))
+    response = client.get("/api/deck")
+
+    assert response.json()["title"] == "my_lesson"
+
+
+def test_deck_endpoint_reports_a_placeholder_title_with_no_backing_file():
+    client = TestClient(create_app(App().deck))  # no deck_path
+    response = client.get("/api/deck")
+
+    assert response.json()["title"] == "Untitled deck"
+
+
 def test_deck_assets_mount_serves_an_uploaded_images_asset_file(tmp_path):
     """TODO.md #53: an uploaded image is written as a real file in
     `<deck dir>/assets/`, and the browser fetches it back via a

@@ -207,7 +207,6 @@ export function SlideShow({
       )}
 
       <div className="cs-slide" ref={slideRef}>
-        {!headerCollapsed && <h2 className="cs-slide-title">{slide.title}</h2>}
         {slide.cells.map((cellId) => {
           const meta = cellMeta[cellId]
           if (!meta) return null

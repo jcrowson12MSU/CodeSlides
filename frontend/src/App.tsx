@@ -7,6 +7,7 @@ import { EditSlideDeckPanel } from './widgets/EditSlideDeckPanel'
 import { SlideShow, type SlideMeta } from './widgets/SlideShow'
 
 interface DeckSummary {
+  title: string
   cells: Record<string, CellMeta>
   slides: SlideMeta[]
 }
@@ -176,6 +177,26 @@ function App() {
       window.removeEventListener('scroll', snapBack)
     }
   }, [viewMode])
+
+  // Shrinks the sticky header's title to 2/3 size once the page has
+  // scrolled away from the top -- the title's landing-page-scale default
+  // is meant to be seen once, at the top of the page; once you've
+  // scrolled into the deck's content it's competing for space with a
+  // sticky header row that stays pinned regardless (`.cs-app-header`'s
+  // `position: sticky`). Only ever fires in Cells view in practice --
+  // Slides view force-snaps scroll back to 0 (the effect above), so
+  // `scrolled` would just never flip there, but the listener is kept
+  // unconditional rather than gated on `viewMode` since it's harmless
+  // (and correctly resets) either way.
+  const [scrolled, setScrolled] = useState(false)
+  useEffect(() => {
+    function handleScroll() {
+      setScrolled(document.documentElement.scrollTop > 0)
+    }
+    handleScroll()
+    window.addEventListener('scroll', handleScroll)
+    return () => window.removeEventListener('scroll', handleScroll)
+  }, [])
 
   useEffect(() => {
     if (!helpOpen) return
@@ -583,7 +604,14 @@ function App() {
               </svg>
             </button>
           )}
-          <h1 className="cs-app-title">CodeSlides</h1>
+          {/* Cells view: the deck's own title (its filename, server.py's
+              /api/deck). Slides view: the current slide's title in this
+              same spot instead -- same content the collapsed header
+              above already shows via activeSlideTitle, just now also
+              shown while the header is expanded. */}
+          <h1 className={`cs-app-title ${scrolled ? 'cs-app-title-scrolled' : ''}`}>
+            {viewMode === 'slides' ? activeSlideTitle : (deck?.title ?? '')}
+          </h1>
         </div>
         <div className="cs-header-controls">
           {deck && (

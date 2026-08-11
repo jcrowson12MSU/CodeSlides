@@ -54,6 +54,25 @@
   margin: 32px 0;
 }
 
+/* Shrinks the title to 2/3 of its default size once the page has
+   scrolled (App.tsx's `scrolled` state) -- the sticky header
+   (`.cs-app-header`, `position: sticky`) stays pinned to the viewport
+   regardless of scroll position, so without this the landing-page-scale
+   title stays oversized the whole time you're reading through a deck's
+   cells, not just at the very top. `index.css`'s bare `h1` selector sets
+   the un-shrunk default to a literal 56px (confirmed via that rule, not
+   assumed) -- deliberately NOT expressed as `em`: `em` resolves against
+   the *parent's* font-size (this class and the base 56px both apply to
+   the same element, so `em` here would compound against the title's
+   surrounding div, not against its own 56px, producing the wrong size
+   entirely), so this is a literal 2/3 of 56px instead. Transitions
+   smoothly rather than snapping, since this fires continuously while
+   scrolling. */
+.cs-app-title-scrolled {
+  font-size: 37.33px;
+  transition: font-size 0.15s ease;
+}
+
 /* The title's default size (56px font, 32px margin) is landing-page
    scale -- appropriate in Cells view where it's the calmest thing on
    the page, oversized once you're presenting in Slides view and it's
@@ -107,10 +126,12 @@
    up from SlideShow via onActiveSlideChange, since slide navigation/index
    is owned there) -- reclaiming almost all the vertical space the full
    header/toolbar took while still keeping the audience oriented on which
-   slide they're looking at. Reuses `.cs-slide-title`'s font size so the
-   title reads the same whether it's here or in its normal spot inside
-   `.cs-slide`, just remove that copy's own top/bottom margin since this
-   row already centers it via flex. */
+   slide they're looking at. Reuses `.cs-slide-title`'s font size (the
+   expanded header's own `.cs-app-title` slot shows the same title text
+   now too, replacing what used to be a separate copy inside `.cs-slide`
+   itself -- both the expanded and collapsed header variants show the
+   slide's title, just at each's own scale) -- remove this copy's own
+   top/bottom margin since this row already centers it via flex. */
 .cs-app-header-collapsed {
   justify-content: flex-start;
   gap: 0.75rem;

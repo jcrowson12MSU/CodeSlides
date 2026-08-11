@@ -79,7 +79,16 @@ def create_app(deck: Deck | None = None, deck_path: str | None = None) -> FastAP
     @api.get("/api/deck")
     def get_deck() -> dict:
         d: Deck = api.state.deck
+        # The header shows this in place of the generic "CodeSlides"
+        # product name -- the deck's own filename (no extension) reads
+        # as "which deck am I looking at", which the product name never
+        # told you. Falls back to a fixed placeholder for a Deck with no
+        # backing file (most of this test suite, and any future
+        # in-process-only usage) -- there's nothing meaningful to derive
+        # a title from there.
+        title = Path(api.state.deck_path).stem if api.state.deck_path else "Untitled deck"
         return {
+            "title": title,
             "cells": {
                 name: {
                     "instance": cell.instance,
