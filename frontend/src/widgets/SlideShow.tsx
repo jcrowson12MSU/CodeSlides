@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import type { CellState } from '../deckState'
 import { Cell, type CellMeta } from './Cell'
 
@@ -20,6 +20,16 @@ export interface SlideShowProps {
   // SlideShow needing its own toolbar row for it anymore.
   revealed: boolean
   onRevealedChange: (revealed: boolean) => void
+  // Slide navigation index, lifted up into App.tsx (a controlled prop
+  // rather than SlideShow's own useState) so the header row's Prev/Next
+  // buttons -- now flanking the title there, next to the deck-name/
+  // slide-title `.cs-app-title` slot -- can drive the same index
+  // SlideShow itself uses for which slide to render and for the
+  // Cmd+Control+Left/Right shortcut below. Clamped the same way in both
+  // places (App.tsx's Prev/Next handlers and this component's own
+  // keyboard handler), so either input path stays in bounds identically.
+  index: number
+  onIndexChange: (index: number) => void
   cellMeta: Record<string, CellMeta>
   cellState: Record<string, CellState | undefined>
   elementValues: Record<string, Record<string, unknown>>
@@ -51,6 +61,8 @@ export function SlideShow({
   onActiveSlideChange,
   revealed,
   onRevealedChange,
+  index,
+  onIndexChange,
   cellMeta,
   cellState,
   elementValues,
@@ -68,12 +80,9 @@ export function SlideShow({
   onSetElementConfig,
   editErrors,
 }: SlideShowProps) {
-  const [index, setIndex] = useState(0)
   const slideRef = useRef<HTMLDivElement | null>(null)
 
   const slide = slides[index]
-  const atStart = index === 0
-  const atEnd = index === slides.length - 1
 
   // The user wants a slide's single cell to grow and fill whatever
   // vertical space is left below it, rather than only shrinking to fit
@@ -135,10 +144,10 @@ export function SlideShow({
     return () => window.removeEventListener('resize', updateAvailableHeight)
   }, [headerCollapsed, index])
 
-  // App.tsx renders the current slide's title in its own header row while
-  // the header is collapsed (SlideShow's own `.cs-slide-title` is hidden
-  // in that state, further down) -- this is how it finds out what that
-  // title is, since slide navigation/index is owned here, not in App.
+  // App.tsx renders the current slide's title in its own header row
+  // (the `.cs-app-title` slot, both expanded and collapsed) -- this is
+  // how it finds out what that title is, since which cells/content a
+  // slide holds is owned here, not in App.
   useEffect(() => {
     onActiveSlideChange(slide?.title ?? '')
     // Reset the header's "Reveal code" checkbox to whichever default
@@ -166,15 +175,15 @@ export function SlideShow({
       if (!event.metaKey || !event.ctrlKey) return
       if (event.key === 'ArrowRight') {
         event.preventDefault()
-        setIndex((i) => Math.min(i + 1, slides.length - 1))
+        onIndexChange(Math.min(index + 1, slides.length - 1))
       } else if (event.key === 'ArrowLeft') {
         event.preventDefault()
-        setIndex((i) => Math.max(i - 1, 0))
+        onIndexChange(Math.max(index - 1, 0))
       }
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [slides.length])
+  }, [slides.length, index, onIndexChange])
 
   if (slides.length === 0) {
     return (
@@ -188,24 +197,6 @@ export function SlideShow({
 
   return (
     <div className="cs-slideshow">
-      {!headerCollapsed && (
-      <div className="cs-slideshow-toolbar">
-        <button type="button" onClick={() => setIndex((i) => Math.max(i - 1, 0))} disabled={atStart}>
-          &larr; Prev
-        </button>
-        <span className="cs-slideshow-position">
-          {index + 1} / {slides.length}
-        </span>
-        <button
-          type="button"
-          onClick={() => setIndex((i) => Math.min(i + 1, slides.length - 1))}
-          disabled={atEnd}
-        >
-          Next &rarr;
-        </button>
-      </div>
-      )}
-
       <div className="cs-slide" ref={slideRef}>
         {slide.cells.map((cellId) => {
           const meta = cellMeta[cellId]

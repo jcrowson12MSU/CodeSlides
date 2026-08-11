@@ -85,11 +85,12 @@
   font-size: var(--cs-font-2xl);
 }
 
-/* Groups the expanded header's collapse toggle with the title so
-   `.cs-app-header`'s `justify-content: space-between` treats them as one
-   unit on the left, opposite `.cs-header-controls` on the right --
-   without this wrapper the toggle, title, and controls would all end up
-   evenly spaced across the row as three separate items instead. */
+/* Groups the expanded header's collapse toggle, Prev/Next (Slides view
+   only), title, and position indicator so `.cs-app-header`'s
+   `justify-content: space-between` treats them as one unit on the left,
+   opposite `.cs-header-controls` on the right -- without this wrapper
+   they'd all end up evenly spaced across the row as separate items
+   instead. */
 .cs-app-title-group {
   display: flex;
   align-items: center;
@@ -122,16 +123,19 @@
 }
 
 /* The collapsed variant of the header: instead of disappearing entirely,
-   it shrinks to just the toggle plus the current slide's title (reported
+   it shrinks to the toggle, Prev/Next (moved here from SlideShow's own
+   toolbar per the user's request), the current slide's title (reported
    up from SlideShow via onActiveSlideChange, since slide navigation/index
-   is owned there) -- reclaiming almost all the vertical space the full
-   header/toolbar took while still keeping the audience oriented on which
-   slide they're looking at. Reuses `.cs-slide-title`'s font size (the
-   expanded header's own `.cs-app-title` slot shows the same title text
-   now too, replacing what used to be a separate copy inside `.cs-slide`
-   itself -- both the expanded and collapsed header variants show the
-   slide's title, just at each's own scale) -- remove this copy's own
-   top/bottom margin since this row already centers it via flex. */
+   is owned there), and the "N / total" position -- reclaiming almost all
+   the vertical space the full header/toolbar took while still keeping
+   the audience oriented on which slide they're looking at and able to
+   navigate without expanding the header back. Reuses `.cs-slide-title`'s
+   font size (the expanded header's own `.cs-app-title` slot shows the
+   same title text now too, replacing what used to be a separate copy
+   inside `.cs-slide` itself -- both the expanded and collapsed header
+   variants show the slide's title, just at each's own scale) -- remove
+   this copy's own top/bottom margin since this row already centers it
+   via flex. */
 .cs-app-header-collapsed {
   justify-content: flex-start;
   gap: 0.75rem;
@@ -874,16 +878,12 @@ button.cs-add-cell-button {
   transition: transform 0.15s ease;
 }
 
-.cs-slideshow-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  margin: 0.5rem 0;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid #eee;
-}
-
-.cs-slideshow-toolbar button {
+/* Prev/Next now flank the title directly in the header row (both the
+   expanded `.cs-app-title-group` and the collapsed
+   `.cs-app-header-collapsed` variant) -- moved out of SlideShow's own
+   separate toolbar row per the user's request. */
+.cs-slide-nav-button {
+  flex: 0 0 auto;
   border: 1px solid #ccc;
   background: white;
   border-radius: 4px;
@@ -892,12 +892,25 @@ button.cs-add-cell-button {
   cursor: pointer;
 }
 
-.cs-slideshow-toolbar button:disabled {
+.cs-slide-nav-button:disabled {
   opacity: 0.4;
   cursor: default;
 }
 
+/* The collapsed header's own Prev/Next need to be visibly smaller than
+   the expanded variant's -- that row is already tight (toggle + two nav
+   buttons + title + position, all on one thin strip, TODO.md #32's whole
+   point being to reclaim vertical space), and the expanded buttons'
+   default padding/font-size (sized to sit comfortably in a full header
+   row) reads as oversized crammed in alongside a `1.75rem`-tall round
+   toggle button here. */
+.cs-app-header-collapsed .cs-slide-nav-button {
+  padding: 0.15rem 0.5rem;
+  font-size: var(--cs-font-sm);
+}
+
 .cs-slideshow-position {
+  flex: 0 0 auto;
   font-size: var(--cs-font-md);
   color: #666;
   font-variant-numeric: tabular-nums;

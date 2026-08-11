@@ -57,6 +57,14 @@ function App() {
   // every navigation) via `onRevealedChange`; this is just where the
   // value and its checkbox now live.
   const [revealed, setRevealed] = useState(false)
+  // Slide navigation index -- lifted up from SlideShow's own useState so
+  // the header row can render Prev/Next flanking the title slot
+  // (`.cs-app-title`), per the user's request to move them there instead
+  // of their own separate toolbar row inside SlideShow. SlideShow is
+  // still the source of truth for *rendering* the slide at this index
+  // (and still owns the Cmd+Control+Left/Right keyboard shortcut), but
+  // no longer owns the index itself.
+  const [slideIndex, setSlideIndex] = useState(0)
   // The "Edit slide deck" panel (rename of TODO's "+ New slide" button,
   // per the user's request): reorder existing slides and create new
   // ones, from the header row next to the Cells/Slides toggle.
@@ -65,8 +73,19 @@ function App() {
     if (viewMode !== 'slides') {
       setHeaderCollapsed(false)
       setEditSlideDeckOpen(false)
+      setSlideIndex(0)
     }
   }, [viewMode])
+  // Guards against `slideIndex` pointing past the end of the deck's
+  // slide list -- can't happen from reordering (a permutation never
+  // changes the count) but is cheap, correct insurance against any
+  // future slide-count change (e.g. deletion, not yet supported) landing
+  // Prev/Next's `atEnd` check and SlideShow's `slides[index]` lookup on
+  // an index that no longer exists.
+  useEffect(() => {
+    if (!deck) return
+    setSlideIndex((i) => Math.min(i, Math.max(deck.slides.length - 1, 0)))
+  }, [deck])
   // The header's "?" button (TODO.md #27, revised): the websocket
   // connection status it originally showed turned out not to matter day
   // to day (confirmed with the user), so it's now a real help popover
@@ -577,7 +596,30 @@ function App() {
               />
             </svg>
           </button>
+          <button
+            type="button"
+            className="cs-slide-nav-button"
+            aria-label="Previous slide"
+            disabled={!deck || slideIndex === 0}
+            onClick={() => setSlideIndex((i) => Math.max(i - 1, 0))}
+          >
+            &larr;
+          </button>
           <h2 className="cs-slide-title cs-slide-title-in-header">{activeSlideTitle}</h2>
+          <button
+            type="button"
+            className="cs-slide-nav-button"
+            aria-label="Next slide"
+            disabled={!deck || slideIndex === deck.slides.length - 1}
+            onClick={() => setSlideIndex((i) => Math.min(i + 1, (deck?.slides.length ?? 1) - 1))}
+          >
+            &rarr;
+          </button>
+          {deck && deck.slides.length > 0 && (
+            <span className="cs-slideshow-position">
+              {slideIndex + 1} / {deck.slides.length}
+            </span>
+          )}
         </div>
       )}
       {!slidesHeaderCollapsed && (
@@ -604,6 +646,22 @@ function App() {
               </svg>
             </button>
           )}
+          {/* Slides view: Prev/Next flank the title (per the user's
+              request, moved here from their own toolbar row inside
+              SlideShow) rather than sitting on a separate row -- the
+              title itself doubles as the slide-position display's
+              anchor, with the "N / total" count just after Next. */}
+          {viewMode === 'slides' && deck && (
+            <button
+              type="button"
+              className="cs-slide-nav-button"
+              aria-label="Previous slide"
+              disabled={slideIndex === 0}
+              onClick={() => setSlideIndex((i) => Math.max(i - 1, 0))}
+            >
+              &larr; Prev
+            </button>
+          )}
           {/* Cells view: the deck's own title (its filename, server.py's
               /api/deck). Slides view: the current slide's title in this
               same spot instead -- same content the collapsed header
@@ -612,6 +670,24 @@ function App() {
           <h1 className={`cs-app-title ${scrolled ? 'cs-app-title-scrolled' : ''}`}>
             {viewMode === 'slides' ? activeSlideTitle : (deck?.title ?? '')}
           </h1>
+          {viewMode === 'slides' && deck && (
+            <>
+              <button
+                type="button"
+                className="cs-slide-nav-button"
+                aria-label="Next slide"
+                disabled={slideIndex === deck.slides.length - 1}
+                onClick={() => setSlideIndex((i) => Math.min(i + 1, deck.slides.length - 1))}
+              >
+                Next &rarr;
+              </button>
+              {deck.slides.length > 0 && (
+                <span className="cs-slideshow-position">
+                  {slideIndex + 1} / {deck.slides.length}
+                </span>
+              )}
+            </>
+          )}
         </div>
         <div className="cs-header-controls">
           {deck && (
@@ -752,6 +828,8 @@ function App() {
           onActiveSlideChange={setActiveSlideTitle}
           revealed={revealed}
           onRevealedChange={setRevealed}
+          index={slideIndex}
+          onIndexChange={setSlideIndex}
           cellMeta={deck.cells}
           cellState={mergedCellState}
           elementValues={elementValues}
