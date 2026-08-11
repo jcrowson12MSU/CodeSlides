@@ -923,12 +923,13 @@ button.cs-add-cell-button {
    `padding-bottom` existed there to visually separate the tab row from
    the content below it, which would draw a stray line and misaligned
    gap in a single-row header strip that has no "content below" of its
-   own. Pushed to the row's far right via `margin-left: auto` (the
-   collapsed header uses `justify-content: flex-start`, so nothing else
-   does this automatically the way `.cs-app-header`'s own `space-between`
-   does for the expanded header's title-group vs. controls). */
+   own. Right-alignment lives on `.cs-app-header-collapsed
+   .cs-reveal-toggle` below, not here -- the toggle is always present in
+   the collapsed header, but these tabs only render for a single-cell
+   slide, so anchoring the row's right edge to the *toggle* (rather than
+   whichever of the two happens to be last) keeps the toggle pinned right
+   even on a multi-cell slide with no tabs to follow it. */
 .cs-header-cell-tabs {
-  margin-left: auto;
   border-bottom: none;
   padding-bottom: 0;
 }
@@ -944,6 +945,23 @@ button.cs-add-cell-button {
   font-size: var(--cs-font-base);
   color: #555;
   cursor: pointer;
+}
+
+/* Also rendered in the collapsed header (per the user's request:
+   collapsing must not hide it) -- pushed to the row's far right via
+   `margin-left: auto` (the collapsed header uses `justify-content:
+   flex-start`, so nothing does this automatically the way
+   `.cs-app-header`'s own `space-between` does for the expanded header's
+   title-group vs. controls). Anchored on the toggle itself, not the
+   view-item tabs that may follow it (`.cs-header-cell-tabs`), so the
+   toggle stays pinned right even on a multi-cell slide where no tabs
+   render at all. Smaller/tighter than the expanded header's own copy,
+   same "this row is already tight" rationale as the collapsed Prev/Next
+   buttons. */
+.cs-app-header-collapsed .cs-reveal-toggle {
+  margin-left: auto;
+  font-size: var(--cs-font-sm);
+  flex: 0 0 auto;
 }
 
 /* Speaker-friendly: a slide's content renders noticeably larger than the

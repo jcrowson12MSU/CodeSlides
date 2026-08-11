@@ -648,6 +648,23 @@ function App() {
               {slideIndex + 1} / {deck.slides.length}
             </span>
           )}
+          {/* Reveal code (per the user's request): also needs to stay
+              reachable while the header is collapsed, same rationale as
+              the view-item tabs just below -- collapsing the header was
+              never meant to hide controls, only reclaim the vertical
+              space the *expanded* row's chrome took. Same checkbox/
+              state as the expanded header's own copy (`revealed`), not
+              a separate toggle -- there's only ever one "is this slide's
+              code revealed" state regardless of which header variant is
+              currently on screen. */}
+          <label className="cs-reveal-toggle">
+            <input
+              type="checkbox"
+              checked={revealed}
+              onChange={(event) => setRevealed(event.target.checked)}
+            />
+            Reveal code
+          </label>
           {/* View-item tabs (each element, plus Output), moved up here
               per the user's request: "still visible" when the header
               collapses, rather than only reachable by scrolling down to
