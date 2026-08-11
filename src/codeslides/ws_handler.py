@@ -46,6 +46,7 @@ from codeslides.protocol import (
     SessionCloned,
     SetElementConfig,
     SetElementValue,
+    SetSlideOrder,
     SetTestSource,
     SetUiState,
     SlideAdded,
@@ -382,29 +383,50 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                     session_id=message.session_id,
                 )
             ]
-        if not session.source_overrides:
+        if not session.source_overrides and session.slide_order_override is None:
             return [DeckSaved(session_id=message.session_id, cells=[])]
-        try:
-            save_edits(deck_path, session.source_overrides)
-        except (SaveConflictError, InvalidSourceError) as exc:
-            # Nothing was written in either case (serialization.save_edits
-            # validates the *whole* resulting file parses before writing
-            # anything) -- this Session's overrides and the Kernel's
-            # baseline are both untouched, so it's safe to just report the
-            # error and let the instructor keep editing.
-            return [ErrorMessage(message=str(exc), session_id=message.session_id)]
+        if session.source_overrides:
+            try:
+                save_edits(deck_path, session.source_overrides)
+            except (SaveConflictError, InvalidSourceError) as exc:
+                # Nothing was written in either case (serialization.save_edits
+                # validates the *whole* resulting file parses before writing
+                # anything) -- this Session's overrides and the Kernel's
+                # baseline are both untouched, so it's safe to just report
+                # the error and let the instructor keep editing. A pending
+                # slide_order_override is left untouched too -- the next
+                # Save attempt (after fixing the bad edit) still has it.
+                return [ErrorMessage(message=str(exc), session_id=message.session_id)]
         saved = sorted(session.source_overrides)
         # Saved edits are now the on-disk baseline -- clear them so this
         # Session's effective graph reverts to reading straight off
         # `Kernel.deck` again (identical to a fresh Session's), rather
         # than perpetually "overriding" a baseline that already matches.
+        session.source_overrides.clear()
+
+        reordered_slides = session.slide_order_override is not None
+        if reordered_slides:
+            from codeslides.serialization import reorder_slides
+
+            try:
+                reorder_slides(deck_path, session.slide_order_override)
+            except (SaveConflictError, InvalidSourceError) as exc:
+                # Any cell-edit save above already succeeded and is not
+                # rolled back -- same "each write validates and commits
+                # independently" precedent the rest of this handler
+                # already follows (e.g. the reload-failure branch below
+                # doesn't claim the save itself failed). The pending
+                # reorder is left in place so a retried Save can still
+                # apply it once the underlying conflict is resolved.
+                return [ErrorMessage(message=str(exc), session_id=message.session_id)]
+            session.slide_order_override = None
+
         # Reload the Kernel's baseline synchronously here too, rather than
         # waiting on the CLI file-watcher's async debounce (TODO.md #10,
         # ~1.6s): otherwise the next cell run in *this* (or any other)
         # Session between the save and the watcher catching up would read
         # `Kernel.deck`'s stale pre-save source once the override above is
         # cleared -- a real, if brief, flash of reverted code.
-        session.source_overrides.clear()
         from codeslides.loader import load_deck
 
         try:
@@ -421,7 +443,20 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                     session_id=message.session_id,
                 )
             ]
-        return [DeckSaved(session_id=message.session_id, cells=saved)]
+        slides_payload = (
+            [
+                {
+                    "title": s.title,
+                    "cells": s.cell_names,
+                    "reveal_code": s.reveal_code,
+                    "notes": s.notes,
+                }
+                for s in registry.kernel.deck.slides
+            ]
+            if reordered_slides
+            else None
+        )
+        return [DeckSaved(session_id=message.session_id, cells=saved, slides=slides_payload)]
 
     if isinstance(message, AddCell):
         session = registry.get(message.session_id)
@@ -479,6 +514,27 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 notes=slide.notes,
             )
         ]
+
+    if isinstance(message, SetSlideOrder):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if sorted(message.slide_order) != list(range(len(registry.kernel.deck.slides))):
+            return [
+                ErrorMessage(
+                    message=(
+                        f"cannot stage slide order: {message.slide_order!r} is not a "
+                        f"permutation of the deck's current {len(registry.kernel.deck.slides)} slide(s)"
+                    ),
+                    session_id=message.session_id,
+                )
+            ]
+        # Pure staged draft, same as EditCell's source_overrides -- never
+        # touches disk here, never triggers a re-run (a slide never
+        # introduces graph edges, deck.py's Slide docstring). Only
+        # SaveDeck actually writes it.
+        session.slide_order_override = list(message.slide_order)
+        return []
 
     if isinstance(message, RenameCell):
         session = registry.get(message.session_id)

@@ -882,8 +882,11 @@ button.cs-add-cell-button {
   font-variant-numeric: tabular-nums;
 }
 
+/* Now rendered in the header row (`.cs-header-controls`), next to the
+   Cells/Slides toggle, rather than in SlideShow's own toolbar -- moved
+   per the user's request so it's reachable without navigating into
+   Slides view's own sub-toolbar. */
 .cs-reveal-toggle {
-  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 0.4rem;
@@ -1289,29 +1292,46 @@ body.cs-slides-locked {
   gap: 0.4rem;
 }
 
-/* Slides view "+ New slide" control (browser-driven counterpart to
-   `@app.slide(...)`, README's "Grouping cells into slides") -- sits in
-   the same toolbar row as Prev/Next/Reveal code, matching those
-   buttons' own border/radius/padding via `.cs-slideshow-toolbar button`
-   rather than repeating them here. */
-.cs-new-slide-button {
-  margin-left: auto;
-}
+/* Slides view "Edit slide deck" control (browser-driven counterpart to
+   `@app.slide(...)`, README's "Grouping cells into slides") -- lives in
+   the header row (`.cs-header-controls`), next to the Cells/Slides
+   toggle, so it inherits that row's own generic button styling; nothing
+   extra needed here beyond the name. */
 
-.cs-slideshow-toolbar .cs-reveal-toggle + .cs-new-slide-button {
-  /* .cs-reveal-toggle already claims margin-left: auto to push itself
-     right -- once a button follows it in the same row, that auto-margin
-     would also shove the button away from it, so it's redundant here. */
-  margin-left: 0;
-}
-
-.cs-new-slide-panel {
+.cs-edit-slide-deck-panel {
   border: 1px solid #ddd;
   border-radius: 4px;
   background: #fafafa;
   padding: 0.75rem 1rem;
   margin: 0.5rem 0;
   font-size: var(--cs-font-base);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.cs-edit-slide-deck-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cs-edit-slide-deck-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+}
+
+.cs-edit-slide-deck-hint {
+  color: #999;
+  font-style: italic;
+  margin: 0.25rem 0 0.5rem;
+}
+
+.cs-new-slide-panel {
+  border-top: 1px solid #ddd;
+  padding-top: 0.75rem;
 }
 
 .cs-new-slide-title-row {

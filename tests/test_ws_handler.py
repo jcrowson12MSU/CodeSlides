@@ -31,6 +31,7 @@ from codeslides.protocol import (
     SessionCloned,
     SetElementConfig,
     SetElementValue,
+    SetSlideOrder,
     SetTestSource,
     SetUiState,
     SlideAdded,
@@ -632,6 +633,110 @@ def test_save_deck_only_affects_the_saving_sessions_overrides(tmp_path):
     assert session_a.source_overrides == {}
     # session_b's own override is untouched by session_a's save
     assert session_b.source_overrides["live_demo"] == decorator + body_b
+
+
+def _build_file_backed_registry_with_slides(tmp_path):
+    """Same shape as `_build_file_backed_registry`, but with two slides
+    already on disk -- `SetSlideOrder`/`SaveDeck`-flushing-a-reorder
+    tests need something to actually reorder."""
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    handle_message(
+        registry, AddSlide(session_id=session.session_id, title="First", cell_names=["setup"])
+    )
+    handle_message(
+        registry, AddSlide(session_id=session.session_id, title="Second", cell_names=["live_demo"])
+    )
+    return registry, path
+
+
+def test_set_slide_order_stages_without_writing_to_disk(tmp_path):
+    registry, path = _build_file_backed_registry_with_slides(tmp_path)
+    session = registry.create()
+    before = path.read_text()
+
+    messages = handle_message(registry, SetSlideOrder(session_id=session.session_id, slide_order=[1, 0]))
+
+    assert messages == []
+    assert session.slide_order_override == [1, 0]
+    # nothing written yet -- staged only, same as an EditCell override
+    assert path.read_text() == before
+    assert [s.title for s in registry.kernel.deck.slides] == ["First", "Second"]
+
+
+def test_set_slide_order_rejects_a_non_permutation(tmp_path):
+    registry, _ = _build_file_backed_registry_with_slides(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(registry, SetSlideOrder(session_id=session.session_id, slide_order=[0]))
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+    assert session.slide_order_override is None
+
+
+def test_set_slide_order_unknown_session_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry_with_slides(tmp_path)
+
+    messages = handle_message(registry, SetSlideOrder(session_id="does-not-exist", slide_order=[0, 1]))
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_save_deck_flushes_a_pending_slide_order(tmp_path):
+    registry, path = _build_file_backed_registry_with_slides(tmp_path)
+    session = registry.create()
+    handle_message(registry, SetSlideOrder(session_id=session.session_id, slide_order=[1, 0]))
+
+    messages = handle_message(registry, SaveDeck(session_id=session.session_id))
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], DeckSaved)
+    assert messages[0].slides == [
+        {"title": "Second", "cells": ["live_demo"], "reveal_code": False, "notes": ""},
+        {"title": "First", "cells": ["setup"], "reveal_code": False, "notes": ""},
+    ]
+    # written to disk immediately -- and the Kernel's own baseline
+    # picked it up synchronously, same as every other SaveDeck path
+    assert [s.title for s in registry.kernel.deck.slides] == ["Second", "First"]
+    text = path.read_text()
+    assert text.index('@app.slide(\'Second\'') < text.index('@app.slide(\'First\'')
+    # the pending override is cleared, same as source_overrides after a save
+    assert session.slide_order_override is None
+
+
+def test_save_deck_with_no_slide_order_pending_omits_slides_from_the_ack(tmp_path):
+    registry, _ = _build_file_backed_registry_with_slides(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(registry, SaveDeck(session_id=session.session_id))
+
+    assert messages == [DeckSaved(session_id=session.session_id, cells=[])]
+    assert messages[0].slides is None
+
+
+def test_save_deck_flushes_both_a_cell_edit_and_a_pending_slide_order_together(tmp_path):
+    registry, path = _build_file_backed_registry_with_slides(tmp_path)
+    session = registry.create()
+    handle_message(
+        registry,
+        EditCell(
+            session_id=session.session_id,
+            cell_id="live_demo",
+            source="def live_demo(speed):\n    result = speed * 999\n    return result\n",
+        ),
+    )
+    handle_message(registry, SetSlideOrder(session_id=session.session_id, slide_order=[1, 0]))
+
+    messages = handle_message(registry, SaveDeck(session_id=session.session_id))
+
+    assert len(messages) == 1
+    assert messages[0].cells == ["live_demo"]
+    assert messages[0].slides is not None
+    text = path.read_text()
+    assert "speed * 999" in text
+    assert text.index('@app.slide(\'Second\'') < text.index('@app.slide(\'First\'')
 
 
 def test_add_cell_emits_cell_added_and_writes_to_disk(tmp_path):

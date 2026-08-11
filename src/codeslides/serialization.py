@@ -838,6 +838,89 @@ def reorder_cells(deck_path: str, cell_order: list[str]) -> None:
     path.write_text(updated)
 
 
+def _slide_line_spans(source: str) -> list[tuple[int, int]]:
+    """Every top-level `@app.slide(...)`-decorated function's
+    (start_line, end_line) span, 1-indexed and inclusive, covering its
+    decorator through its final line, in the order they appear in the
+    file -- the whole-block counterpart to `_cell_line_spans`, but a
+    list (not a name-keyed dict): unlike a cell, a slide's identity for
+    reordering purposes is its *position*, not its title (two slides can
+    share a title -- `append_slide`'s own function-name deriving already
+    tolerates this), so callers key off list index instead."""
+    tree = ast.parse(source)
+    spans: list[tuple[int, int]] = []
+    for node in ast.iter_child_nodes(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if not any(
+            isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute) and dec.func.attr == "slide"
+            for dec in node.decorator_list
+        ):
+            continue
+        start = node.decorator_list[0].lineno if node.decorator_list else node.lineno
+        spans.append((start, node.end_lineno))
+    return spans
+
+
+def reorder_slides(deck_path: str, slide_order: list[int]) -> None:
+    """Reorder every top-level `@app.slide(...)` block in `deck_path` to
+    match `slide_order` exactly, on disk -- each block kept byte-
+    identical, only the order the blocks appear in the file changes.
+    Same shape as `reorder_cells`, except keyed by *position* rather
+    than name: `slide_order` is a permutation of `range(len(spans))`
+    (the file's current slide blocks in on-disk order), since a slide's
+    title is presentation text, not a unique identifier the way a cell's
+    function name is (`_slide_line_spans`'s own docstring).
+
+    Like `reorder_cells`, any content that isn't itself a slide block
+    (cells, imports, `app = App()`, standalone comments) keeps its exact
+    original position outside the region the slide blocks occupy --
+    text before the first slide block and after the last one is left
+    untouched. This app always appends new slides at the end of the
+    file (`append_slide`) and never writes anything *between* two slide
+    blocks, so in practice that region only ever contains slide blocks
+    back-to-back; if a hand-edited file interleaves something else
+    between two slides anyway, that content is not preserved in its
+    original interleaved spot once the slides around it move, same
+    documented limitation `reorder_cells` already accepts for a comment
+    sitting above one particular cell.
+
+    Raises `SaveConflictError` if `slide_order` isn't exactly a
+    permutation of `range(len(spans))` (e.g. the file's slide count
+    changed since the caller last loaded it), or `InvalidSourceError` if
+    the result doesn't parse."""
+    path = Path(deck_path)
+    original = path.read_text()
+    spans = _slide_line_spans(original)
+    if sorted(slide_order) != list(range(len(spans))):
+        raise SaveConflictError(
+            f"cannot reorder slides: {slide_order!r} is not a permutation of the deck's "
+            f"current {len(spans)} slide(s)"
+        )
+    if not spans:
+        return
+
+    lines = original.splitlines(keepends=True)
+    block_texts = ["".join(lines[start - 1 : end]) for start, end in spans]
+
+    first_block_start = spans[0][0]
+    last_block_end = max(end for _, end in spans)
+
+    before = "".join(lines[: first_block_start - 1])
+    after = "".join(lines[last_block_end:])
+    reassembled = "\n\n\n".join(block_texts[i].rstrip("\n") for i in slide_order) + "\n"
+    updated = before + reassembled + after
+
+    try:
+        ast.parse(updated)
+    except SyntaxError as exc:
+        raise InvalidSourceError(
+            f"reordering slides would leave {deck_path!r} with invalid Python syntax, not saved: {exc}"
+        ) from exc
+
+    path.write_text(updated)
+
+
 def _replace_elements(
     deck_path: str,
     cell_name: str,

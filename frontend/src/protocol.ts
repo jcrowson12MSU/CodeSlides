@@ -5,6 +5,7 @@
 // a message concerns.
 
 import type { ElementMeta } from './widgets/elementMeta'
+import type { SlideMeta } from './widgets/SlideShow'
 
 // -- Client -> server messages ----------------------------------------------
 
@@ -75,6 +76,12 @@ export interface AddSlide {
   reveal_code: boolean
 }
 
+export interface SetSlideOrder {
+  type: 'set_slide_order'
+  session_id: string
+  slide_order: number[]
+}
+
 export interface RenameCell {
   type: 'rename_cell'
   session_id: string
@@ -136,6 +143,7 @@ export type ClientMessage =
   | SaveDeck
   | AddCell
   | AddSlide
+  | SetSlideOrder
   | RenameCell
   | RemoveCell
   | ReorderCells
@@ -201,6 +209,11 @@ export interface DeckSaved {
   type: 'deck_saved'
   session_id: string
   cells: string[]
+  // Non-null only when this save flushed a pending SetSlideOrder --
+  // the deck's full, now-authoritative slide list (same per-slide shape
+  // /api/deck uses), so the client can replace its local slide order
+  // without a full refetch.
+  slides: SlideMeta[] | null
 }
 
 export interface CellAdded {

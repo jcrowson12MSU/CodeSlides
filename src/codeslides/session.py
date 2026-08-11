@@ -102,6 +102,16 @@ class Session:
     # Per-Session source overrides for cells marked instance="editable"
     # (ARCHITECTURE.md section 3: "per-Session graph divergence").
     source_overrides: dict[str, str] = field(default_factory=dict)
+    # Pending slide reorder (browser drag/reorder in the "Edit slide
+    # deck" panel), staged client-side and only written to the deck's
+    # .py file when `save_deck` runs -- same "no disk write until Save"
+    # precedent `source_overrides` already sets for a live cell-code
+    # edit, applied to slide order instead of cell code. A permutation
+    # of `range(len(deck.slides))` naming the *current* on-disk slide
+    # order's new positions, or `None` if nothing's pending. Kept
+    # separate from `source_overrides` since it isn't keyed by cell
+    # name and clears independently.
+    slide_order_override: list[int] | None = None
 
     def __post_init__(self) -> None:
         for name, cell in self.deck.cells.items():
@@ -180,6 +190,9 @@ class Session:
         new = Session(deck=self.deck)
         new.namespace = dict(self.namespace)
         new.source_overrides = dict(self.source_overrides)
+        new.slide_order_override = (
+            list(self.slide_order_override) if self.slide_order_override is not None else None
+        )
         new.instances = {
             name: CellInstance(
                 status=inst.status,

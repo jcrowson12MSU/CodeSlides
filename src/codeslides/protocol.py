@@ -155,6 +155,23 @@ class AddSlide:
 
 
 @dataclass
+class SetSlideOrder:
+    """Stage a new slide order for `session_id`, without touching disk --
+    the browser-driven "Edit slide deck" panel's reorder UI. Unlike
+    `AddCell`/`AddSlide`/`ReorderCells`, this does NOT write immediately:
+    it's a per-Session draft (`Session.slide_order_override`, same
+    "no disk write until Save" shape `EditCell`'s `source_overrides`
+    already has for cell code), only persisted to the deck's .py file the
+    next time this session sends `SaveDeck`. `slide_order` must be a
+    permutation of `range(len(deck.slides))` naming the deck's *current*
+    on-disk slide order's new positions."""
+
+    type: ClassVar[str] = "set_slide_order"
+    session_id: str
+    slide_order: list[int]
+
+
+@dataclass
 class RenameCell:
     """Rename a cell's identity -- its Deck-key/function name, not a
     separate cosmetic label (TODO.md #22's edit button). Same
@@ -313,11 +330,17 @@ class SessionCloned:
 class DeckSaved:
     """Acknowledges a successful `save_deck`. `cells` lists which cell
     names had overrides written to disk (empty if there was nothing to
-    save)."""
+    save). `slides` carries the deck's full, current slide list (same
+    per-slide shape `/api/deck` uses) whenever this save flushed a
+    pending `SetSlideOrder`, so the client can replace its local slide
+    order without a full `/api/deck` refetch; `None` when no reorder was
+    pending, meaning the client's existing slide order is still correct
+    as-is."""
 
     type: ClassVar[str] = "deck_saved"
     session_id: str
     cells: list[str]
+    slides: list[dict[str, Any]] | None = None
 
 
 @dataclass
@@ -480,6 +503,7 @@ ClientMessage = (
     | SaveDeck
     | AddCell
     | AddSlide
+    | SetSlideOrder
     | RenameCell
     | RemoveCell
     | ReorderCells
@@ -521,6 +545,7 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
         SaveDeck,
         AddCell,
         AddSlide,
+        SetSlideOrder,
         RenameCell,
         RemoveCell,
         ReorderCells,

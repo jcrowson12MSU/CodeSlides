@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CellState } from '../deckState'
 import { Cell, type CellMeta } from './Cell'
-import { NewSlidePanel } from './NewSlidePanel'
 
 export interface SlideMeta {
   title: string
@@ -14,6 +13,13 @@ export interface SlideShowProps {
   slides: SlideMeta[]
   headerCollapsed: boolean
   onActiveSlideChange: (title: string) => void
+  // Reveal-code is per-current-slide view state SlideShow already owns
+  // (`revealOverrides`, keyed by slide index) -- exposed via these two
+  // props so App.tsx's header row (where the checkbox now lives, next
+  // to the Cells/Slides toggle) can render and drive it without
+  // SlideShow needing its own toolbar row for it anymore.
+  revealed: boolean
+  onRevealedChange: (revealed: boolean) => void
   cellMeta: Record<string, CellMeta>
   cellState: Record<string, CellState | undefined>
   elementValues: Record<string, Record<string, unknown>>
@@ -30,8 +36,6 @@ export interface SlideShowProps {
   onReorderElements: (cellId: string, elementOrder: string[]) => void
   onSetElementConfig: (cellId: string, elementId: string, config: Record<string, unknown>) => void
   editErrors: Record<string, string>
-  onAddSlide: (title: string, cellNames: string[], revealCode: boolean) => void
-  addSlideError?: string
 }
 
 // Slideshow/presentation mode (TODO.md #10, ARCHITECTURE.md's "one tool,
@@ -45,6 +49,8 @@ export function SlideShow({
   slides,
   headerCollapsed,
   onActiveSlideChange,
+  revealed,
+  onRevealedChange,
   cellMeta,
   cellState,
   elementValues,
@@ -61,18 +67,13 @@ export function SlideShow({
   onReorderElements,
   onSetElementConfig,
   editErrors,
-  onAddSlide,
-  addSlideError,
 }: SlideShowProps) {
   const [index, setIndex] = useState(0)
-  const [revealOverrides, setRevealOverrides] = useState<Record<number, boolean>>({})
-  const [newSlideOpen, setNewSlideOpen] = useState(false)
   const slideRef = useRef<HTMLDivElement | null>(null)
 
   const slide = slides[index]
   const atStart = index === 0
   const atEnd = index === slides.length - 1
-  const revealed = revealOverrides[index] ?? slide?.reveal_code ?? false
 
   // The user wants a slide's single cell to grow and fill whatever
   // vertical space is left below it, rather than only shrinking to fit
@@ -140,6 +141,16 @@ export function SlideShow({
   // title is, since slide navigation/index is owned here, not in App.
   useEffect(() => {
     onActiveSlideChange(slide?.title ?? '')
+    // Reset the header's "Reveal code" checkbox to whichever default
+    // *this* slide was authored with every time the active slide
+    // changes (navigation or the slide's own content changing under the
+    // same index) -- `revealed` is now owned by App.tsx (so its header
+    // row can render the checkbox next to the Cells/Slides toggle), so
+    // SlideShow drives it the same way it used to derive
+    // `revealOverrides[index] ?? slide.reveal_code` locally.
+    onRevealedChange(slide?.reveal_code ?? false)
+    // only re-derive when the slide identity/content actually changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slide, onActiveSlideChange])
 
   useEffect(() => {
@@ -165,30 +176,12 @@ export function SlideShow({
     return () => window.removeEventListener('keydown', handleKey)
   }, [slides.length])
 
-  const cellIds = Object.keys(cellMeta)
-
-  function handleAddSlide(title: string, cellNames: string[], revealCode: boolean) {
-    onAddSlide(title, cellNames, revealCode)
-    setNewSlideOpen(false)
-  }
-
   if (slides.length === 0) {
     return (
       <div className="cs-slideshow">
-        <p className="cs-hint">This deck has no slides yet -- create one below, or use the "Cells" view instead.</p>
-        {!newSlideOpen && (
-          <button type="button" className="cs-new-slide-button" onClick={() => setNewSlideOpen(true)}>
-            + New slide
-          </button>
-        )}
-        {newSlideOpen && (
-          <NewSlidePanel
-            cellIds={cellIds}
-            onAddSlide={handleAddSlide}
-            onClose={() => setNewSlideOpen(false)}
-            error={addSlideError}
-          />
-        )}
+        <p className="cs-hint">
+          This deck has no slides yet -- use "Edit slide deck" above to create one, or use the "Cells" view instead.
+        </p>
       </div>
     )
   }
@@ -210,29 +203,7 @@ export function SlideShow({
         >
           Next &rarr;
         </button>
-        <label className="cs-reveal-toggle">
-          <input
-            type="checkbox"
-            checked={revealed}
-            onChange={(event) =>
-              setRevealOverrides((prev) => ({ ...prev, [index]: event.target.checked }))
-            }
-          />
-          Reveal code
-        </label>
-        <button type="button" className="cs-new-slide-button" onClick={() => setNewSlideOpen((prev) => !prev)}>
-          {newSlideOpen ? 'Close' : '+ New slide'}
-        </button>
       </div>
-      )}
-
-      {!headerCollapsed && newSlideOpen && (
-        <NewSlidePanel
-          cellIds={cellIds}
-          onAddSlide={handleAddSlide}
-          onClose={() => setNewSlideOpen(false)}
-          error={addSlideError}
-        />
       )}
 
       <div className="cs-slide" ref={slideRef}>

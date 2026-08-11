@@ -23,6 +23,7 @@ from codeslides.serialization import (
     rename_cell,
     reorder_cells,
     reorder_elements,
+    reorder_slides,
     save_edits,
     set_element_config,
     set_notes_docstring,
@@ -624,6 +625,97 @@ def test_reorder_cells_raises_if_cell_order_is_not_a_permutation(deck_file):
         reorder_cells(str(deck_file), ["live_demo"])
     with pytest.raises(SaveConflictError):
         reorder_cells(str(deck_file), ["live_demo", "setup", "does_not_exist"])
+
+
+MULTI_SLIDE_DECK_SOURCE = '''from codeslides import App, ui
+
+app = App()
+
+
+@app.cell
+def setup():
+    base = 5
+    return base
+
+
+@app.cell
+def explain():
+    y = base * 2  # noqa: F821
+    return y
+
+
+@app.slide("First", cells=["setup"])
+def slide_1():
+    pass
+
+
+@app.slide("Second", cells=["explain"])
+def slide_2():
+    pass
+
+
+@app.slide("Third", cells=["setup", "explain"])
+def slide_3():
+    pass
+'''
+
+
+@pytest.fixture
+def multi_slide_deck_file(tmp_path):
+    path = tmp_path / "deck.py"
+    path.write_text(MULTI_SLIDE_DECK_SOURCE)
+    return path
+
+
+def test_reorder_slides_changes_the_files_own_definition_order(multi_slide_deck_file):
+    reorder_slides(str(multi_slide_deck_file), [2, 0, 1])
+
+    deck = load_deck(str(multi_slide_deck_file))
+    assert [s.title for s in deck.slides] == ["Third", "First", "Second"]
+    # each slide's own body (cells=[...], reveal_code, notes) is
+    # byte-identical, just relocated
+    assert deck.slides[0].cell_names == ["setup", "explain"]
+
+
+def test_reorder_slides_preserves_content_before_the_first_and_after_the_last_block(
+    multi_slide_deck_file,
+):
+    reorder_slides(str(multi_slide_deck_file), [2, 0, 1])
+
+    text = multi_slide_deck_file.read_text()
+    # the cells (before the first slide block) are untouched
+    assert text.index("def setup") < text.index("def explain") < text.index("@app.slide")
+
+
+def test_reorder_slides_raises_if_slide_order_is_not_a_permutation(multi_slide_deck_file):
+    with pytest.raises(SaveConflictError):
+        reorder_slides(str(multi_slide_deck_file), [0, 1])
+    with pytest.raises(SaveConflictError):
+        reorder_slides(str(multi_slide_deck_file), [0, 1, 1])
+    with pytest.raises(SaveConflictError):
+        reorder_slides(str(multi_slide_deck_file), [0, 1, 5])
+
+
+def test_reorder_slides_is_a_noop_for_a_deck_with_no_slides(deck_file):
+    # deck_file (DECK_SOURCE) has exactly one slide -- use a cell-only
+    # snippet to exercise the zero-slides path without adding a third
+    # fixture just for this.
+    from pathlib import Path
+
+    path = Path(deck_file).parent / "no_slides.py"
+    path.write_text("from codeslides import App\n\napp = App()\n\n@app.cell\ndef setup():\n    pass\n")
+    reorder_slides(str(path), [])
+    assert "def setup" in path.read_text()
+
+
+def test_reorder_slides_twice_recovers_the_original_order(multi_slide_deck_file):
+    reorder_slides(str(multi_slide_deck_file), [2, 0, 1])
+    # [2, 0, 1] then its own inverse [1, 2, 0] should restore ["First",
+    # "Second", "Third"]
+    reorder_slides(str(multi_slide_deck_file), [1, 2, 0])
+
+    deck = load_deck(str(multi_slide_deck_file))
+    assert [s.title for s in deck.slides] == ["First", "Second", "Third"]
 
 
 def test_cell_line_spans_excludes_app_slide_functions():

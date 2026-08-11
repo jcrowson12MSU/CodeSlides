@@ -3,6 +3,7 @@ import './App.css'
 import { useDeckState } from './deckState'
 import { useCodeSlidesSocket } from './useCodeSlidesSocket'
 import { Cell, type CellMeta } from './widgets/Cell'
+import { EditSlideDeckPanel } from './widgets/EditSlideDeckPanel'
 import { SlideShow, type SlideMeta } from './widgets/SlideShow'
 
 interface DeckSummary {
@@ -43,14 +44,28 @@ function App() {
   // never surprises the user by starting collapsed next time they
   // present.
   const [headerCollapsed, setHeaderCollapsed] = useState(false)
-  useEffect(() => {
-    if (viewMode !== 'slides') setHeaderCollapsed(false)
-  }, [viewMode])
   // The current slide's title, reported up by SlideShow (which owns slide
   // navigation) so the header row can show it in place of the collapsed
   // title row below -- see the header's own render for why it needs to
   // live here rather than just inside SlideShow.
   const [activeSlideTitle, setActiveSlideTitle] = useState('')
+  // Whether the current slide's code is shown -- moved up here (from
+  // SlideShow's own toolbar) per the user's request to put it on the
+  // same row as the Cells/Slides toggle. SlideShow still owns *when*
+  // this resets (to the active slide's own `reveal_code` default, on
+  // every navigation) via `onRevealedChange`; this is just where the
+  // value and its checkbox now live.
+  const [revealed, setRevealed] = useState(false)
+  // The "Edit slide deck" panel (rename of TODO's "+ New slide" button,
+  // per the user's request): reorder existing slides and create new
+  // ones, from the header row next to the Cells/Slides toggle.
+  const [editSlideDeckOpen, setEditSlideDeckOpen] = useState(false)
+  useEffect(() => {
+    if (viewMode !== 'slides') {
+      setHeaderCollapsed(false)
+      setEditSlideDeckOpen(false)
+    }
+  }, [viewMode])
   // The header's "?" button (TODO.md #27, revised): the websocket
   // connection status it originally showed turned out not to matter day
   // to day (confirmed with the user), so it's now a real help popover
@@ -99,6 +114,21 @@ function App() {
   // deck wasn't started from a file) -- same "clear on next attempt"
   // shape as editErrors, just not keyed by cell since a slide isn't one.
   const [addSlideError, setAddSlideError] = useState<string | undefined>(undefined)
+  // The slide-order permutation staged so far, relative to the deck's
+  // true on-disk order (what `set_slide_order`/`Session.
+  // slide_order_override` actually expect) -- NOT relative to whatever
+  // order is currently displayed. Reordering twice in a row must compose:
+  // each `handleReorderSlides` call receives a permutation of the
+  // *currently displayed* indices (what clicking an up/down arrow in
+  // EditSlideDeckPanel naturally produces), but the message sent to the
+  // server has to stay expressed against the original baseline, or a
+  // second move silently discards the first (caught via a real browser
+  // reorder-twice-then-save test: the file ended up scrambled relative
+  // to what the UI showed). Cleared back to null on save success/failure
+  // and whenever the deck's slide list changes for a reason other than
+  // this composition (e.g. a fresh /api/deck fetch, or an add_slide) --
+  // those all replace `deck.slides` with a new on-disk-order baseline.
+  const pendingSlideOrder = useRef<number[] | null>(null)
   const { sessionId, messages, send } = useCodeSlidesSocket()
   const cellState = useDeckState(messages)
 
@@ -178,9 +208,27 @@ function App() {
     if (!last) return
     if (last.type === 'deck_saved') {
       setSaving(false)
+      // The server's baseline now matches whatever it just wrote --
+      // any further reorder must compose against a fresh
+      // `deck.slides.map((_, i) => i)` identity, not whatever was
+      // pending before this save (handleReorderSlides' own docstring).
+      pendingSlideOrder.current = null
+      // `last.slides` is only ever non-null when this save flushed a
+      // pending slide reorder (DeckSaved's own docstring) -- splice the
+      // deck's now-authoritative slide order in here rather than
+      // trusting the optimistic order handleReorderSlides already
+      // applied, since a concurrent conflict (SaveConflictError) could
+      // in principle have left the two out of sync.
+      if (last.slides) {
+        const slides = last.slides
+        setDeck((prev) => (prev ? { ...prev, slides: slides as DeckSummary['slides'] } : prev))
+      }
+      const parts: string[] = []
+      if (last.cells.length > 0) parts.push(`cells: ${last.cells.join(', ')}`)
+      if (last.slides) parts.push('slide order')
       setSaveStatus(
-        last.cells.length > 0
-          ? { kind: 'saved', text: `Saved: ${last.cells.join(', ')}` }
+        parts.length > 0
+          ? { kind: 'saved', text: `Saved: ${parts.join('; ')}` }
           : { kind: 'saved', text: 'Nothing to save' },
       )
     } else if (last.type === 'error') {
@@ -327,6 +375,38 @@ function App() {
     setAddSlideError(undefined)
     addSlidePending.current = true
     send({ type: 'add_slide', session_id: sessionId, title, cell_names: cellNames, reveal_code: revealCode })
+  }
+
+  // Reorders the deck's slides to match `displayedOrder` -- a
+  // permutation of indices into whatever's *currently displayed*
+  // (`deck.slides`), which is what EditSlideDeckPanel's up/down arrows
+  // naturally produce (same "local swap of an array built from current
+  // state" shape App.tsx's own handleReorderCells already uses).
+  // Applied optimistically to local state immediately, and staged
+  // server-side via `set_slide_order` -- unlike `handleReorderCells`,
+  // this does NOT write to disk yet; it's only persisted the next time
+  // Save runs (`SaveDeck` flushes `Session.slide_order_override`), per
+  // the user's request that slide reordering go through Save like a
+  // cell-code edit does, not write immediately like every other slide/
+  // cell mutation in this app.
+  //
+  // `set_slide_order`'s own `slide_order` must stay expressed relative
+  // to the deck's true on-disk order, not the currently-displayed one --
+  // composed here via `pendingSlideOrder`, since two reorders in a row
+  // would otherwise silently discard the first (verified by hand: the
+  // second move's raw indices, sent as-is, landed on the *original*
+  // file order server-side, producing a result that didn't match what
+  // the UI had shown after the first move).
+  function handleReorderSlides(displayedOrder: number[]) {
+    if (!sessionId || !deck) return
+    const base = pendingSlideOrder.current ?? deck.slides.map((_, i) => i)
+    const composed = displayedOrder.map((i) => base[i])
+    pendingSlideOrder.current = composed
+    setDeck((prev) => {
+      if (!prev) return prev
+      return { ...prev, slides: displayedOrder.map((i) => prev.slides[i]) }
+    })
+    send({ type: 'set_slide_order', session_id: sessionId, slide_order: composed })
   }
 
   function handleDeleteCell(cellId: string) {
@@ -508,9 +588,31 @@ function App() {
         <div className="cs-header-controls">
           {deck && (
             <>
-              <button type="button" className="cs-add-cell-button" disabled={!sessionId} onClick={handleAddCell}>
-                + Add cell
-              </button>
+              {viewMode === 'cells' && (
+                <button type="button" className="cs-add-cell-button" disabled={!sessionId} onClick={handleAddCell}>
+                  + Add cell
+                </button>
+              )}
+              {viewMode === 'slides' && (
+                <>
+                  <label className="cs-reveal-toggle">
+                    <input
+                      type="checkbox"
+                      checked={revealed}
+                      onChange={(event) => setRevealed(event.target.checked)}
+                    />
+                    Reveal code
+                  </label>
+                  <button
+                    type="button"
+                    className="cs-new-slide-button"
+                    disabled={!sessionId}
+                    onClick={() => setEditSlideDeckOpen((prev) => !prev)}
+                  >
+                    {editSlideDeckOpen ? 'Close' : 'Edit slide deck'}
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 className="cs-view-mode-switch"
@@ -606,11 +708,22 @@ function App() {
           ))}
         </section>
       )}
+      {deck && viewMode === 'slides' && !headerCollapsed && editSlideDeckOpen && (
+        <EditSlideDeckPanel
+          slides={deck.slides}
+          cellIds={Object.keys(deck.cells)}
+          onReorderSlides={handleReorderSlides}
+          onAddSlide={handleAddSlide}
+          addSlideError={addSlideError}
+        />
+      )}
       {deck && viewMode === 'slides' && (
         <SlideShow
           slides={deck.slides}
           headerCollapsed={headerCollapsed}
           onActiveSlideChange={setActiveSlideTitle}
+          revealed={revealed}
+          onRevealedChange={setRevealed}
           cellMeta={deck.cells}
           cellState={mergedCellState}
           elementValues={elementValues}
@@ -627,8 +740,6 @@ function App() {
           onReorderElements={handleReorderElements}
           onSetElementConfig={handleSetElementConfig}
           editErrors={editErrors}
-          onAddSlide={handleAddSlide}
-          addSlideError={addSlideError}
         />
       )}
     </main>
