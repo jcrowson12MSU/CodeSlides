@@ -17,6 +17,7 @@ from codeslides.output import resolve_output, wire_safe_value
 from codeslides.protocol import (
     AddCell,
     AddElement,
+    AddSlide,
     CellAdded,
     CellOutput,
     CellRemoved,
@@ -47,8 +48,14 @@ from codeslides.protocol import (
     SetElementValue,
     SetTestSource,
     SetUiState,
+    SlideAdded,
 )
-from codeslides.serialization import InvalidSourceError, SaveConflictError, display_source, save_edits
+from codeslides.serialization import (
+    InvalidSourceError,
+    SaveConflictError,
+    display_source,
+    save_edits,
+)
 from codeslides.session import Session
 
 
@@ -444,6 +451,33 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
             ),
             *_results_to_messages(message.session_id, results),
             *_element_output_messages(session, results),
+        ]
+
+    if isinstance(message, AddSlide):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if registry.kernel.deck_path is None:
+            return [
+                ErrorMessage(
+                    message="no deck file to add a slide to (not started from a file)",
+                    session_id=message.session_id,
+                )
+            ]
+        try:
+            slide = registry.kernel.add_slide(
+                message.title, message.cell_names, message.reveal_code
+            )
+        except (InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
+            return [ErrorMessage(message=str(exc), session_id=message.session_id)]
+        return [
+            SlideAdded(
+                session_id=message.session_id,
+                title=slide.title,
+                cell_names=list(slide.cell_names),
+                reveal_code=slide.reveal_code,
+                notes=slide.notes,
+            )
         ]
 
     if isinstance(message, RenameCell):

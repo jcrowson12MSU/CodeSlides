@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CellState } from '../deckState'
 import { Cell, type CellMeta } from './Cell'
+import { NewSlidePanel } from './NewSlidePanel'
 
 export interface SlideMeta {
   title: string
@@ -29,6 +30,8 @@ export interface SlideShowProps {
   onReorderElements: (cellId: string, elementOrder: string[]) => void
   onSetElementConfig: (cellId: string, elementId: string, config: Record<string, unknown>) => void
   editErrors: Record<string, string>
+  onAddSlide: (title: string, cellNames: string[], revealCode: boolean) => void
+  addSlideError?: string
 }
 
 // Slideshow/presentation mode (TODO.md #10, ARCHITECTURE.md's "one tool,
@@ -58,9 +61,12 @@ export function SlideShow({
   onReorderElements,
   onSetElementConfig,
   editErrors,
+  onAddSlide,
+  addSlideError,
 }: SlideShowProps) {
   const [index, setIndex] = useState(0)
   const [revealOverrides, setRevealOverrides] = useState<Record<number, boolean>>({})
+  const [newSlideOpen, setNewSlideOpen] = useState(false)
   const slideRef = useRef<HTMLDivElement | null>(null)
 
   const slide = slides[index]
@@ -159,8 +165,32 @@ export function SlideShow({
     return () => window.removeEventListener('keydown', handleKey)
   }, [slides.length])
 
+  const cellIds = Object.keys(cellMeta)
+
+  function handleAddSlide(title: string, cellNames: string[], revealCode: boolean) {
+    onAddSlide(title, cellNames, revealCode)
+    setNewSlideOpen(false)
+  }
+
   if (slides.length === 0) {
-    return <p className="cs-hint">This deck has no slides yet -- use the "Cells" view instead.</p>
+    return (
+      <div className="cs-slideshow">
+        <p className="cs-hint">This deck has no slides yet -- create one below, or use the "Cells" view instead.</p>
+        {!newSlideOpen && (
+          <button type="button" className="cs-new-slide-button" onClick={() => setNewSlideOpen(true)}>
+            + New slide
+          </button>
+        )}
+        {newSlideOpen && (
+          <NewSlidePanel
+            cellIds={cellIds}
+            onAddSlide={handleAddSlide}
+            onClose={() => setNewSlideOpen(false)}
+            error={addSlideError}
+          />
+        )}
+      </div>
+    )
   }
 
   return (
@@ -190,7 +220,19 @@ export function SlideShow({
           />
           Reveal code
         </label>
+        <button type="button" className="cs-new-slide-button" onClick={() => setNewSlideOpen((prev) => !prev)}>
+          {newSlideOpen ? 'Close' : '+ New slide'}
+        </button>
       </div>
+      )}
+
+      {!headerCollapsed && newSlideOpen && (
+        <NewSlidePanel
+          cellIds={cellIds}
+          onAddSlide={handleAddSlide}
+          onClose={() => setNewSlideOpen(false)}
+          error={addSlideError}
+        />
       )}
 
       <div className="cs-slide" ref={slideRef}>

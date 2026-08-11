@@ -67,6 +67,14 @@ export interface AddCell {
   session_id: string
 }
 
+export interface AddSlide {
+  type: 'add_slide'
+  session_id: string
+  title: string
+  cell_names: string[]
+  reveal_code: boolean
+}
+
 export interface RenameCell {
   type: 'rename_cell'
   session_id: string
@@ -127,6 +135,7 @@ export type ClientMessage =
   | NavigateSlide
   | SaveDeck
   | AddCell
+  | AddSlide
   | RenameCell
   | RemoveCell
   | ReorderCells
@@ -203,6 +212,15 @@ export interface CellAdded {
   elements: ElementMeta[]
 }
 
+export interface SlideAdded {
+  type: 'slide_added'
+  session_id: string
+  title: string
+  cell_names: string[]
+  reveal_code: boolean
+  notes: string
+}
+
 export interface CellRenamed {
   type: 'cell_renamed'
   session_id: string
@@ -277,6 +295,7 @@ export type ServerMessage =
   | SessionCreated
   | DeckSaved
   | CellAdded
+  | SlideAdded
   | CellRenamed
   | CellRemoved
   | CellsReordered

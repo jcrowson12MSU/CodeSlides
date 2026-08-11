@@ -139,6 +139,22 @@ class AddCell:
 
 
 @dataclass
+class AddSlide:
+    """Create a new slide grouping existing cells (browser-driven
+    counterpart to the `@app.slide(...)` decorator, app.py:68). Same
+    write-immediately-to-disk precedent as `AddCell`: there is no staged/
+    unsaved state for a newly-added slide. `cell_names` must be a
+    non-empty list of already-existing cell names; `reveal_code` mirrors
+    `Slide.reveal_code`."""
+
+    type: ClassVar[str] = "add_slide"
+    session_id: str
+    title: str
+    cell_names: list[str]
+    reveal_code: bool = False
+
+
+@dataclass
 class RenameCell:
     """Rename a cell's identity -- its Deck-key/function name, not a
     separate cosmetic label (TODO.md #22's edit button). Same
@@ -320,6 +336,21 @@ class CellAdded:
 
 
 @dataclass
+class SlideAdded:
+    """Acknowledges a successful `add_slide`: the new slide's static
+    metadata (same shape as `/api/deck`'s per-slide dict), so the client
+    can add it to its local deck state without a full `/api/deck`
+    refetch."""
+
+    type: ClassVar[str] = "slide_added"
+    session_id: str
+    title: str
+    cell_names: list[str]
+    reveal_code: bool
+    notes: str
+
+
+@dataclass
 class CellRenamed:
     """Acknowledges a successful `rename_cell`. `old_cell_id` lets the
     client drop the stale key from local deck/cell-state maps (they're
@@ -448,6 +479,7 @@ ClientMessage = (
     | NavigateSlide
     | SaveDeck
     | AddCell
+    | AddSlide
     | RenameCell
     | RemoveCell
     | ReorderCells
@@ -465,6 +497,7 @@ ServerMessage = (
     | SessionCreated
     | DeckSaved
     | CellAdded
+    | SlideAdded
     | CellRenamed
     | CellRemoved
     | CellsReordered
@@ -487,6 +520,7 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
         NavigateSlide,
         SaveDeck,
         AddCell,
+        AddSlide,
         RenameCell,
         RemoveCell,
         ReorderCells,

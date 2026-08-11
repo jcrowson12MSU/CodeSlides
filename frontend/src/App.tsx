@@ -95,6 +95,10 @@ function App() {
   // panel only shows the error that's actually about it. Cleared on the
   // next edit-panel action for that cell.
   const [editErrors, setEditErrors] = useState<Record<string, string>>({})
+  // Feedback for a rejected add_slide (e.g. no cells selected, or the
+  // deck wasn't started from a file) -- same "clear on next attempt"
+  // shape as editErrors, just not keyed by cell since a slide isn't one.
+  const [addSlideError, setAddSlideError] = useState<string | undefined>(undefined)
   const { sessionId, messages, send } = useCodeSlidesSocket()
   const cellState = useDeckState(messages)
 
@@ -201,6 +205,13 @@ function App() {
   // every message added since the last run, not just
   // messages[messages.length - 1].
   const processedMessageCount = useRef(0)
+  // Set right before sending `add_slide`, cleared by whatever response
+  // (slide_added or a cell_id-less error) arrives for it -- same
+  // "pending flag scopes the next generic response" shape `saving`
+  // already uses for save_deck, needed here because AddSlide/its
+  // ErrorMessage carry no cell_id for the message-scan loop below to key
+  // an error off of the way editErrors does for cell-level actions.
+  const addSlidePending = useRef(false)
   useEffect(() => {
     const newMessages = messages.slice(processedMessageCount.current)
     processedMessageCount.current = messages.length
@@ -209,6 +220,7 @@ function App() {
     setDeck((prev) => {
       if (!prev) return prev
       let cells = prev.cells
+      let slides = prev.slides
       let changed = false
       for (const msg of newMessages) {
         if (
@@ -246,15 +258,26 @@ function App() {
             if (name in cells) reordered[name] = cells[name]
           }
           cells = reordered
+        } else if (msg.type === 'slide_added') {
+          changed = true
+          slides = [
+            ...slides,
+            { title: msg.title, cells: msg.cell_names, reveal_code: msg.reveal_code, notes: msg.notes },
+          ]
+          addSlidePending.current = false
+          setAddSlideError(undefined)
         }
       }
-      return changed ? { ...prev, cells } : prev
+      return changed ? { ...prev, cells, slides } : prev
     })
 
     const newErrors: Array<{ cell_id: string; message: string }> = []
     for (const m of newMessages) {
       if (m.type === 'error' && m.cell_id) {
         newErrors.push({ cell_id: m.cell_id, message: m.message })
+      } else if (m.type === 'error' && !m.cell_id && addSlidePending.current) {
+        addSlidePending.current = false
+        setAddSlideError(m.message)
       }
     }
     if (newErrors.length > 0) {
@@ -297,6 +320,13 @@ function App() {
   function handleAddCell() {
     if (!sessionId) return
     send({ type: 'add_cell', session_id: sessionId })
+  }
+
+  function handleAddSlide(title: string, cellNames: string[], revealCode: boolean) {
+    if (!sessionId) return
+    setAddSlideError(undefined)
+    addSlidePending.current = true
+    send({ type: 'add_slide', session_id: sessionId, title, cell_names: cellNames, reveal_code: revealCode })
   }
 
   function handleDeleteCell(cellId: string) {
@@ -597,6 +627,8 @@ function App() {
           onReorderElements={handleReorderElements}
           onSetElementConfig={handleSetElementConfig}
           editErrors={editErrors}
+          onAddSlide={handleAddSlide}
+          addSlideError={addSlideError}
         />
       )}
     </main>

@@ -9,10 +9,13 @@ from codeslides.serialization import (
     SaveConflictError,
     add_element,
     append_cell,
+    append_slide,
     blank_cell_source,
+    blank_slide_source,
     display_docstring,
     display_source,
     new_cell_name,
+    new_slide_title,
     reattach_decorator,
     rebuild_cell_source,
     remove_cell,
@@ -903,3 +906,80 @@ def test_set_tests_default_raises_if_the_named_element_is_not_a_tests_element():
     )
     with pytest.raises(SaveConflictError):
         set_tests_default(source, "speed", "assert 1 == 1")
+
+
+def test_new_slide_title_picks_the_smallest_unused_suffix():
+    assert new_slide_title(frozenset()) == "Slide 1"
+    assert new_slide_title(frozenset({"Slide 1"})) == "Slide 2"
+    assert new_slide_title(frozenset({"Slide 1", "Slide 3"})) == "Slide 2"
+
+
+def test_append_slide_writes_a_new_slide_grouping_cells_to_disk(deck_file):
+    before = deck_file.read_text()
+
+    returned_source = append_slide(str(deck_file), "New Slide", ["setup", "live_demo"])
+
+    after = deck_file.read_text()
+    assert after.startswith(before)  # existing content untouched, only appended to
+    assert returned_source in after
+    assert "@app.slide('New Slide', cells=['setup', 'live_demo'])" in after
+
+    deck = load_deck(str(deck_file))
+    added = next(s for s in deck.slides if s.title == "New Slide")
+    assert added.cell_names == ["setup", "live_demo"]
+    assert added.reveal_code is False
+
+
+def test_append_slide_with_reveal_code(deck_file):
+    append_slide(str(deck_file), "Revealed", ["setup"], reveal_code=True)
+
+    deck = load_deck(str(deck_file))
+    added = next(s for s in deck.slides if s.title == "Revealed")
+    assert added.reveal_code is True
+
+
+def test_append_slide_raises_on_empty_cell_list(deck_file):
+    before = deck_file.read_text()
+
+    with pytest.raises(ValueError):
+        append_slide(str(deck_file), "Empty", [])
+
+    assert deck_file.read_text() == before
+
+
+def test_append_slide_raises_on_unknown_cell(deck_file):
+    before = deck_file.read_text()
+
+    with pytest.raises(ValueError):
+        append_slide(str(deck_file), "Bad", ["does_not_exist"])
+
+    assert deck_file.read_text() == before
+
+
+def test_append_slide_twice_does_not_collide_on_function_name(deck_file):
+    """Two slides with the same title must still both be appended without
+    the second one's `def` line silently colliding with the first's --
+    the slide's own registration function name is never shown to the
+    author (app.py:68), so this only matters for keeping the file
+    parseable, not for anything user-visible."""
+    append_slide(str(deck_file), "Intro", ["setup"])
+    append_slide(str(deck_file), "Intro", ["live_demo"])
+
+    deck = load_deck(str(deck_file))
+    intros = [s for s in deck.slides if s.title == "Intro"]
+    assert len(intros) == 2
+    assert intros[0].cell_names == ["setup"]
+    assert intros[1].cell_names == ["live_demo"]
+
+
+def test_append_slide_uses_two_blank_lines_like_every_other_top_level_def(deck_file):
+    append_slide(str(deck_file), "New Slide", ["setup"])
+
+    after = deck_file.read_text()
+    assert "\n\n\n@app.slide('New Slide', cells=['setup'])\ndef slide_new_slide():" in after
+
+
+def test_blank_slide_source_parses_and_has_an_empty_docstring():
+    source = blank_slide_source("Title", ["setup"], reveal_code=False, func_name="slide_title")
+    ast.parse(source)
+    assert display_docstring(source) == ""

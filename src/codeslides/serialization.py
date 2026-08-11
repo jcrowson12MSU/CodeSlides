@@ -460,6 +460,94 @@ def append_cell(deck_path: str, name: str) -> str:
     return new_source
 
 
+def new_slide_title(existing_titles: frozenset[str] | set[str]) -> str:
+    """Pick an unused "Slide N" title for a brand-new slide, same
+    smallest-unused-integer convention as `new_cell_name`."""
+    n = 1
+    while f"Slide {n}" in existing_titles:
+        n += 1
+    return f"Slide {n}"
+
+
+def _slide_function_name(title: str, existing_names: frozenset[str] | set[str]) -> str:
+    """Derive an unused Python identifier for a new slide's registration
+    function (never shown to the author -- `@app.slide`'s decorated
+    function name is otherwise unused, see `app.py:68`) from its title,
+    falling back to a numbered `slide_N` if the title yields nothing
+    identifier-safe (e.g. all punctuation) or collides with an existing
+    cell/slide function name."""
+    slug = "".join(c if c.isalnum() else "_" for c in title.strip().lower())
+    slug = "_".join(part for part in slug.split("_") if part)
+    base = f"slide_{slug}" if slug else "slide"
+    if base not in existing_names:
+        return base
+    n = 1
+    while f"{base}_{n}" in existing_names:
+        n += 1
+    return f"{base}_{n}"
+
+
+def blank_slide_source(title: str, cell_names: list[str], reveal_code: bool, func_name: str) -> str:
+    """The literal source text for a brand-new slide: an `@app.slide(...)`
+    call grouping `cell_names`, mirroring `blank_cell_source`'s role for
+    cells. The decorated function's body is never executed (`app.py:68`
+    docstring) -- only its docstring, which becomes `Slide.notes` -- so a
+    freshly created slide gets an empty docstring/no notes."""
+    cells_repr = "[" + ", ".join(repr(name) for name in cell_names) + "]"
+    reveal_kwarg = ", reveal_code=True" if reveal_code else ""
+    return (
+        f"@app.slide({title!r}, cells={cells_repr}{reveal_kwarg})\n"
+        f"def {func_name}():\n"
+        f'    """"""\n'
+    )
+
+
+def append_slide(deck_path: str, title: str, cell_names: list[str], reveal_code: bool = False) -> str:
+    """Append a new `@app.slide(...)` grouping `cell_names` to the end of
+    `deck_path`, immediately, on disk -- same "write immediately, no
+    staged/unsaved state" precedent as `append_cell` (TODO.md #21's
+    rationale applies identically here: a newly-created slide must never
+    be silently lost if the author forgets to click Save). Returns the
+    appended source text.
+
+    Raises `ValueError` if `cell_names` is empty or references a cell
+    name not defined anywhere in the file (checked against the file's own
+    cell spans, not just the caller's in-memory Deck, so this stays
+    correct even if the file changed on disk since the caller last loaded
+    it -- same staleness concern `append_cell` already documents for
+    `SaveConflictError`). Raises `InvalidSourceError` if the result
+    wouldn't parse as valid Python."""
+    if not cell_names:
+        raise ValueError("cannot add a slide with no cells")
+
+    path = Path(deck_path)
+    original = path.read_text()
+    cell_spans = _cell_line_spans(original)
+    unknown = [name for name in cell_names if name not in cell_spans]
+    if unknown:
+        raise ValueError(f"cannot add slide {title!r}: references unknown cells: {unknown}")
+
+    tree = ast.parse(original)
+    existing_names = {
+        node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    func_name = _slide_function_name(title, existing_names)
+
+    new_source = blank_slide_source(title, cell_names, reveal_code, func_name)
+    stripped = original.rstrip("\n")
+    updated = stripped + "\n\n\n" + new_source
+
+    try:
+        ast.parse(updated)
+    except SyntaxError as exc:
+        raise InvalidSourceError(
+            f"appending slide {title!r} would leave {deck_path!r} with invalid Python syntax: {exc}"
+        ) from exc
+
+    path.write_text(updated)
+    return new_source
+
+
 def save_edits(deck_path: str, source_overrides: dict[str, str]) -> None:
     """Rewrite `deck_path` on disk, replacing each named cell's source
     text with its override. `source_overrides` maps cell name -> full

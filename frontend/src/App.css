@@ -1288,3 +1288,76 @@ body.cs-slides-locked {
   align-items: center;
   gap: 0.4rem;
 }
+
+/* Slides view "+ New slide" control (browser-driven counterpart to
+   `@app.slide(...)`, README's "Grouping cells into slides") -- sits in
+   the same toolbar row as Prev/Next/Reveal code, matching those
+   buttons' own border/radius/padding via `.cs-slideshow-toolbar button`
+   rather than repeating them here. */
+.cs-new-slide-button {
+  margin-left: auto;
+}
+
+.cs-slideshow-toolbar .cs-reveal-toggle + .cs-new-slide-button {
+  /* .cs-reveal-toggle already claims margin-left: auto to push itself
+     right -- once a button follows it in the same row, that auto-margin
+     would also shove the button away from it, so it's redundant here. */
+  margin-left: 0;
+}
+
+.cs-new-slide-panel {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #fafafa;
+  padding: 0.75rem 1rem;
+  margin: 0.5rem 0;
+  font-size: var(--cs-font-base);
+}
+
+.cs-new-slide-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.cs-new-slide-title-row label {
+  color: #666;
+}
+
+.cs-new-slide-title-row input {
+  flex: 1;
+  padding: 0.15rem 0.4rem;
+}
+
+.cs-new-slide-cells ul {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+.cs-new-slide-cells li {
+  padding: 0.15rem 0;
+  font-family: ui-monospace, monospace;
+}
+
+.cs-new-slide-cells label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.cs-new-slide-reveal {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #555;
+  margin-bottom: 0.75rem;
+}
+
+.cs-new-slide-actions {
+  display: flex;
+  gap: 0.5rem;
+}

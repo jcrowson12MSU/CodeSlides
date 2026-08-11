@@ -4,6 +4,7 @@ from codeslides.loader import load_deck
 from codeslides.protocol import (
     AddCell,
     AddElement,
+    AddSlide,
     CellAdded,
     CellOutput,
     CellRemoved,
@@ -32,6 +33,7 @@ from codeslides.protocol import (
     SetElementValue,
     SetTestSource,
     SetUiState,
+    SlideAdded,
 )
 from codeslides.ws_handler import SessionRegistry, handle_message
 
@@ -699,6 +701,91 @@ def test_add_cell_does_not_affect_a_different_sessions_instances(tmp_path):
 
     assert added.cell_id in session_a.instances
     assert added.cell_id not in session_b.instances
+
+
+def test_add_slide_emits_slide_added_and_writes_to_disk(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(
+        registry,
+        AddSlide(session_id=session.session_id, title="Intro", cell_names=["setup", "live_demo"]),
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], SlideAdded)
+    added = messages[0]
+    assert added.session_id == session.session_id
+    assert added.title == "Intro"
+    assert added.cell_names == ["setup", "live_demo"]
+    assert added.reveal_code is False
+    # written to disk immediately -- no separate save_deck needed
+    assert "@app.slide('Intro', cells=['setup', 'live_demo'])" in path.read_text()
+    # and the Kernel's own baseline picked it up synchronously
+    assert any(s.title == "Intro" for s in registry.kernel.deck.slides)
+
+
+def test_add_slide_with_reveal_code(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(
+        registry,
+        AddSlide(session_id=session.session_id, title="Intro", cell_names=["setup"], reveal_code=True),
+    )
+
+    assert messages[0].reveal_code is True
+
+
+def test_add_slide_without_a_deck_path_errors_cleanly():
+    registry = SessionRegistry(kernel=Kernel(_build_deck().deck))  # no deck_path
+    session = registry.create()
+
+    messages = handle_message(
+        registry, AddSlide(session_id=session.session_id, title="Intro", cell_names=["setup"])
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_add_slide_unknown_session_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+
+    messages = handle_message(
+        registry, AddSlide(session_id="does-not-exist", title="Intro", cell_names=["setup"])
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_add_slide_unknown_cell_produces_error_not_crash(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    before = path.read_text()
+
+    messages = handle_message(
+        registry,
+        AddSlide(session_id=session.session_id, title="Bad", cell_names=["does_not_exist"]),
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+    # nothing was written
+    assert path.read_text() == before
+
+
+def test_add_slide_empty_cell_list_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(
+        registry, AddSlide(session_id=session.session_id, title="Empty", cell_names=[])
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
 
 
 def test_rename_cell_emits_cell_renamed_and_writes_to_disk(tmp_path):

@@ -1,6 +1,7 @@
 import pytest
 
 from codeslides.protocol import (
+    AddSlide,
     CloneSession,
     EditCell,
     NavigateSlide,
@@ -24,6 +25,8 @@ from codeslides.protocol import (
         SetTestSource(session_id="s1", cell_id="c1", element_id="unit", source="assert True"),
         CloneSession(source_session_id="s1"),
         NavigateSlide(session_id="s1", slide_id="slide_1"),
+        AddSlide(session_id="s1", title="Intro", cell_names=["c1", "c2"]),
+        AddSlide(session_id="s1", title="Intro", cell_names=["c1"], reveal_code=True),
     ],
 )
 def test_client_message_roundtrips(message):

@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from codeslides import cs, turtle
-from codeslides.deck import Cell, Deck, Element
+from codeslides.deck import Cell, Deck, Element, Slide
 from codeslides.graph import DependencyGraph, build_graph
 from codeslides.output import resolve_output, wire_safe_value
 from codeslides.serialization import reattach_decorator, set_notes_docstring, set_tests_default
@@ -864,6 +864,36 @@ class Kernel:
         session.seed_cell_instance(name, cell)
         results = self._run_cells([name], session)
         return cell, results[name]
+
+    def add_slide(
+        self, title: str, cell_names: list[str], reveal_code: bool = False
+    ) -> Slide:
+        """Create a new slide grouping `cell_names` (browser-driven
+        counterpart to the `@app.slide(...)` decorator) -- appended to
+        the deck's `.py` file on disk immediately, then reloaded into
+        this Kernel's own baseline synchronously, same "write now, no
+        staged/unsaved state" precedent as `add_cell`.
+
+        Unlike `add_cell`, there's no per-Session instance to seed and
+        nothing to run: a Slide never introduces variables into the
+        dependency graph or executes anything (`deck.Slide`'s own
+        docstring) -- it only groups cells that already have their own
+        instances/results.
+
+        Requires `self.deck_path` (raises `ValueError` without one, same
+        as `add_cell`)."""
+        if self.deck_path is None:
+            raise ValueError("cannot add a slide: this Kernel was not started from a deck file")
+
+        from codeslides.serialization import append_slide
+
+        append_slide(self.deck_path, title, cell_names, reveal_code)
+
+        from codeslides.loader import load_deck
+
+        self.reload_deck(load_deck(self.deck_path))
+
+        return self.deck.slides[-1]
 
     def rename_cell(self, session: Session, old_name: str, new_name: str) -> Cell:
         """Rename a cell's identity (TODO.md #22 -- the edit button's
