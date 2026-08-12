@@ -77,6 +77,27 @@ class Cell:
     # `source` here still always has the real `def` line, same as it
     # always keeps the decorator regardless of this flag.
     hide_def: bool = False
+    # `@app.cell(layout={...})` -- the browser's own draggable-divider/
+    # view-item-panel arrangement (TODO: split code/view-items column,
+    # split upper/lower view-item sections, and which section each view
+    # item's tab lives in), persisted here so a Save writes it back to
+    # the deck's .py file and it's restored the next time the deck loads
+    # (per the user's request -- previously pure client-side React state
+    # in Cell.tsx, lost on every reload). `None` means "no saved layout
+    # yet, use the browser's own defaults" -- never populated by hand-
+    # written code in practice, but not validated/shaped beyond "a
+    # dict" here, same loose-typing precedent `Element.config` already
+    # sets, since this is purely a display concern with no effect on
+    # execution and every key is optional (a partial dict from an older
+    # save format, or one written by hand, degrades to remaining browser
+    # defaults for whichever keys are missing rather than erroring).
+    # Expected keys (all optional): "code_fraction" (float, 0-1 -- the
+    # code column's share of the row width), "panel_fraction" (float,
+    # 0-1 -- the upper section's share of the view-items column height),
+    # "lower_tabs" (list[str] -- element names, plus the literal string
+    # "__output__" for the Output tab, currently assigned to the lower
+    # section; everything else defaults to upper).
+    layout: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         names = [e.name for e in self.elements]
@@ -91,6 +112,7 @@ class Cell:
         instance: str = "static",
         elements: list[Element] | None = None,
         hide_def: bool = False,
+        layout: dict[str, Any] | None = None,
     ) -> Cell:
         return cls(
             name=fn.__name__,
@@ -99,6 +121,7 @@ class Cell:
             elements=elements or [],
             docstring=fn.__doc__ or "",
             hide_def=hide_def,
+            layout=layout,
         )
 
 

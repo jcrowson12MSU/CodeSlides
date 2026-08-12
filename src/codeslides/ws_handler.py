@@ -44,6 +44,7 @@ from codeslides.protocol import (
     SaveDeck,
     ServerMessage,
     SessionCloned,
+    SetCellLayout,
     SetElementConfig,
     SetElementValue,
     SetSlideOrder,
@@ -383,7 +384,11 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                     session_id=message.session_id,
                 )
             ]
-        if not session.source_overrides and session.slide_order_override is None:
+        if (
+            not session.source_overrides
+            and session.slide_order_override is None
+            and not session.cell_layout_overrides
+        ):
             return [DeckSaved(session_id=message.session_id, cells=[])]
         if session.source_overrides:
             try:
@@ -394,8 +399,9 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 # anything) -- this Session's overrides and the Kernel's
                 # baseline are both untouched, so it's safe to just report
                 # the error and let the instructor keep editing. A pending
-                # slide_order_override is left untouched too -- the next
-                # Save attempt (after fixing the bad edit) still has it.
+                # slide_order_override/cell_layout_overrides is left
+                # untouched too -- the next Save attempt (after fixing the
+                # bad edit) still has it.
                 return [ErrorMessage(message=str(exc), session_id=message.session_id)]
         saved = sorted(session.source_overrides)
         # Saved edits are now the on-disk baseline -- clear them so this
@@ -420,6 +426,28 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 # apply it once the underlying conflict is resolved.
                 return [ErrorMessage(message=str(exc), session_id=message.session_id)]
             session.slide_order_override = None
+
+        saved_layouts = dict(session.cell_layout_overrides)
+        if saved_layouts:
+            from codeslides.serialization import set_cell_layout
+
+            for cell_id, layout in saved_layouts.items():
+                try:
+                    set_cell_layout(deck_path, cell_id, layout)
+                except (SaveConflictError, InvalidSourceError) as exc:
+                    # Same independent-commit precedent as the slide
+                    # reorder above -- any cell/slide write already
+                    # applied above (including any layout already written
+                    # earlier in this same loop) is not rolled back. Drop
+                    # only the ones already successfully written from the
+                    # pending set; the one that just failed and anything
+                    # after it (dict iteration order == insertion order)
+                    # stay pending for a retried Save.
+                    already_written = list(saved_layouts)[: list(saved_layouts).index(cell_id)]
+                    for written_id in already_written:
+                        session.cell_layout_overrides.pop(written_id, None)
+                    return [ErrorMessage(message=str(exc), session_id=message.session_id, cell_id=cell_id)]
+            session.cell_layout_overrides.clear()
 
         # Reload the Kernel's baseline synchronously here too, rather than
         # waiting on the CLI file-watcher's async debounce (TODO.md #10,
@@ -456,7 +484,15 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
             if reordered_slides
             else None
         )
-        return [DeckSaved(session_id=message.session_id, cells=saved, slides=slides_payload)]
+        cell_layouts_payload = saved_layouts if saved_layouts else None
+        return [
+            DeckSaved(
+                session_id=message.session_id,
+                cells=saved,
+                slides=slides_payload,
+                cell_layouts=cell_layouts_payload,
+            )
+        ]
 
     if isinstance(message, AddCell):
         session = registry.get(message.session_id)
@@ -483,6 +519,7 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
+                layout=cell.layout,
             ),
             *_results_to_messages(message.session_id, results),
             *_element_output_messages(session, results),
@@ -536,6 +573,23 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
         session.slide_order_override = list(message.slide_order)
         return []
 
+    if isinstance(message, SetCellLayout):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if message.cell_id not in registry.kernel.deck.cells:
+            return [
+                ErrorMessage(
+                    message="unknown cell", session_id=message.session_id, cell_id=message.cell_id
+                )
+            ]
+        # Pure staged draft, same shape as SetSlideOrder -- never touches
+        # disk here, never triggers a re-run (a cell's own layout is a
+        # display concern, not a graph edge). Only SaveDeck actually
+        # writes it.
+        session.cell_layout_overrides[message.cell_id] = dict(message.layout)
+        return []
+
     if isinstance(message, RenameCell):
         session = registry.get(message.session_id)
         if session is None:
@@ -554,6 +608,7 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
+                layout=cell.layout,
             )
         ]
 
@@ -598,6 +653,7 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
+                layout=cell.layout,
             ),
             *_results_to_messages(message.session_id, results),
             *_element_output_messages(session, results),
@@ -621,6 +677,7 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
+                layout=cell.layout,
             ),
             *_results_to_messages(message.session_id, results),
             *_element_output_messages(session, results),
@@ -643,6 +700,7 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
+                layout=cell.layout,
             )
         ]
 
@@ -665,6 +723,7 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
+                layout=cell.layout,
             )
         ]
         # Kernel.set_element_config already pushed an iframe/image's new

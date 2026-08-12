@@ -18,6 +18,7 @@ import ast
 import textwrap
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from codeslides.deck import Cell, Element
 
@@ -382,7 +383,12 @@ def display_docstring(source: str) -> str:
 
 
 def rebuild_cell_source(
-    name: str, instance: str, elements: list[Element], source: str, hide_def: bool = False
+    name: str,
+    instance: str,
+    elements: list[Element],
+    source: str,
+    hide_def: bool = False,
+    layout: dict[str, Any] | None = None,
 ) -> str:
     """Regenerate a cell's full source text with a new `name` and/or
     `elements` list, keeping its function body (everything after the
@@ -392,26 +398,44 @@ def rebuild_cell_source(
     The `def` line's own parameter list is preserved as-is (renaming only
     changes the function's *name*, never its signature).
 
-    `hide_def` must be threaded through from the cell's *current*
-    `hide_def` (`_replace_elements` detects it from the decorator's own
-    AST, same as it already does for `instance="editable"`) and included
-    in the regenerated decorator -- otherwise any of these operations
-    would silently drop `hide_def=True` from the file the moment they
-    touch this cell, even though nothing about hiding the `def` line was
-    ever meant to change."""
+    `hide_def`/`layout` must be threaded through from the cell's
+    *current* values (`_replace_elements`/`rename_cell` detect them from
+    the decorator's own AST, same as they already do for
+    `instance="editable"`) and included in the regenerated decorator --
+    otherwise any of these operations would silently drop `hide_def=True`/
+    a previously-saved `layout` from the file the moment they touch this
+    cell, even though neither was ever meant to change just because,
+    say, an element got renamed."""
     def_line, body_lines = _split_cell_source(source)
     # def_line looks like "def old_name(params):" -- replace only the name.
     paren = def_line.index("(")
     new_def_line = f"def {name}{def_line[paren:]}"
 
+    # `is not None` (not a plain truthy check) -- an explicitly-set but
+    # empty `layout={}` is a real, meaningful "no divider/tab overrides,
+    # but a layout was saved" state distinct from `None`'s "never saved
+    # at all" (deck.py's Cell.layout docstring); a truthy check would
+    # silently drop `{}` on the floor, indistinguishable from `None`.
+    layout_kwarg = f"layout={layout!r}" if layout is not None else ""
+
     if elements:
         element_lines = "\n".join(f"        {_element_call_source(e)}," for e in elements)
         hide_def_line = "\n    hide_def=True," if hide_def else ""
+        layout_line = f"\n    {layout_kwarg}," if layout_kwarg else ""
         decorator = (
-            f"@app.cell(\n    instance={instance!r},\n    elements=[\n{element_lines}\n    ],{hide_def_line}\n)"
+            f"@app.cell(\n    instance={instance!r},\n    elements=[\n{element_lines}\n    ],"
+            f"{hide_def_line}{layout_line}\n)"
         )
     else:
-        kwargs = [kw for kw in (f"instance={instance!r}" if instance != "static" else "", "hide_def=True" if hide_def else "") if kw]
+        kwargs = [
+            kw
+            for kw in (
+                f"instance={instance!r}" if instance != "static" else "",
+                "hide_def=True" if hide_def else "",
+                layout_kwarg,
+            )
+            if kw
+        ]
         decorator = f"@app.cell({', '.join(kwargs)})" if kwargs else "@app.cell"
 
     return decorator + "\n" + new_def_line + "\n" + "\n".join(body_lines) + "\n"
@@ -656,6 +680,7 @@ def rename_cell(deck_path: str, old_name: str, new_name: str) -> None:
         and any(kw.arg == "hide_def" and ast.literal_eval(kw.value) is True for kw in dec.keywords)
         for dec in func.decorator_list
     )
+    layout = _detect_layout(func)
 
     start, end = spans[old_name]
     lines = original.splitlines(keepends=True)
@@ -665,7 +690,9 @@ def rename_cell(deck_path: str, old_name: str, new_name: str) -> None:
     # -- a rename must never silently drop/reorder elements.
     elements = _existing_elements(func)
 
-    new_cell_source = rebuild_cell_source(new_name, instance, elements, old_cell_source, hide_def=hide_def)
+    new_cell_source = rebuild_cell_source(
+        new_name, instance, elements, old_cell_source, hide_def=hide_def, layout=layout
+    )
     updated_lines = list(lines)
     updated_lines[start - 1 : end] = [new_cell_source]
     updated = "".join(updated_lines)
@@ -965,11 +992,17 @@ def _replace_elements(
         and any(kw.arg == "hide_def" and ast.literal_eval(kw.value) is True for kw in dec.keywords)
         for dec in func.decorator_list
     )
+    layout = _detect_layout(func)
 
     new_elements = build_new_elements(existing)
 
     new_cell_source = rebuild_cell_source(
-        cell_name, "editable" if is_editable else "static", new_elements, cell_source, hide_def=hide_def
+        cell_name,
+        "editable" if is_editable else "static",
+        new_elements,
+        cell_source,
+        hide_def=hide_def,
+        layout=layout,
     )
     updated_lines = list(lines)
     updated_lines[start - 1 : end] = [new_cell_source]
@@ -991,7 +1024,73 @@ def _replace_elements(
         instance="editable" if is_editable else "static",
         elements=new_elements,
         hide_def=hide_def,
+        layout=layout,
     )
+
+
+def set_cell_layout(deck_path: str, cell_name: str, layout: dict[str, Any]) -> None:
+    """Replace `cell_name`'s `layout={...}` kwarg wholesale, on disk --
+    the browser's saved divider/tab arrangement (`deck.Cell.layout`'s own
+    docstring for its shape), written only when the header's Save button
+    runs (per the user's request), unlike every other `@app.cell(...)`
+    kwarg-rewriting operation in this module, which all write
+    immediately on their own trigger. Not built on `_replace_elements` --
+    that helper's `build_new_elements` callback shape exists specifically
+    for rewriting the `elements=[...]` list, which this never touches, so
+    reusing it here would mean threading an unused elements-rewrite
+    concept through a caller that has nothing to do with elements. Same
+    hand-rolled "locate span, detect what else the decorator currently
+    has, regenerate, validate, write" body as that helper, just for
+    `layout` instead.
+
+    Raises `SaveConflictError` if `cell_name` no longer exists, or
+    `InvalidSourceError` if the result doesn't parse.
+    """
+    path = Path(deck_path)
+    original = path.read_text()
+    spans = _cell_line_spans(original)
+    if cell_name not in spans:
+        raise SaveConflictError(f"cannot save layout for cell {cell_name!r}: it no longer exists")
+
+    start, end = spans[cell_name]
+    lines = original.splitlines(keepends=True)
+    cell_source = "".join(lines[start - 1 : end])
+
+    tree = ast.parse(cell_source)
+    func = next(n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef))
+    existing_elements = _existing_elements(func)
+    is_editable = any(
+        isinstance(dec, ast.Call)
+        and any(kw.arg == "instance" and ast.literal_eval(kw.value) == "editable" for kw in dec.keywords)
+        for dec in func.decorator_list
+    )
+    hide_def = any(
+        isinstance(dec, ast.Call)
+        and any(kw.arg == "hide_def" and ast.literal_eval(kw.value) is True for kw in dec.keywords)
+        for dec in func.decorator_list
+    )
+
+    new_cell_source = rebuild_cell_source(
+        cell_name,
+        "editable" if is_editable else "static",
+        existing_elements,
+        cell_source,
+        hide_def=hide_def,
+        layout=layout,
+    )
+    updated_lines = list(lines)
+    updated_lines[start - 1 : end] = [new_cell_source]
+    updated = "".join(updated_lines)
+
+    try:
+        ast.parse(updated)
+    except SyntaxError as exc:
+        raise InvalidSourceError(
+            f"saving layout for cell {cell_name!r} would leave {deck_path!r} with invalid "
+            f"Python syntax, not saved: {exc}"
+        ) from exc
+
+    path.write_text(updated)
 
 
 def add_element(deck_path: str, cell_name: str, element: Element) -> None:
@@ -1125,6 +1224,28 @@ def _existing_elements(func: ast.FunctionDef) -> list[Element]:
                 for call in kw.value.elts
             ]
     return []
+
+
+def _detect_layout(func: ast.FunctionDef) -> dict[str, Any] | None:
+    """Parse the `layout={...}` keyword argument (if any) off a cell
+    function's own decorator list -- same "read fresh from this cell's
+    actual on-disk decorator, not a caller-supplied Deck model" precedent
+    `_existing_elements` already sets, and used the same way `is_editable`/
+    `hide_def` detection already is in `rename_cell`/`_replace_elements`:
+    an unrelated edit (rename, add/remove/reorder an element, set an
+    element's config) must never silently drop a previously-saved layout
+    just because it wasn't the thing being changed. `ast.literal_eval` on
+    the whole dict literal, not a per-key walk -- `layout`'s value is
+    always a plain literal dict of numbers/strings/lists (Cell.layout's
+    own docstring), never a call or anything else `literal_eval` can't
+    handle."""
+    for dec in func.decorator_list:
+        if not isinstance(dec, ast.Call):
+            continue
+        for kw in dec.keywords:
+            if kw.arg == "layout":
+                return ast.literal_eval(kw.value)
+    return None
 
 
 def set_tests_default(current_full_source: str, element_name: str, default_text: str) -> str:

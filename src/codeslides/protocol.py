@@ -172,6 +172,23 @@ class SetSlideOrder:
 
 
 @dataclass
+class SetCellLayout:
+    """Stage a new layout (code/side divider fraction, upper/lower panel
+    divider fraction, which section each view-item tab lives in -- see
+    `deck.Cell.layout`'s own docstring) for `cell_id` within `session_id`,
+    without touching disk -- same "no disk write until Save" shape
+    `SetSlideOrder` already has for slide order, applied to a per-cell
+    display concern instead of a deck-wide one. `layout` is always this
+    cell's *complete* new layout dict, never a partial patch (the browser
+    always sends its full current divider/tab state)."""
+
+    type: ClassVar[str] = "set_cell_layout"
+    session_id: str
+    cell_id: str
+    layout: dict[str, Any]
+
+
+@dataclass
 class RenameCell:
     """Rename a cell's identity -- its Deck-key/function name, not a
     separate cosmetic label (TODO.md #22's edit button). Same
@@ -335,20 +352,29 @@ class DeckSaved:
     pending `SetSlideOrder`, so the client can replace its local slide
     order without a full `/api/deck` refetch; `None` when no reorder was
     pending, meaning the client's existing slide order is still correct
-    as-is."""
+    as-is. `cell_layouts` is the analogous ack for `SetCellLayout`: maps
+    cell name -> that cell's saved `layout` dict, for every cell whose
+    pending layout override this save just flushed; `None` (not an empty
+    dict) when nothing was pending, same "no change, nothing to splice
+    in" meaning `slides=None` already has."""
 
     type: ClassVar[str] = "deck_saved"
     session_id: str
     cells: list[str]
     slides: list[dict[str, Any]] | None = None
+    cell_layouts: dict[str, dict[str, Any]] | None = None
 
 
 @dataclass
 class CellAdded:
     """Acknowledges a successful `add_cell`: the new cell's static
     metadata (mirroring `/api/deck`'s per-cell shape -- `instance`,
-    `source`, `elements`), so the client can add it to its local deck
-    state without needing a full page reload/`/api/deck` refetch."""
+    `source`, `elements`, `layout`), so the client can add it to its
+    local deck state without needing a full page reload/`/api/deck`
+    refetch. `layout` is always `None` here -- a brand-new cell has
+    never had a layout saved for it -- included only so this message's
+    shape matches `/api/deck`'s and the client can splice it in the same
+    way regardless of which one it came from."""
 
     type: ClassVar[str] = "cell_added"
     session_id: str
@@ -356,6 +382,7 @@ class CellAdded:
     instance: str
     source: str
     elements: list[dict[str, Any]]
+    layout: dict[str, Any] | None = None
 
 
 @dataclass
@@ -379,7 +406,13 @@ class CellRenamed:
     client drop the stale key from local deck/cell-state maps (they're
     keyed by cell id, same as `deck.cells`); `cell_id` is the new name,
     with the rest mirroring `CellAdded`'s shape so the client can splice
-    the renamed cell back in under its new key without a full refetch."""
+    the renamed cell back in under its new key without a full refetch.
+    `layout`, unlike `CellAdded`'s, is very often non-`None` here -- a
+    rename preserves whatever layout the cell already had
+    (`serialization.rename_cell`'s own `_detect_layout` call), and this
+    must carry that forward or the client's local state would silently
+    lose track of a previously-saved layout the moment its owning cell
+    gets renamed."""
 
     type: ClassVar[str] = "cell_renamed"
     session_id: str
@@ -388,6 +421,7 @@ class CellRenamed:
     instance: str
     source: str
     elements: list[dict[str, Any]]
+    layout: dict[str, Any] | None = None
 
 
 @dataclass
@@ -418,7 +452,9 @@ class ElementAdded:
     """Acknowledges a successful `add_element`: the owning cell's full,
     updated static metadata (same shape as `CellAdded`), so the client
     can replace its local copy of that one cell wholesale rather than
-    trying to patch just the new element in by hand."""
+    trying to patch just the new element in by hand. `layout` carries
+    forward whatever the cell already had saved (same "an unrelated edit
+    must never silently drop it" rationale as `CellRenamed.layout`)."""
 
     type: ClassVar[str] = "element_added"
     session_id: str
@@ -426,6 +462,7 @@ class ElementAdded:
     instance: str
     source: str
     elements: list[dict[str, Any]]
+    layout: dict[str, Any] | None = None
 
 
 @dataclass
@@ -439,6 +476,7 @@ class ElementRemoved:
     instance: str
     source: str
     elements: list[dict[str, Any]]
+    layout: dict[str, Any] | None = None
 
 
 @dataclass
@@ -453,6 +491,7 @@ class ElementsReordered:
     instance: str
     source: str
     elements: list[dict[str, Any]]
+    layout: dict[str, Any] | None = None
 
 
 @dataclass
@@ -467,6 +506,7 @@ class ElementConfigSet:
     instance: str
     source: str
     elements: list[dict[str, Any]]
+    layout: dict[str, Any] | None = None
 
 
 @dataclass
@@ -504,6 +544,7 @@ ClientMessage = (
     | AddCell
     | AddSlide
     | SetSlideOrder
+    | SetCellLayout
     | RenameCell
     | RemoveCell
     | ReorderCells
@@ -546,6 +587,7 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
         AddCell,
         AddSlide,
         SetSlideOrder,
+        SetCellLayout,
         RenameCell,
         RemoveCell,
         ReorderCells,

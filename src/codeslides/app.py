@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from codeslides.deck import Cell, Deck, Element, Slide
 
@@ -38,6 +39,7 @@ class App:
         instance: str = "static",
         elements: list[Element] | None = None,
         hide_def: bool = False,
+        layout: dict[str, Any] | None = None,
     ):
         """Register a function as a Cell. See ARCHITECTURE.md sections 2-3.
 
@@ -53,11 +55,19 @@ class App:
         way, so pair it with parameters at your own risk. The `def` line
         itself (and the `@app.cell(...)` decorator, hidden regardless)
         are still always present in `Cell.source`/the on-disk `.py` file;
-        this only ever affects what the editor displays and accepts back."""
+        this only ever affects what the editor displays and accepts back.
+
+        `layout` is the browser's own saved divider/tab arrangement (see
+        `deck.Cell.layout`'s own docstring for its shape) -- written by
+        Save, never meant to be hand-authored, but accepted here like any
+        other `@app.cell(...)` keyword since that's what a saved file
+        round-trips through on the next load."""
 
         def register(fn):
             self.deck.add_cell(
-                Cell.from_function(fn, instance=instance, elements=elements, hide_def=hide_def)
+                Cell.from_function(
+                    fn, instance=instance, elements=elements, hide_def=hide_def, layout=layout
+                )
             )
             return fn
 

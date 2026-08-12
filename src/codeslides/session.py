@@ -112,6 +112,19 @@ class Session:
     # separate from `source_overrides` since it isn't keyed by cell
     # name and clears independently.
     slide_order_override: list[int] | None = None
+    # Pending per-cell layout (code/side divider fraction, upper/lower
+    # panel divider fraction, which section each view-item tab lives in
+    # -- see `deck.Cell.layout`'s own docstring for the exact shape),
+    # staged client-side and only written to the deck's .py file when
+    # `save_deck` runs (per the user's request) -- same "no disk write
+    # until Save" precedent `slide_order_override` already sets, just
+    # keyed by cell name (a cell's own layout is independent of every
+    # other cell's) rather than being a single deck-wide value. A cell
+    # name present here always maps to that cell's *complete* new
+    # `layout` dict (the browser always sends its full current state,
+    # never a partial patch), so applying it is always a plain
+    # overwrite, never a merge.
+    cell_layout_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for name, cell in self.deck.cells.items():
@@ -193,6 +206,9 @@ class Session:
         new.slide_order_override = (
             list(self.slide_order_override) if self.slide_order_override is not None else None
         )
+        new.cell_layout_overrides = {
+            name: dict(layout) for name, layout in self.cell_layout_overrides.items()
+        }
         new.instances = {
             name: CellInstance(
                 status=inst.status,

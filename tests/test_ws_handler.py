@@ -29,6 +29,7 @@ from codeslides.protocol import (
     RunAll,
     SaveDeck,
     SessionCloned,
+    SetCellLayout,
     SetElementConfig,
     SetElementValue,
     SetSlideOrder,
@@ -737,6 +738,105 @@ def test_save_deck_flushes_both_a_cell_edit_and_a_pending_slide_order_together(t
     text = path.read_text()
     assert "speed * 999" in text
     assert text.index('@app.slide(\'Second\'') < text.index('@app.slide(\'First\'')
+
+
+def test_set_cell_layout_stages_without_writing_to_disk(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    before = path.read_text()
+    layout = {"code_fraction": 0.6, "panel_fraction": 0.4, "lower_tabs": ["speed"]}
+
+    messages = handle_message(
+        registry, SetCellLayout(session_id=session.session_id, cell_id="live_demo", layout=layout)
+    )
+
+    assert messages == []
+    assert session.cell_layout_overrides == {"live_demo": layout}
+    # nothing written yet -- staged only, same as SetSlideOrder
+    assert path.read_text() == before
+    assert registry.kernel.deck.cells["live_demo"].layout is None
+
+
+def test_set_cell_layout_unknown_cell_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(
+        registry,
+        SetCellLayout(session_id=session.session_id, cell_id="does_not_exist", layout={"code_fraction": 0.5}),
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+    assert session.cell_layout_overrides == {}
+
+
+def test_set_cell_layout_unknown_session_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+
+    messages = handle_message(
+        registry,
+        SetCellLayout(session_id="does-not-exist", cell_id="live_demo", layout={"code_fraction": 0.5}),
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_save_deck_flushes_a_pending_cell_layout(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    layout = {"code_fraction": 0.65, "panel_fraction": 0.3, "lower_tabs": ["speed"]}
+    handle_message(
+        registry, SetCellLayout(session_id=session.session_id, cell_id="live_demo", layout=layout)
+    )
+
+    messages = handle_message(registry, SaveDeck(session_id=session.session_id))
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], DeckSaved)
+    assert messages[0].cell_layouts == {"live_demo": layout}
+    # written to disk immediately -- and the Kernel's own baseline
+    # picked it up synchronously, same as every other SaveDeck path
+    assert registry.kernel.deck.cells["live_demo"].layout == layout
+    assert "layout=" in path.read_text()
+    # the pending override is cleared, same as slide_order_override after a save
+    assert session.cell_layout_overrides == {}
+
+
+def test_save_deck_with_no_cell_layout_pending_omits_cell_layouts_from_the_ack(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(registry, SaveDeck(session_id=session.session_id))
+
+    assert messages == [DeckSaved(session_id=session.session_id, cells=[])]
+    assert messages[0].cell_layouts is None
+
+
+def test_save_deck_flushes_layouts_for_multiple_cells(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    handle_message(
+        registry,
+        SetCellLayout(session_id=session.session_id, cell_id="setup", layout={"code_fraction": 0.4}),
+    )
+    handle_message(
+        registry,
+        SetCellLayout(session_id=session.session_id, cell_id="live_demo", layout={"code_fraction": 0.7}),
+    )
+
+    messages = handle_message(registry, SaveDeck(session_id=session.session_id))
+
+    assert messages[0].cell_layouts == {
+        "setup": {"code_fraction": 0.4},
+        "live_demo": {"code_fraction": 0.7},
+    }
+    assert registry.kernel.deck.cells["setup"].layout == {"code_fraction": 0.4}
+    assert registry.kernel.deck.cells["live_demo"].layout == {"code_fraction": 0.7}
+    text = path.read_text()
+    assert "code_fraction': 0.4" in text
+    assert "code_fraction': 0.7" in text
 
 
 def test_add_cell_emits_cell_added_and_writes_to_disk(tmp_path):

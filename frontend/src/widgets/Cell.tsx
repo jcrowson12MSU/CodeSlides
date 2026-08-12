@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import type { CellState } from '../deckState'
+import type { CellLayout } from '../protocol'
 import { CellOutputView } from './CellOutputView'
 import { CodeEditor } from './CodeEditor'
 import { EditCellPanel } from './EditCellPanel'
@@ -26,6 +27,15 @@ export interface CellMeta {
   instance: 'static' | 'editable'
   source: string
   elements: ElementMeta[]
+  // The browser's saved divider/tab arrangement (per the user's request
+  // that Save persist it) -- `null`/`undefined` means "never saved,
+  // use the built-in defaults" (everything upper, 50/50 split both
+  // ways). Only ever read once, to seed this Cell's own local state on
+  // mount (see the `useState` initializers below) -- after that, this
+  // Cell's own drag state is the source of truth until the layout is
+  // saved again, same "local state, not re-derived from props on every
+  // render" precedent `codeFraction` already had before this existed.
+  layout?: CellLayout | null
 }
 
 export interface CellProps {
@@ -98,6 +108,19 @@ export interface CellProps {
   onMoveCellDown?: () => void
   isFirstCell?: boolean
   isLastCell?: boolean
+  /** Called with this cell's complete current layout (code/side
+   * fraction, upper/lower panel fraction, which tabs are in the lower
+   * section) whenever any of those settle after a user interaction --
+   * a resize-handle drag ending, or a tab being dropped into a
+   * different section. Never fired on every intermediate pointermove
+   * during a drag, only once it stops -- per the user's request that
+   * Save persist the *result* of dragging, not every frame of the drag
+   * itself. `App.tsx` stages this via `set_cell_layout`, flushed to
+   * disk the next time Save runs, same "no disk write until Save"
+   * shape slide reordering already has. Optional so a caller that
+   * doesn't care about persistence (none currently exist, but nothing
+   * requires providing it) doesn't have to pass a no-op. */
+  onLayoutChange?: (layout: CellLayout) => void
 }
 
 function firstLine(source: string): string {
@@ -142,6 +165,7 @@ export function Cell({
   onMoveCellDown,
   isFirstCell = false,
   isLastCell = false,
+  onLayoutChange,
 }: CellProps) {
   const [editing, setEditing] = useState(false)
   // The code/elements split is per-cell, kept as local component state
@@ -153,9 +177,29 @@ export function Cell({
   // changing. TODO.md #20: mainly useful in Slides view, where one cell
   // is in focus at a time and giving a wide turtle canvas (or a long
   // function body) more room is worth the drag.
-  const [codeFraction, setCodeFraction] = useState(DEFAULT_CODE_FRACTION)
+  //
+  // Seeded from `meta.layout` (per the user's request that Save persist
+  // this) the *first* time this Cell mounts for this `cellId` -- a
+  // lazy `useState` initializer, not a `useEffect` synced on every
+  // `meta` change, deliberately: once the user starts dragging, this
+  // component's own state must stay authoritative even as
+  // `meta`/`meta.layout` keep flowing in from props on every unrelated
+  // re-render (a cell status update, a save elsewhere), or every one of
+  // those would silently snap an in-progress or already-adjusted layout
+  // back to whatever was last saved.
+  const [codeFraction, setCodeFraction] = useState(() => meta.layout?.code_fraction ?? DEFAULT_CODE_FRACTION)
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const draggingRef = useRef(false)
+
+  // The vertical (upper/lower) split within `.cs-cell-side`'s own
+  // fraction state -- declared here (not next to
+  // startPanelResizing/stopPanelResizing further down, where it's
+  // otherwise used) so `layoutRef` below can close over it; `layoutRef`
+  // is itself needed by `emitLayoutChange`, which the *horizontal*
+  // resize handlers (immediately below) already depend on, so this has
+  // to exist before either resize section. Same lazy-initializer
+  // seed-once-on-mount precedent as `codeFraction` above.
+  const [panelFraction, setPanelFraction] = useState(() => meta.layout?.panel_fraction ?? 0.5)
 
   // Every view item (each element, plus the cell's own output) is a tab,
   // now split across two independent, stacked sections in the left
@@ -169,15 +213,51 @@ export function Cell({
   // cells write into).
   //
   // `tabPanel` maps every tab id to which section it currently lives in
-  // -- everything starts in `'upper'` (matching the pre-split behavior
-  // exactly: nothing changes on screen until the user actually drags a
-  // tab down), and dragging a tab's button onto the other section's
-  // strip moves just that one entry. Not persisted/lifted to App.tsx,
-  // same "pure display state, no server round-trip" precedent
-  // `codeFraction`/the old single `activeTab` already set -- which
-  // section a tab lives in has no effect on execution or reactivity.
-  const [tabPanel, setTabPanel] = useState<Record<string, 'upper' | 'lower'>>({})
+  // -- absent entries default to `'upper'` (`panelOf` below), so this
+  // only ever needs to record the *lower* ones. Seeded from
+  // `meta.layout.lower_tabs` (same lazy-initializer, seed-once-on-mount
+  // precedent as `codeFraction` above) if a layout was previously
+  // saved; otherwise starts empty, matching the pre-split behavior
+  // exactly (nothing changes on screen until the user actually drags a
+  // tab down). Dragging a tab's button onto the other section's strip
+  // moves just that one entry.
+  const [tabPanel, setTabPanel] = useState<Record<string, 'upper' | 'lower'>>(() =>
+    Object.fromEntries((meta.layout?.lower_tabs ?? []).map((tab) => [tab, 'lower' as const])),
+  )
   const panelOf = useCallback((tab: string) => tabPanel[tab] ?? 'upper', [tabPanel])
+
+  // Mirrors codeFraction/panelFraction/tabPanel's *latest* values outside
+  // React state, so the pointerup handlers below (stable `useCallback`s,
+  // registered once per drag via `window.addEventListener` rather than
+  // re-subscribed on every fraction change mid-drag) can read the
+  // just-settled value without depending on state that would otherwise
+  // force resubscribing the listener on every single pointermove of the
+  // drag itself. Updated in lockstep with every corresponding `setX`
+  // call, never read to drive rendering -- only `emitLayoutChange`
+  // (below) ever reads it, at the moment a drag/tab-move actually
+  // settles.
+  const layoutRef = useRef({ codeFraction, panelFraction, tabPanel })
+  layoutRef.current = { codeFraction, panelFraction, tabPanel }
+
+  // Reports this cell's complete current layout up to App.tsx (per the
+  // user's request that Save persist it) -- called once a drag settles
+  // (`stopResizing`/`stopPanelResizing`) or a tab is dropped into a
+  // different section (`moveTabToPanel`), never on every intermediate
+  // frame of a drag. A no-op if the caller didn't provide
+  // `onLayoutChange` (e.g. any future use of Cell that doesn't care
+  // about persistence).
+  const emitLayoutChange = useCallback(() => {
+    if (!onLayoutChange) return
+    const current = layoutRef.current
+    const lowerTabs = Object.entries(current.tabPanel)
+      .filter(([, panel]) => panel === 'lower')
+      .map(([tab]) => tab)
+    onLayoutChange({
+      code_fraction: current.codeFraction,
+      panel_fraction: current.panelFraction,
+      lower_tabs: lowerTabs,
+    })
+  }, [onLayoutChange])
 
   const allTabs = [...meta.elements.map((e) => e.name), OUTPUT_TAB]
   const upperTabs = allTabs.filter((t) => panelOf(t) === 'upper')
@@ -204,7 +284,24 @@ export function Cell({
   const [draggedTab, setDraggedTab] = useState<string | null>(null)
 
   function moveTabToPanel(tab: string, panel: 'upper' | 'lower') {
-    setTabPanel((prev) => ({ ...prev, [tab]: panel }))
+    setTabPanel((prev) => {
+      const next = { ...prev, [tab]: panel }
+      // `emitLayoutChange` reads `layoutRef.current.tabPanel`, which
+      // this render hasn't committed yet at the point `onDrop` runs
+      // (state updates are async) -- computed and reported directly
+      // from `next` here instead of relying on the ref/effect timing,
+      // so the drop's own layout report never races the state update
+      // that's still in flight.
+      const lowerTabs = Object.entries(next)
+        .filter(([, p]) => p === 'lower')
+        .map(([t]) => t)
+      onLayoutChange?.({
+        code_fraction: layoutRef.current.codeFraction,
+        panel_fraction: layoutRef.current.panelFraction,
+        lower_tabs: lowerTabs,
+      })
+      return next
+    })
     if (panel === 'upper') setUpperActiveTab(tab)
     else setLowerActiveTab(tab)
   }
@@ -233,7 +330,8 @@ export function Cell({
     document.body.classList.remove('cs-resizing')
     window.removeEventListener('pointermove', handleResizeMove)
     window.removeEventListener('pointerup', stopResizing)
-  }, [handleResizeMove])
+    emitLayoutChange()
+  }, [handleResizeMove, emitLayoutChange])
 
   const startResizing = useCallback(
     (event: React.PointerEvent) => {
@@ -256,7 +354,9 @@ export function Cell({
   // measuring the panel container's own height instead of `.cs-cell-
   // body`'s width -- a second, independent draggable divider, not a
   // reuse of the horizontal one (different axis, different ref/state).
-  const [panelFraction, setPanelFraction] = useState(0.5)
+  // `panelFraction`/`setPanelFraction` themselves are declared up near
+  // `codeFraction` (see comment there); only the refs live here, next to
+  // where they're actually used.
   const panelsRef = useRef<HTMLDivElement | null>(null)
   const panelDraggingRef = useRef(false)
 
@@ -275,7 +375,8 @@ export function Cell({
     document.body.classList.remove('cs-resizing-vertical')
     window.removeEventListener('pointermove', handlePanelResizeMove)
     window.removeEventListener('pointerup', stopPanelResizing)
-  }, [handlePanelResizeMove])
+    emitLayoutChange()
+  }, [handlePanelResizeMove, emitLayoutChange])
 
   const startPanelResizing = useCallback(
     (event: React.PointerEvent) => {

@@ -104,6 +104,32 @@ def test_build_graph_linear_dependency():
     assert app.deck.cells["live_demo"].reads == frozenset({"base"})
 
 
+def test_build_graph_preserves_a_cells_layout():
+    """Regression guard: `build_graph`'s own `parse_cell` reconstructs a
+    new `Cell` (to populate reads/writes) rather than mutating the
+    original in place -- a real bug was caught by hand where adding
+    `Cell.layout` didn't also update this constructor call, so every
+    `Kernel.reload_deck` (which always calls `build_graph`) silently
+    dropped a cell's saved layout back to `None`, even though the .py
+    file on disk still had it and a fresh `load_deck` alone (without
+    going through `build_graph`) read it back correctly -- the loss only
+    showed up one layer up, after the graph was built."""
+    app = App()
+
+    @app.cell(layout={"code_fraction": 0.6, "panel_fraction": 0.4, "lower_tabs": ["canvas"]})
+    def setup():
+        base = 5
+        return base
+
+    graph = build_graph(app.deck)
+    assert graph is not None  # graph itself isn't the point here
+    assert app.deck.cells["setup"].layout == {
+        "code_fraction": 0.6,
+        "panel_fraction": 0.4,
+        "lower_tabs": ["canvas"],
+    }
+
+
 def test_build_graph_diamond_dependency():
     app = App()
 

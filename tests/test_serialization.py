@@ -25,6 +25,7 @@ from codeslides.serialization import (
     reorder_elements,
     reorder_slides,
     save_edits,
+    set_cell_layout,
     set_element_config,
     set_notes_docstring,
     set_tests_default,
@@ -509,6 +510,62 @@ def test_rebuild_cell_source_omits_hide_def_when_false():
     assert "hide_def" not in updated
 
 
+def test_rebuild_cell_source_includes_layout_with_no_elements():
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    layout = {"code_fraction": 0.6, "panel_fraction": 0.4, "lower_tabs": ["canvas"]}
+    updated = rebuild_cell_source("setup", "static", [], source, layout=layout)
+    assert "layout={'code_fraction': 0.6, 'panel_fraction': 0.4, 'lower_tabs': ['canvas']}" in updated
+
+    deck = load_deck_from_source(updated)
+    assert deck.cells["setup"].layout == layout
+
+
+def test_rebuild_cell_source_includes_layout_with_elements():
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    layout = {"code_fraction": 0.5}
+    updated = rebuild_cell_source(
+        "setup", "static", [ui.slider("x", min=1, max=5)], source, layout=layout
+    )
+    assert "layout={'code_fraction': 0.5}" in updated
+
+    deck = load_deck_from_source(updated)
+    assert deck.cells["setup"].layout == layout
+
+
+def test_rebuild_cell_source_omits_layout_when_none():
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    updated = rebuild_cell_source("setup", "static", [], source, layout=None)
+    assert "layout" not in updated
+
+
+def test_rebuild_cell_source_includes_layout_when_empty_dict():
+    # An explicitly-empty layout ({}) is falsy in Python, but semantically
+    # distinct from "never saved" (None) -- deck.Cell.layout's own
+    # docstring. rebuild_cell_source checks `is not None`, not truthiness,
+    # specifically so this case is still written rather than silently
+    # dropped (a truthy check would make {} indistinguishable from None).
+    source = "@app.cell\ndef setup():\n    base = 5\n    return base\n"
+    updated = rebuild_cell_source("setup", "static", [], source, layout={})
+    assert "layout={}" in updated
+
+    deck = load_deck_from_source(updated)
+    assert deck.cells["setup"].layout == {}
+
+
+def load_deck_from_source(source_with_decorator):
+    """Small helper: write a bare `@app.cell(...)`-decorated function to a
+    real file and load it back through the normal `load_deck` path --
+    the only way to actually exercise `App.cell`'s own `layout=` kwarg
+    parsing end to end, rather than just checking the generated text."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "deck.py"
+        path.write_text(f"from codeslides import App, ui\n\napp = App()\n\n{source_with_decorator}")
+        return load_deck(str(path))
+
+
 def test_rename_cell_updates_the_def_line_and_keeps_the_body(deck_file):
     rename_cell(str(deck_file), "live_demo", "coding_demo")
 
@@ -526,6 +583,16 @@ def test_rename_cell_preserves_its_elements(deck_file):
     assert [(e.name, e.kind, e.config) for e in deck.cells["coding_demo"].elements] == [
         ("speed", "slider", {"min": 1, "max": 10, "default": 3})
     ]
+
+
+def test_rename_cell_preserves_a_previously_saved_layout(deck_file):
+    layout = {"code_fraction": 0.7, "panel_fraction": 0.3, "lower_tabs": ["speed"]}
+    set_cell_layout(str(deck_file), "live_demo", layout)
+
+    rename_cell(str(deck_file), "live_demo", "coding_demo")
+
+    deck = load_deck(str(deck_file))
+    assert deck.cells["coding_demo"].layout == layout
 
 
 def test_rename_cell_cascades_into_slide_references(deck_file):
@@ -793,6 +860,50 @@ def test_rename_cell_preserves_hide_def_on_disk(tmp_path):
     assert "hide_def=True" in path.read_text()
     deck = load_deck(str(path))
     assert deck.cells["initial_setup"].hide_def is True
+
+
+def test_add_element_preserves_a_previously_saved_layout(tmp_path):
+    """Same regression shape as test_add_element_preserves_hide_def_on_disk
+    -- _replace_elements (add_element/remove_element/reorder_elements/
+    set_element_config, all via rebuild_cell_source) must never silently
+    drop a previously-saved layout just because an unrelated element edit
+    touched the same cell."""
+    path = tmp_path / "deck.py"
+    layout = {"code_fraction": 0.6, "panel_fraction": 0.5, "lower_tabs": ["canvas"]}
+    path.write_text(
+        "from codeslides import App, ui\n\napp = App()\n\n"
+        f'@app.cell(instance="editable", layout={layout!r})\ndef setup():\n    base = 5\n    return base\n'
+    )
+
+    add_element(str(path), "setup", ui.slider("multiplier", min=1, max=5, default=2))
+
+    assert "layout=" in path.read_text()
+    deck = load_deck(str(path))
+    assert deck.cells["setup"].layout == layout
+
+
+def test_set_cell_layout_writes_the_layout_on_disk(deck_file):
+    layout = {"code_fraction": 0.65, "panel_fraction": 0.4, "lower_tabs": ["speed"]}
+    set_cell_layout(str(deck_file), "live_demo", layout)
+
+    deck = load_deck(str(deck_file))
+    assert deck.cells["live_demo"].layout == layout
+    # untouched: the cell's own body and its existing elements
+    assert "result = base * speed" in deck.cells["live_demo"].source
+    assert [e.name for e in deck.cells["live_demo"].elements] == ["speed"]
+
+
+def test_set_cell_layout_overwrites_a_previous_layout(deck_file):
+    set_cell_layout(str(deck_file), "live_demo", {"code_fraction": 0.3})
+    set_cell_layout(str(deck_file), "live_demo", {"code_fraction": 0.8, "panel_fraction": 0.2})
+
+    deck = load_deck(str(deck_file))
+    assert deck.cells["live_demo"].layout == {"code_fraction": 0.8, "panel_fraction": 0.2}
+
+
+def test_set_cell_layout_raises_if_the_cell_does_not_exist(deck_file):
+    with pytest.raises(SaveConflictError):
+        set_cell_layout(str(deck_file), "does_not_exist", {"code_fraction": 0.5})
 
 
 def test_add_element_raises_on_a_duplicate_element_name(deck_file):

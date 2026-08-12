@@ -1099,33 +1099,6 @@ button.cs-add-cell-button {
   font-variant-numeric: tabular-nums;
 }
 
-/* Now rendered in the header row (`.cs-header-controls`), next to the
-   Cells/Slides toggle, rather than in SlideShow's own toolbar -- moved
-   per the user's request so it's reachable without navigating into
-   Slides view's own sub-toolbar. */
-.cs-reveal-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: var(--cs-font-base);
-  color: #555;
-  cursor: pointer;
-}
-
-/* Also rendered in the collapsed header (per the user's request:
-   collapsing must not hide it) -- pushed to the row's far right via
-   `margin-left: auto` (the collapsed header uses `justify-content:
-   flex-start`, so nothing does this automatically the way
-   `.cs-app-header`'s own `space-between` does for the expanded header's
-   title-group vs. controls). Smaller/tighter than the expanded header's
-   own copy, same "this row is already tight" rationale as the collapsed
-   Prev/Next buttons. */
-.cs-app-header-collapsed .cs-reveal-toggle {
-  margin-left: auto;
-  font-size: var(--cs-font-sm);
-  flex: 0 0 auto;
-}
-
 /* Speaker-friendly: a slide's content renders noticeably larger than the
    flat Cells edit view, matching ARCHITECTURE.md section 2's "built for
    live teaching first" principle. */

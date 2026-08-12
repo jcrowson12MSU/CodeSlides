@@ -7,6 +7,19 @@
 import type { ElementMeta } from './widgets/elementMeta'
 import type { SlideMeta } from './widgets/SlideShow'
 
+// A cell's saved divider/tab arrangement (codeslides.deck.Cell.layout's
+// own docstring for the exact shape) -- all keys optional, since a
+// partial dict from an older save format or one written by hand should
+// degrade to remaining browser defaults for whichever keys are missing,
+// not error. `lower_tabs` names element ids (or the synthetic Output
+// tab, OUTPUT_TAB from Cell.tsx) currently assigned to the lower
+// section; everything else defaults to the upper one.
+export interface CellLayout {
+  code_fraction?: number
+  panel_fraction?: number
+  lower_tabs?: string[]
+}
+
 // -- Client -> server messages ----------------------------------------------
 
 export interface EditCell {
@@ -82,6 +95,13 @@ export interface SetSlideOrder {
   slide_order: number[]
 }
 
+export interface SetCellLayout {
+  type: 'set_cell_layout'
+  session_id: string
+  cell_id: string
+  layout: CellLayout
+}
+
 export interface RenameCell {
   type: 'rename_cell'
   session_id: string
@@ -144,6 +164,7 @@ export type ClientMessage =
   | AddCell
   | AddSlide
   | SetSlideOrder
+  | SetCellLayout
   | RenameCell
   | RemoveCell
   | ReorderCells
@@ -214,6 +235,10 @@ export interface DeckSaved {
   // /api/deck uses), so the client can replace its local slide order
   // without a full refetch.
   slides: SlideMeta[] | null
+  // Non-null only when this save flushed at least one pending
+  // SetCellLayout -- maps cell id -> that cell's saved layout, for
+  // every cell whose layout override this save just wrote.
+  cell_layouts: Record<string, CellLayout> | null
 }
 
 export interface CellAdded {
@@ -223,6 +248,7 @@ export interface CellAdded {
   instance: 'static' | 'editable'
   source: string
   elements: ElementMeta[]
+  layout: CellLayout | null
 }
 
 export interface SlideAdded {
@@ -242,6 +268,7 @@ export interface CellRenamed {
   instance: 'static' | 'editable'
   source: string
   elements: ElementMeta[]
+  layout: CellLayout | null
 }
 
 export interface CellRemoved {
@@ -263,6 +290,7 @@ export interface ElementAdded {
   instance: 'static' | 'editable'
   source: string
   elements: ElementMeta[]
+  layout: CellLayout | null
 }
 
 export interface ElementRemoved {
@@ -272,6 +300,7 @@ export interface ElementRemoved {
   instance: 'static' | 'editable'
   source: string
   elements: ElementMeta[]
+  layout: CellLayout | null
 }
 
 export interface ElementsReordered {
@@ -281,6 +310,7 @@ export interface ElementsReordered {
   instance: 'static' | 'editable'
   source: string
   elements: ElementMeta[]
+  layout: CellLayout | null
 }
 
 export interface ElementConfigSet {
@@ -290,6 +320,7 @@ export interface ElementConfigSet {
   instance: 'static' | 'editable'
   source: string
   elements: ElementMeta[]
+  layout: CellLayout | null
 }
 
 export interface ErrorMessage {

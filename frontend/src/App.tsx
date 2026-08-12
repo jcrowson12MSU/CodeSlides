@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
 import { useDeckState } from './deckState'
+import type { CellLayout } from './protocol'
 import { useCodeSlidesSocket } from './useCodeSlidesSocket'
 import { Cell, type CellMeta } from './widgets/Cell'
 import { EditSlideDeckPanel } from './widgets/EditSlideDeckPanel'
@@ -50,13 +51,6 @@ function App() {
   // title row below -- see the header's own render for why it needs to
   // live here rather than just inside SlideShow.
   const [activeSlideTitle, setActiveSlideTitle] = useState('')
-  // Whether the current slide's code is shown -- moved up here (from
-  // SlideShow's own toolbar) per the user's request to put it on the
-  // same row as the Cells/Slides toggle. SlideShow still owns *when*
-  // this resets (to the active slide's own `reveal_code` default, on
-  // every navigation) via `onRevealedChange`; this is just where the
-  // value and its checkbox now live.
-  const [revealed, setRevealed] = useState(false)
   // Slide navigation index -- lifted up from SlideShow's own useState so
   // the header row can render Prev/Next flanking the title slot
   // (`.cs-app-title`), per the user's request to move them there instead
@@ -263,9 +257,29 @@ function App() {
         const slides = last.slides
         setDeck((prev) => (prev ? { ...prev, slides: slides as DeckSummary['slides'] } : prev))
       }
+      // Same shape as `last.slides` above, for `set_cell_layout` --
+      // `last.cell_layouts` is only non-null when this save flushed at
+      // least one pending layout override. Each cell already shows its
+      // own layout optimistically (it's Cell.tsx's own local drag state,
+      // never reset just because a save round-trips), so this is mostly
+      // a defensive sync for `deck.cells[...].layout` specifically
+      // (which nothing else keeps current once staged), not a visible
+      // change to what's on screen.
+      if (last.cell_layouts) {
+        const cellLayouts = last.cell_layouts
+        setDeck((prev) => {
+          if (!prev) return prev
+          const cells = { ...prev.cells }
+          for (const [cellId, layout] of Object.entries(cellLayouts)) {
+            if (cells[cellId]) cells[cellId] = { ...cells[cellId], layout }
+          }
+          return { ...prev, cells }
+        })
+      }
       const parts: string[] = []
       if (last.cells.length > 0) parts.push(`cells: ${last.cells.join(', ')}`)
       if (last.slides) parts.push('slide order')
+      if (last.cell_layouts) parts.push('layout')
       setSaveStatus(
         parts.length > 0
           ? { kind: 'saved', text: `Saved: ${parts.join('; ')}` }
@@ -320,12 +334,22 @@ function App() {
         ) {
           if (!changed) cells = { ...cells }
           changed = true
-          cells[msg.cell_id] = { instance: msg.instance, source: msg.source, elements: msg.elements }
+          cells[msg.cell_id] = {
+            instance: msg.instance,
+            source: msg.source,
+            elements: msg.elements,
+            layout: msg.layout,
+          }
         } else if (msg.type === 'cell_renamed') {
           if (!changed) cells = { ...cells }
           changed = true
           delete cells[msg.old_cell_id]
-          cells[msg.cell_id] = { instance: msg.instance, source: msg.source, elements: msg.elements }
+          cells[msg.cell_id] = {
+            instance: msg.instance,
+            source: msg.source,
+            elements: msg.elements,
+            layout: msg.layout,
+          }
         } else if (msg.type === 'cell_removed') {
           if (!changed) cells = { ...cells }
           changed = true
@@ -453,6 +477,22 @@ function App() {
     if (!sessionId) return
     send({ type: 'remove_cell', session_id: sessionId, cell_id: cellId })
   }
+
+  // Stable identity (useCallback, not a plain function like its siblings
+  // above) because Cell.tsx's stopResizing/stopPanelResizing list this as
+  // a dependency of their own emitLayoutChange callback, which in turn is
+  // a dependency of the window pointermove/pointerup listener-subscribing
+  // effects -- a new function identity every App render would tear down
+  // and re-subscribe those listeners mid-drag for no reason. Only stages
+  // the layout (set_cell_layout); it's written to disk on the next Save,
+  // same as handleReorderSlides' slide_order staging above.
+  const handleLayoutChange = useCallback(
+    (cellId: string, layout: CellLayout) => {
+      if (!sessionId) return
+      send({ type: 'set_cell_layout', session_id: sessionId, cell_id: cellId, layout })
+    },
+    [sessionId, send],
+  )
 
   // Swaps `cellId` with its up/down neighbor in the deck's current
   // display order and sends the whole resulting permutation -- same
@@ -620,23 +660,6 @@ function App() {
               {slideIndex + 1} / {deck.slides.length}
             </span>
           )}
-          {/* Reveal code (per the user's request): also needs to stay
-              reachable while the header is collapsed, same rationale as
-              the view-item tabs just below -- collapsing the header was
-              never meant to hide controls, only reclaim the vertical
-              space the *expanded* row's chrome took. Same checkbox/
-              state as the expanded header's own copy (`revealed`), not
-              a separate toggle -- there's only ever one "is this slide's
-              code revealed" state regardless of which header variant is
-              currently on screen. */}
-          <label className="cs-reveal-toggle">
-            <input
-              type="checkbox"
-              checked={revealed}
-              onChange={(event) => setRevealed(event.target.checked)}
-            />
-            Reveal code
-          </label>
         </div>
       )}
       {!slidesHeaderCollapsed && (
@@ -716,14 +739,6 @@ function App() {
               )}
               {viewMode === 'slides' && (
                 <>
-                  <label className="cs-reveal-toggle">
-                    <input
-                      type="checkbox"
-                      checked={revealed}
-                      onChange={(event) => setRevealed(event.target.checked)}
-                    />
-                    Reveal code
-                  </label>
                   <button
                     type="button"
                     className="cs-new-slide-button"
@@ -819,6 +834,7 @@ function App() {
               onRemoveElement={(elementName) => handleRemoveElement(cellId, elementName)}
               onReorderElements={(elementOrder) => handleReorderElements(cellId, elementOrder)}
               onSetElementConfig={(elementId, config) => handleSetElementConfig(cellId, elementId, config)}
+              onLayoutChange={(layout) => handleLayoutChange(cellId, layout)}
               editError={editErrors[cellId]}
               onDeleteCell={() => handleDeleteCell(cellId)}
               onMoveCellUp={() => handleReorderCells(cellId, -1)}
@@ -843,8 +859,6 @@ function App() {
           slides={deck.slides}
           headerCollapsed={headerCollapsed}
           onActiveSlideChange={setActiveSlideTitle}
-          revealed={revealed}
-          onRevealedChange={setRevealed}
           index={slideIndex}
           onIndexChange={setSlideIndex}
           cellMeta={deck.cells}
@@ -862,6 +876,7 @@ function App() {
           onRemoveElement={handleRemoveElement}
           onReorderElements={handleReorderElements}
           onSetElementConfig={handleSetElementConfig}
+          onLayoutChange={handleLayoutChange}
           editErrors={editErrors}
         />
       )}

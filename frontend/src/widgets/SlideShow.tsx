@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { CellState } from '../deckState'
+import type { CellLayout } from '../protocol'
 import { Cell, type CellMeta } from './Cell'
 
 export interface SlideMeta {
@@ -13,13 +14,6 @@ export interface SlideShowProps {
   slides: SlideMeta[]
   headerCollapsed: boolean
   onActiveSlideChange: (title: string) => void
-  // Reveal-code is per-current-slide view state SlideShow already owns
-  // (`revealOverrides`, keyed by slide index) -- exposed via these two
-  // props so App.tsx's header row (where the checkbox now lives, next
-  // to the Cells/Slides toggle) can render and drive it without
-  // SlideShow needing its own toolbar row for it anymore.
-  revealed: boolean
-  onRevealedChange: (revealed: boolean) => void
   // Slide navigation index, lifted up into App.tsx (a controlled prop
   // rather than SlideShow's own useState) so the header row's Prev/Next
   // buttons -- now flanking the title there, next to the deck-name/
@@ -45,6 +39,7 @@ export interface SlideShowProps {
   onRemoveElement: (cellId: string, elementName: string) => void
   onReorderElements: (cellId: string, elementOrder: string[]) => void
   onSetElementConfig: (cellId: string, elementId: string, config: Record<string, unknown>) => void
+  onLayoutChange: (cellId: string, layout: CellLayout) => void
   editErrors: Record<string, string>
 }
 
@@ -53,14 +48,16 @@ export interface SlideShowProps {
 // renders, grouped by Slide and shown one at a time. A slide's code cell
 // is a live, embedded, runnable part of the presentation (R1) -- not a
 // static snippet -- so navigating slides never touches the kernel;
-// prev/next/reveal-code are all pure client-side view state, same
-// isolation-respecting shape as collapse (ARCHITECTURE.md section 8).
+// prev/next is pure client-side view state, same isolation-respecting
+// shape as collapse (ARCHITECTURE.md section 8). Code is always shown
+// here (per the user's request) -- `SlideMeta.reveal_code` and each
+// `Cell`'s own `hideCode` toggle are no longer wired to anything in this
+// view, kept only so an existing deck's `@app.slide(reveal_code=...)`
+// doesn't need to be edited/stripped out to keep loading.
 export function SlideShow({
   slides,
   headerCollapsed,
   onActiveSlideChange,
-  revealed,
-  onRevealedChange,
   index,
   onIndexChange,
   cellMeta,
@@ -78,6 +75,7 @@ export function SlideShow({
   onRemoveElement,
   onReorderElements,
   onSetElementConfig,
+  onLayoutChange,
   editErrors,
 }: SlideShowProps) {
   const slideRef = useRef<HTMLDivElement | null>(null)
@@ -150,14 +148,6 @@ export function SlideShow({
   // slide holds is owned here, not in App.
   useEffect(() => {
     onActiveSlideChange(slide?.title ?? '')
-    // Reset the header's "Reveal code" checkbox to whichever default
-    // *this* slide was authored with every time the active slide
-    // changes (navigation or the slide's own content changing under the
-    // same index) -- `revealed` is now owned by App.tsx (so its header
-    // row can render the checkbox next to the Cells/Slides toggle), so
-    // SlideShow drives it the same way it used to derive
-    // `revealOverrides[index] ?? slide.reveal_code` locally.
-    onRevealedChange(slide?.reveal_code ?? false)
     // only re-derive when the slide identity/content actually changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slide, onActiveSlideChange])
@@ -214,7 +204,6 @@ export function SlideShow({
               // below) -- a cell collapsed in Cells view must not render
               // stuck collapsed here with no way to expand it back.
               collapsed={false}
-              hideCode={!revealed}
               hideHeader
               onRunCell={(source) => onRunCell(cellId, source)}
               onRunAll={onRunAll}
@@ -227,6 +216,7 @@ export function SlideShow({
               onRemoveElement={(elementName) => onRemoveElement(cellId, elementName)}
               onReorderElements={(elementOrder) => onReorderElements(cellId, elementOrder)}
               onSetElementConfig={(elementId, config) => onSetElementConfig(cellId, elementId, config)}
+              onLayoutChange={(layout) => onLayoutChange(cellId, layout)}
               editError={editErrors[cellId]}
             />
           )
