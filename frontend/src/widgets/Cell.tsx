@@ -16,11 +16,10 @@ const MAX_CODE_FRACTION = 0.85
 const DEFAULT_CODE_FRACTION = 0.5
 
 // The synthetic tab id for a cell's own output, alongside one tab per
-// element (TODO.md #56) -- module-level (not just local to Cell) so
-// App.tsx's own header tab row (rendered instead of Cell's, for a
-// single-cell slide with the header collapsed) can select/compare
-// against the exact same id rather than re-deriving a matching literal
-// by hand.
+// element (TODO.md #56). Exported so callers that need to reason about
+// which tab is which (rather than just rendering whatever Cell hands
+// back) can compare against the exact same id rather than re-deriving a
+// matching literal by hand.
 export const OUTPUT_TAB = '__output__'
 
 export interface CellMeta {
@@ -99,23 +98,6 @@ export interface CellProps {
   onMoveCellDown?: () => void
   isFirstCell?: boolean
   isLastCell?: boolean
-  /** Controls which view-item tab (an element's name, or the synthetic
-   * Output tab) is showing, and hides Cell's own `.cs-cell-tabs` row --
-   * used when Slides view's collapsed header shows this same tab strip
-   * itself instead (App.tsx), so the tab buttons aren't duplicated
-   * on-screen. Selected content (`.cs-cell-tab-content`) still renders
-   * normally here regardless -- only the clickable tab row itself moves.
-   * `activeTab`/`onActiveTabChange` must be provided together (both or
-   * neither); omitted, Cell falls back to its own local `activeTab`
-   * state and always renders its own tab row, same as before this was
-   * added. `App.tsx` only ever supplies these for a single-cell slide
-   * with the header collapsed (SlideShow.tsx) -- everywhere else (the
-   * flat Cells view, a multi-cell slide, an expanded header) each cell
-   * keeps owning and showing its own tabs, since there's no single
-   * unambiguous header slot to promote more than one cell's tabs into. */
-  activeTab?: string
-  onActiveTabChange?: (tab: string) => void
-  hideTabs?: boolean
 }
 
 function firstLine(source: string): string {
@@ -160,9 +142,6 @@ export function Cell({
   onMoveCellDown,
   isFirstCell = false,
   isLastCell = false,
-  activeTab: controlledActiveTab,
-  onActiveTabChange,
-  hideTabs = false,
 }: CellProps) {
   const [editing, setEditing] = useState(false)
   // The code/elements split is per-cell, kept as local component state
@@ -178,29 +157,57 @@ export function Cell({
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const draggingRef = useRef(false)
 
-  // TODO.md #56: every view item (each element, plus the cell's own
-  // output) is a tab in the right-hand column -- only one is visible at a
-  // time, selected here. Pure display state, same "local to this Cell,
-  // not lifted to App.tsx, no server round-trip" precedent as
-  // codeFraction above: which tab is showing has no effect on execution
-  // or reactivity, it's purely which already-computed thing is on
-  // screen. `'__output__'` is a synthetic id (never a valid element
-  // name, since element names come from `ui.slider("name", ...)`-style
-  // calls that share the same namespace cells write into) rather than a
-  // separate `activeTab: string | null` union, so the "which tab" state
-  // stays a single plain string throughout.
+  // Every view item (each element, plus the cell's own output) is a tab,
+  // now split across two independent, stacked sections in the left
+  // column ("upper"/"lower", per the user's request) -- each section has
+  // its own tab strip and shows its own selected tab's content
+  // simultaneously with the other section's, rather than only one tab
+  // being visible at a time across the whole cell the way a single tab
+  // strip worked before this. `'__output__'` is a synthetic id (never a
+  // valid element name, since element names come from
+  // `ui.slider("name", ...)`-style calls that share the same namespace
+  // cells write into).
   //
-  // Uncontrolled by default (`uncontrolledActiveTab`, this Cell's own
-  // state) -- App.tsx only ever supplies `controlledActiveTab`/
-  // `onActiveTabChange` for a single-cell slide with the header
-  // collapsed, so its own tab row (rendered in the header instead of
-  // here) has somewhere to write the selection back to. Every other
-  // caller (the flat Cells view, a multi-cell slide, an expanded header)
-  // passes neither, and this falls back to owning the selection itself,
-  // identical to before controlled mode existed.
-  const [uncontrolledActiveTab, setUncontrolledActiveTab] = useState<string>(OUTPUT_TAB)
-  const activeTab = controlledActiveTab ?? uncontrolledActiveTab
-  const setActiveTab = onActiveTabChange ?? setUncontrolledActiveTab
+  // `tabPanel` maps every tab id to which section it currently lives in
+  // -- everything starts in `'upper'` (matching the pre-split behavior
+  // exactly: nothing changes on screen until the user actually drags a
+  // tab down), and dragging a tab's button onto the other section's
+  // strip moves just that one entry. Not persisted/lifted to App.tsx,
+  // same "pure display state, no server round-trip" precedent
+  // `codeFraction`/the old single `activeTab` already set -- which
+  // section a tab lives in has no effect on execution or reactivity.
+  const [tabPanel, setTabPanel] = useState<Record<string, 'upper' | 'lower'>>({})
+  const panelOf = useCallback((tab: string) => tabPanel[tab] ?? 'upper', [tabPanel])
+
+  const allTabs = [...meta.elements.map((e) => e.name), OUTPUT_TAB]
+  const upperTabs = allTabs.filter((t) => panelOf(t) === 'upper')
+  const lowerTabs = allTabs.filter((t) => panelOf(t) === 'lower')
+
+  // Each section owns which of *its own* tabs is currently selected --
+  // independent state per section, same "local, no effect on execution"
+  // shape as `tabPanel`. Falls back to that section's first tab whenever
+  // its previously-active one is no longer actually in that section
+  // (dragged elsewhere, or -- for an element's own tab -- removed via
+  // the edit panel) rather than rendering a dead selection; `undefined`
+  // when the section has no tabs at all (collapses to an empty strip,
+  // per the user's own scoping decision).
+  const [upperActiveTabState, setUpperActiveTab] = useState<string>(OUTPUT_TAB)
+  const [lowerActiveTabState, setLowerActiveTab] = useState<string | undefined>(undefined)
+  const upperActiveTab = upperTabs.includes(upperActiveTabState) ? upperActiveTabState : upperTabs[0]
+  const lowerActiveTab = lowerTabs.includes(lowerActiveTabState ?? '') ? lowerActiveTabState : lowerTabs[0]
+
+  // Native HTML5 drag-and-drop (no new dependency) -- `draggedTab` tracks
+  // which tab id is currently being dragged so the drop handler knows
+  // what to move without round-tripping it through the DataTransfer API,
+  // which is finicky to read synchronously during dragover for live
+  // visual feedback. Cleared on drop/dragend regardless of outcome.
+  const [draggedTab, setDraggedTab] = useState<string | null>(null)
+
+  function moveTabToPanel(tab: string, panel: 'upper' | 'lower') {
+    setTabPanel((prev) => ({ ...prev, [tab]: panel }))
+    if (panel === 'upper') setUpperActiveTab(tab)
+    else setLowerActiveTab(tab)
+  }
 
   const handleResizeMove = useCallback((event: PointerEvent) => {
     const body = bodyRef.current
@@ -243,6 +250,154 @@ export function Cell({
     },
     [handleResizeMove, stopResizing],
   )
+
+  // The vertical (upper/lower) split within `.cs-cell-side`, mirroring
+  // `startResizing`/`handleResizeMove`/`stopResizing` above exactly, just
+  // measuring the panel container's own height instead of `.cs-cell-
+  // body`'s width -- a second, independent draggable divider, not a
+  // reuse of the horizontal one (different axis, different ref/state).
+  const [panelFraction, setPanelFraction] = useState(0.5)
+  const panelsRef = useRef<HTMLDivElement | null>(null)
+  const panelDraggingRef = useRef(false)
+
+  const handlePanelResizeMove = useCallback((event: PointerEvent) => {
+    const panels = panelsRef.current
+    if (!panels) return
+    const rect = panels.getBoundingClientRect()
+    if (rect.height === 0) return
+    const fraction = (event.clientY - rect.top) / rect.height
+    setPanelFraction(Math.min(MAX_CODE_FRACTION, Math.max(MIN_CODE_FRACTION, fraction)))
+  }, [])
+
+  const stopPanelResizing = useCallback(() => {
+    if (!panelDraggingRef.current) return
+    panelDraggingRef.current = false
+    document.body.classList.remove('cs-resizing-vertical')
+    window.removeEventListener('pointermove', handlePanelResizeMove)
+    window.removeEventListener('pointerup', stopPanelResizing)
+  }, [handlePanelResizeMove])
+
+  const startPanelResizing = useCallback(
+    (event: React.PointerEvent) => {
+      event.preventDefault()
+      panelDraggingRef.current = true
+      document.body.classList.add('cs-resizing-vertical')
+      window.addEventListener('pointermove', handlePanelResizeMove)
+      window.addEventListener('pointerup', stopPanelResizing)
+    },
+    [handlePanelResizeMove, stopPanelResizing],
+  )
+
+  // A single tab's own view-item content -- extracted so both sections
+  // render it identically without duplicating this dispatch. Unchanged
+  // from before the upper/lower split existed, just no longer inlined
+  // directly under one shared `.cs-cell-tab-content`.
+  function renderTabContent(tab: string) {
+    const element = meta.elements.find((e) => e.name === tab)
+    if (!element) {
+      return (
+        <CellOutputView
+          error={state?.error ?? null}
+          kind={state?.kind ?? null}
+          data={state?.data}
+          value={state?.value}
+        />
+      )
+    }
+    if (isInputElement(element.kind)) {
+      return <ElementWidget element={element} value={elementValues[element.name]} onSetValue={onSetElementValue} />
+    }
+    if (isViewerElement(element.kind)) {
+      return (
+        <ViewerElementWidget
+          element={element}
+          content={state?.elementContent[element.name]}
+          onChangeNotesSource={onChangeNotesSource}
+        />
+      )
+    }
+    if (isTestElement(element.kind)) {
+      const content = state?.elementContent[element.name]
+      return (
+        <TestsElementWidget
+          elementId={element.name}
+          source={testSourceValues[element.name] ?? String(element.config.default ?? '')}
+          result={isTestResult(content) ? content : null}
+          onChangeSource={(source) => onChangeTestSource(element.name, source)}
+        />
+      )
+    }
+    return null
+  }
+
+  function tabLabel(tab: string) {
+    return tab === OUTPUT_TAB ? 'Output' : tab
+  }
+
+  // One section (upper or lower): its own tab strip (a drag source for
+  // every tab currently assigned here, and a drop target accepting a tab
+  // dragged from the *other* section) plus its own active tab's content.
+  // An empty section (no tabs assigned) still renders its strip -- an
+  // empty, but still-droppable, target -- collapsed via
+  // `.cs-cell-panel-empty` rather than showing a blank content area with
+  // nothing in it (per the user's own scoping decision for this case).
+  //
+  // `otherIsEmpty` drives the flex-basis math: with both sections
+  // populated, each gets its own share of `panelFraction`/`1 -
+  // panelFraction` (the draggable divider between them). With the other
+  // section empty (collapsed to `.cs-cell-panel-empty`'s own fixed CSS
+  // size, not a flex share), giving *this* one only its own fraction of
+  // the row would leave the remainder unclaimed by anything -- flex-grow
+  // 0.5 of the available space with an empty sibling that isn't
+  // stretching to fill the rest either. Explicit `flex: 1` here instead
+  // makes it correctly claim 100% of whatever's left over.
+  function renderPanel(
+    panel: 'upper' | 'lower',
+    tabs: string[],
+    active: string | undefined,
+    setActive: (tab: string) => void,
+    otherIsEmpty: boolean,
+  ) {
+    const isEmpty = tabs.length === 0
+    const flexValue = otherIsEmpty ? 1 : panel === 'upper' ? panelFraction : 1 - panelFraction
+    return (
+      <div
+        className={`cs-cell-panel ${isEmpty ? 'cs-cell-panel-empty' : ''}`}
+        style={!isEmpty ? { flex: flexValue } : undefined}
+        onDragOver={(event) => {
+          if (draggedTab === null) return
+          event.preventDefault()
+        }}
+        onDrop={(event) => {
+          event.preventDefault()
+          if (draggedTab !== null) moveTabToPanel(draggedTab, panel)
+          setDraggedTab(null)
+        }}
+      >
+        <div className="cs-cell-tabs" role="tablist">
+          {tabs.map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              draggable
+              aria-selected={active === tab}
+              className={`cs-cell-tab ${active === tab ? 'cs-cell-tab-active' : ''} ${draggedTab === tab ? 'cs-cell-tab-dragging' : ''}`}
+              onClick={() => setActive(tab)}
+              onDragStart={(event) => {
+                event.dataTransfer.effectAllowed = 'move'
+                setDraggedTab(tab)
+              }}
+              onDragEnd={() => setDraggedTab(null)}
+            >
+              {tabLabel(tab)}
+            </button>
+          ))}
+        </div>
+        {!isEmpty && <div className="cs-cell-tab-content">{active && renderTabContent(active)}</div>}
+      </div>
+    )
+  }
 
   return (
     <div className={`cs-cell ${collapsed ? 'cs-cell-collapsed' : ''} ${hideHeader ? 'cs-cell-no-header' : ''}`}>
@@ -343,91 +498,28 @@ export function Cell({
             className="cs-cell-side"
             style={{ flexBasis: hideCode ? '100%' : `${(1 - codeFraction) * 100}%` }}
           >
-            {/* TODO.md #56: one tab per element (in the exact order
-                they're declared in the cell's `elements=[...]` list, same
-                as the pre-tab stacked layout) plus a trailing Output tab
-                -- only the selected tab's content renders below, so
-                per-element minimize (which existed to save vertical
-                space in the old always-stacked layout) has nothing left
-                to do here and is intentionally not consulted. If the
-                previously-active tab no longer exists (its element was
-                just removed via the edit panel), `find` falls through to
-                `undefined` and the `??`s below fall back to the Output
-                tab rather than rendering a dead selection. `hideTabs`
-                (App.tsx's collapsed-header case) suppresses just this
-                row -- the tab *content* below still renders normally,
-                driven by `activeTab`/`setActiveTab` regardless of
-                whether they're controlled or local. */}
-            {!hideTabs && (
-              <div className="cs-cell-tabs" role="tablist">
-                {meta.elements.map((element) => (
-                  <button
-                    key={element.name}
-                    type="button"
-                    role="tab"
-                    aria-selected={activeTab === element.name}
-                    className={`cs-cell-tab ${activeTab === element.name ? 'cs-cell-tab-active' : ''}`}
-                    onClick={() => setActiveTab(element.name)}
-                  >
-                    {element.name}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === OUTPUT_TAB}
-                  className={`cs-cell-tab ${activeTab === OUTPUT_TAB ? 'cs-cell-tab-active' : ''}`}
-                  onClick={() => setActiveTab(OUTPUT_TAB)}
-                >
-                  Output
-                </button>
-              </div>
-            )}
-
-            <div className="cs-cell-tab-content">
-              {(() => {
-                const element = meta.elements.find((e) => e.name === activeTab)
-                if (!element) {
-                  return (
-                    <CellOutputView
-                      error={state?.error ?? null}
-                      kind={state?.kind ?? null}
-                      data={state?.data}
-                      value={state?.value}
-                    />
-                  )
-                }
-                if (isInputElement(element.kind)) {
-                  return (
-                    <ElementWidget
-                      element={element}
-                      value={elementValues[element.name]}
-                      onSetValue={onSetElementValue}
-                    />
-                  )
-                }
-                if (isViewerElement(element.kind)) {
-                  return (
-                    <ViewerElementWidget
-                      element={element}
-                      content={state?.elementContent[element.name]}
-                      onChangeNotesSource={onChangeNotesSource}
-                    />
-                  )
-                }
-                if (isTestElement(element.kind)) {
-                  const content = state?.elementContent[element.name]
-                  return (
-                    <TestsElementWidget
-                      elementId={element.name}
-                      source={testSourceValues[element.name] ?? String(element.config.default ?? '')}
-                      result={isTestResult(content) ? content : null}
-                      onChangeSource={(source) => onChangeTestSource(element.name, source)}
-                    />
-                  )
-                }
-                return null
-              })()}
+            {/* Two independent, stacked sections (per the user's
+                request) -- each is its own drop target
+                (onDragOver/onDrop) for a tab dragged from either
+                section's strip, and each renders only the tabs
+                currently assigned to it (`upperTabs`/`lowerTabs`,
+                driven by `tabPanel`). An empty section still renders its
+                (empty) strip as a drop target, collapsed to a thin
+                header-only row via `.cs-cell-panel-empty` rather than
+                claiming the panel's full flex-basis share for nothing to
+                show, per the user's own scoping decision. */}
+            <div className="cs-cell-panels" ref={panelsRef}>
+              {renderPanel('upper', upperTabs, upperActiveTab, setUpperActiveTab, lowerTabs.length === 0)}
+              {upperTabs.length > 0 && lowerTabs.length > 0 && (
+                <div
+                  className="cs-panel-resize-handle"
+                  onPointerDown={startPanelResizing}
+                  role="separator"
+                  aria-orientation="horizontal"
+                  aria-label={`Resize ${cellId}'s upper/lower view-item split`}
+                />
+              )}
+              {renderPanel('lower', lowerTabs, lowerActiveTab, setLowerActiveTab, upperTabs.length === 0)}
             </div>
           </div>
 

@@ -346,6 +346,7 @@ button.cs-save-button {
 .cs-cell-side {
   flex: 0 0 auto;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
@@ -459,6 +460,88 @@ body.cs-resizing {
   flex-direction: column;
   min-height: 0;
   flex: 1 1 auto;
+}
+
+/* Two independent, stacked sections within `.cs-cell-side` (per the
+   user's request) -- each is its own drop target a view-item tab can be
+   dragged into from the other, and each shows its own selected tab's
+   content simultaneously with the other's. `.cs-cell-panels` is the
+   vertical flex container the two `.cs-cell-panel`s and the draggable
+   divider between them all live in; `min-height: 0` (needed at every
+   flex-ancestor level for a child to shrink below its content's
+   intrinsic size, same gotcha `.cs-code-editor`'s own comment already
+   documents for the horizontal split) lets each panel's own scrollable
+   content actually respect the fraction it's been given instead of
+   forcing the whole column to grow to fit everything. */
+.cs-cell-panels {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 0.5rem;
+}
+
+.cs-cell-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 0.5rem;
+}
+
+/* A panel with nothing dragged into it collapses to just its own
+   (still-droppable) tab strip -- per the user's own scoping decision --
+   rather than claiming a flex share of the column for an empty content
+   area. `flex: 0 0 auto` overrides whatever numeric `flex` the sibling
+   panel's own inline style might otherwise imply needing to share
+   against; Cell.tsx already special-cases this (an empty sibling means
+   the *other* panel gets `flex: 1` outright, not its own fraction), so
+   this only ever needs to be "don't grow, size to content." */
+.cs-cell-panel-empty {
+  flex: 0 0 auto;
+}
+
+/* Visual feedback while a tab is mid-drag (Cell.tsx sets `draggedTab`
+   from `dragstart` through `dragend`/`drop`) -- dimmed rather than
+   hidden, since the browser's own native drag image already shows a
+   ghost of the button following the cursor; this just marks the
+   original slot so it's clear which tab is the one being moved. */
+.cs-cell-tab-dragging {
+  opacity: 0.4;
+}
+
+/* The draggable divider between the upper and lower panels -- same
+   shape as `.cs-resize-handle` (the code/side divider), just rotated:
+   a thin horizontal strip with a wider invisible hit area, `cursor:
+   row-resize` instead of `col-resize`. Only rendered (Cell.tsx) when
+   both panels actually have tabs in them -- an empty panel has nothing
+   to negotiate a split with. */
+.cs-panel-resize-handle {
+  flex: 0 0 auto;
+  align-self: stretch;
+  height: 2px;
+  cursor: row-resize;
+  position: relative;
+  background: var(--border, #ddd);
+}
+
+.cs-panel-resize-handle::before {
+  content: '';
+  position: absolute;
+  inset: -6px 0;
+}
+
+.cs-panel-resize-handle:hover,
+.cs-panel-resize-handle:active {
+  background: var(--accent-border, #aa3bff);
+}
+
+/* Applied to <body> for the duration of a panel-split drag (Cell.tsx),
+   mirroring `body.cs-resizing`'s role for the horizontal divider --
+   `row-resize` cursor and no incidental text selection while dragging
+   fast enough for the pointer to drift off the thin handle itself. */
+body.cs-resizing-vertical {
+  cursor: row-resize;
+  user-select: none;
 }
 
 @media (max-width: 800px) {
@@ -921,24 +1004,6 @@ button.cs-add-cell-button {
   font-variant-numeric: tabular-nums;
 }
 
-/* View-item tabs promoted into the collapsed header (App.tsx, per the
-   user's request) reuse `.cs-cell-tabs`/`.cs-cell-tab`'s own look, but
-   this second class strips the properties that only make sense as the
-   top of a cell's own elements column -- `border-bottom`/
-   `padding-bottom` existed there to visually separate the tab row from
-   the content below it, which would draw a stray line and misaligned
-   gap in a single-row header strip that has no "content below" of its
-   own. Right-alignment lives on `.cs-app-header-collapsed
-   .cs-reveal-toggle` below, not here -- the toggle is always present in
-   the collapsed header, but these tabs only render for a single-cell
-   slide, so anchoring the row's right edge to the *toggle* (rather than
-   whichever of the two happens to be last) keeps the toggle pinned right
-   even on a multi-cell slide with no tabs to follow it. */
-.cs-header-cell-tabs {
-  border-bottom: none;
-  padding-bottom: 0;
-}
-
 /* Now rendered in the header row (`.cs-header-controls`), next to the
    Cells/Slides toggle, rather than in SlideShow's own toolbar -- moved
    per the user's request so it's reachable without navigating into
@@ -957,12 +1022,9 @@ button.cs-add-cell-button {
    `margin-left: auto` (the collapsed header uses `justify-content:
    flex-start`, so nothing does this automatically the way
    `.cs-app-header`'s own `space-between` does for the expanded header's
-   title-group vs. controls). Anchored on the toggle itself, not the
-   view-item tabs that may follow it (`.cs-header-cell-tabs`), so the
-   toggle stays pinned right even on a multi-cell slide where no tabs
-   render at all. Smaller/tighter than the expanded header's own copy,
-   same "this row is already tight" rationale as the collapsed Prev/Next
-   buttons. */
+   title-group vs. controls). Smaller/tighter than the expanded header's
+   own copy, same "this row is already tight" rationale as the collapsed
+   Prev/Next buttons. */
 .cs-app-header-collapsed .cs-reveal-toggle {
   margin-left: auto;
   font-size: var(--cs-font-sm);
