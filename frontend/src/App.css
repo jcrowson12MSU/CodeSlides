@@ -495,9 +495,48 @@ body.cs-resizing {
    panel's own inline style might otherwise imply needing to share
    against; Cell.tsx already special-cases this (an empty sibling means
    the *other* panel gets `flex: 1` outright, not its own fraction), so
-   this only ever needs to be "don't grow, size to content." */
+   this only ever needs to be "don't grow, size to content."
+
+   `min-height`/dashed border/background here are a real bug fix, not
+   just polish: an empty `.cs-cell-tabs` row (no tabs, so no content at
+   all) collapsed to its own ~8px line-height with zero visual
+   affordance -- confirmed by hand (measuring the actual rendered
+   bounding box) that this left a real user's cursor missing the
+   droppable area by a few pixels almost every attempt, landing on the
+   surrounding gap instead where there's no `onDrop` handler at all --
+   "the drag ghost shows but dropping does nothing" was the reported
+   symptom, not a browser/DnD-support issue. A generous drop target
+   (2.5rem, well past a comfortable pointer's margin for error) with a
+   dashed border makes both the target's size and its literal existence
+   as a drop zone obvious before the user ever has to search for it. */
 .cs-cell-panel-empty {
   flex: 0 0 auto;
+  min-height: 2.5rem;
+  border: 1px dashed #ccc;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+}
+
+.cs-cell-panel-empty .cs-cell-tabs {
+  border-bottom: none;
+  padding: 0 0.5rem;
+  min-height: 2.5rem;
+  align-items: center;
+  flex: 1;
+}
+
+/* Drop-target affordance text, shown only when the empty panel's own
+   tab strip has literally no tab buttons in it (`:empty` -- true
+   whenever `tabs.length === 0`, since React renders nothing extra
+   between the `{tabs.map(...)}` and the closing tag) -- a CSS
+   pseudo-element rather than a real DOM node/prop threaded down from
+   Cell.tsx just for this one label. */
+.cs-cell-panel-empty .cs-cell-tabs:empty::before {
+  content: 'Drop a tab here';
+  color: #999;
+  font-size: var(--cs-font-sm);
+  font-style: italic;
 }
 
 /* Visual feedback while a tab is mid-drag (Cell.tsx sets `draggedTab`

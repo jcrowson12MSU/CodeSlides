@@ -386,6 +386,13 @@ export function Cell({
               onClick={() => setActive(tab)}
               onDragStart={(event) => {
                 event.dataTransfer.effectAllowed = 'move'
+                // Some browsers refuse to start a native HTML5 drag at
+                // all (or never fire a usable `drop` on the target) if
+                // `dataTransfer` has no data set on it -- `draggedTab`
+                // (React state) already tracks which tab this is for
+                // `onDrop`'s own use, so the actual value here is never
+                // read back, only its presence matters.
+                event.dataTransfer.setData('text/plain', tab)
                 setDraggedTab(tab)
               }}
               onDragEnd={() => setDraggedTab(null)}
