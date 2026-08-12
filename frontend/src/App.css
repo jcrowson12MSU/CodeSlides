@@ -455,11 +455,31 @@ body.cs-resizing {
   font-weight: 600;
 }
 
+/* `min-height: 0` alone only lets this box be *sized* smaller than its
+   content wants -- it does nothing to *clip* content that's still
+   taller than the box once the upper/lower divider (Cell.tsx's
+   `panelFraction`) is dragged past a view item's own natural size (a
+   400px turtle canvas, a tall image, a long notes block). Without
+   `overflow-y: auto` here, that oversized content just kept rendering
+   past this box's own bottom edge and visually bled into whichever
+   panel was drawn below it -- reported bug, reproduced by shrinking the
+   upper panel below a turtle canvas's height. Scoped to each panel's own
+   content independently (not just the outer `.cs-cell-side`, which
+   already scrolls as a whole in Slides view via a separate, coarser
+   rule further down) so a squeeze on one panel never affects the
+   other's own scroll position. `overflow-x: hidden` alongside it, not
+   `auto` -- a wide canvas's own width already resizes its *column*
+   (Cell.tsx's `codeFraction`, the other divider), so a horizontal
+   scrollbar here would just be a second, redundant way to reach content
+   the width-side divider already exists to reveal. */
 .cs-cell-tab-content {
   display: flex;
   flex-direction: column;
   min-height: 0;
   flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
 }
 
 /* Two independent, stacked sections within `.cs-cell-side` (per the
