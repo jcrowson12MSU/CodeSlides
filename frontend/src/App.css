@@ -323,14 +323,19 @@ button.cs-save-button {
   margin: 0.5rem 0;
 }
 
-/* The code editor is the only thing in the left column; everything else
-   (input/viewer elements, output) moves to the right column -- both the
-   flat Cells view and the Slides view render through this same Cell
+/* View items (input/viewer elements, output -- `.cs-cell-side`) render
+   in the left column; the code editor is the only thing in the right
+   column (per the user's request to swap the two) -- both the flat
+   Cells view and the Slides view render through this same Cell
    component, so this layout applies to both. `flex-basis` is set inline
    per-cell (Cell.tsx's codeFraction, TODO.md #20's resizable divider) --
    flex-grow/shrink are 0 here so that inline basis is the actual
    rendered width, not just a starting point flexbox is free to
-   redistribute. */
+   redistribute. `codeFraction` still measures the *code* column's own
+   share of the row regardless of which visual side it's on -- only its
+   position (`.cs-cell-side` first, then `.cs-resize-handle`, then
+   `.cs-cell-code`, in Cell.tsx's own DOM order) changed, not its
+   fraction's meaning. */
 .cs-cell-code {
   flex: 0 0 auto;
   min-width: 0;

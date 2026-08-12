@@ -207,7 +207,16 @@ export function Cell({
     if (!body) return
     const rect = body.getBoundingClientRect()
     if (rect.width === 0) return
-    const fraction = (event.clientX - rect.left) / rect.width
+    // `.cs-cell-side` (view items) now renders on the left and
+    // `.cs-cell-code` on the right (per the user's request to swap
+    // them) -- `codeFraction` still means "code's own share of the row
+    // width" (it's still what sizes `.cs-cell-code`'s flex-basis below),
+    // but the cursor's raw left-edge fraction now measures the *side*
+    // column's width first, so it has to be inverted here to keep
+    // dragging the handle resize the column it's visually attached to,
+    // not the opposite one.
+    const fractionFromLeft = (event.clientX - rect.left) / rect.width
+    const fraction = 1 - fractionFromLeft
     setCodeFraction(Math.min(MAX_CODE_FRACTION, Math.max(MIN_CODE_FRACTION, fraction)))
   }, [])
 
@@ -313,42 +322,18 @@ export function Cell({
 
       {!collapsed && (
         <div className="cs-cell-body" ref={bodyRef}>
-          {!hideCode && (
-            <div className="cs-cell-code" style={{ flexBasis: `${codeFraction * 100}%` }}>
-              <CodeEditor
-                source={meta.source}
-                onRunCell={onRunCell}
-                onRunAll={onRunAll}
-                readOnly={meta.instance === 'static'}
-              />
-            </div>
-          )}
-
-          {/* No handle (and no split to speak of) once the code column
-              itself is hidden -- ARCHITECTURE.md's slideshow reveal-code
-              toggle already collapses to a single column in that case,
-              same as a screen narrow enough to stack the two columns
-              (see the @media rule in App.css). */}
-          {!hideCode && (
-            <div
-              className="cs-resize-handle"
-              onPointerDown={startResizing}
-              role="separator"
-              aria-orientation="vertical"
-              aria-label={`Resize ${cellId}'s code/elements split`}
-            />
-          )}
-
-          {/* `.cs-cell-code`/`.cs-cell-side` both use `flex: 0 0 auto`
-              (App.css) so the drag-driven inline `flex-basis` is the
-              actual rendered width, not just a starting point flexbox is
-              free to redistribute -- but that means `.cs-cell-side`
-              *must* always get an explicit basis, including when
-              `hideCode` hides the other column entirely. Leaving it
-              `undefined` here previously left the basis at its CSS
-              default of `auto`, which sizes a 0-grow flex item to its
-              *content's* intrinsic width -- normally harmless, but a
-              cs.image() data URI or any other long unbroken string in
+          {/* View items render on the left, code on the right (per the
+              user's request to swap the two columns) -- `.cs-cell-code`/
+              `.cs-cell-side` both use `flex: 0 0 auto` (App.css) so the
+              drag-driven inline `flex-basis` is the actual rendered
+              width, not just a starting point flexbox is free to
+              redistribute -- but that means `.cs-cell-side` *must*
+              always get an explicit basis, including when `hideCode`
+              hides the other column entirely. Leaving it `undefined`
+              here previously left the basis at its CSS default of
+              `auto`, which sizes a 0-grow flex item to its *content's*
+              intrinsic width -- normally harmless, but a cs.image()
+              data URI or any other long unbroken string in
               CellOutputView has no wrap points, so the container
               expanded to fit it and blew the whole page out to
               thousands of pixels wide (reported bug: slide 2 "Image
@@ -445,6 +430,32 @@ export function Cell({
               })()}
             </div>
           </div>
+
+          {/* No handle (and no split to speak of) once the code column
+              itself is hidden -- ARCHITECTURE.md's slideshow reveal-code
+              toggle already collapses to a single column in that case,
+              same as a screen narrow enough to stack the two columns
+              (see the @media rule in App.css). */}
+          {!hideCode && (
+            <div
+              className="cs-resize-handle"
+              onPointerDown={startResizing}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={`Resize ${cellId}'s code/elements split`}
+            />
+          )}
+
+          {!hideCode && (
+            <div className="cs-cell-code" style={{ flexBasis: `${codeFraction * 100}%` }}>
+              <CodeEditor
+                source={meta.source}
+                onRunCell={onRunCell}
+                onRunAll={onRunAll}
+                readOnly={meta.instance === 'static'}
+              />
+            </div>
+          )}
         </div>
       )}
     </div>
