@@ -548,30 +548,66 @@ body.cs-resizing {
   opacity: 0.4;
 }
 
-/* The draggable divider between the upper and lower panels -- same
-   shape as `.cs-resize-handle` (the code/side divider), just rotated:
-   a thin horizontal strip with a wider invisible hit area, `cursor:
-   row-resize` instead of `col-resize`. Only rendered (Cell.tsx) when
-   both panels actually have tabs in them -- an empty panel has nothing
-   to negotiate a split with. */
+/* The draggable divider between the upper and lower panels. Originally
+   the same 2px-line shape as `.cs-resize-handle` (the code/side
+   divider) with an invisible `-6px` inset hit-area extension -- kept
+   that pattern for the horizontal divider (unreported as an issue), but
+   the user specifically reported this one not responding to a drag even
+   though `pointerdown`/`pointermove` fire correctly when driven
+   directly (confirmed by hand, instrumented) -- pointing at a real
+   grabbability problem, not a broken handler. Widened to a real 8px bar
+   (not just a wider invisible margin around a thin visible line) with a
+   center grip mark, so there's a comfortably sized, visually obvious
+   target to land the cursor's actual click point on, rather than
+   depending on an invisible hit-area extension a user has no way to see
+   the boundaries of. Only rendered (Cell.tsx) when both panels actually
+   have tabs in them -- an empty panel has nothing to negotiate a split
+   with. */
 .cs-panel-resize-handle {
   flex: 0 0 auto;
   align-self: stretch;
-  height: 2px;
+  height: 8px;
   cursor: row-resize;
   position: relative;
-  background: var(--border, #ddd);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .cs-panel-resize-handle::before {
   content: '';
   position: absolute;
-  inset: -6px 0;
+  inset: 0 0;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+  background: var(--border, #ddd);
 }
 
-.cs-panel-resize-handle:hover,
-.cs-panel-resize-handle:active {
+/* A short center grip mark (three dots via box-shadow, no extra DOM
+   nodes) -- same purpose as a scrollbar thumb's own visual weight: it
+   reads as "this is a handle" at a glance, not just a stray line that
+   happens to be slightly thicker than a normal border. */
+.cs-panel-resize-handle::after {
+  content: '';
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #999;
+  box-shadow: -8px 0 0 #999, 8px 0 0 #999;
+  position: relative;
+  z-index: 1;
+}
+
+.cs-panel-resize-handle:hover::before,
+.cs-panel-resize-handle:active::before {
   background: var(--accent-border, #aa3bff);
+}
+
+.cs-panel-resize-handle:hover::after,
+.cs-panel-resize-handle:active::after {
+  background: var(--accent, #aa3bff);
+  box-shadow: -8px 0 0 var(--accent, #aa3bff), 8px 0 0 var(--accent, #aa3bff);
 }
 
 /* Applied to <body> for the duration of a panel-split drag (Cell.tsx),
