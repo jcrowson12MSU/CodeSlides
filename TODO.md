@@ -2745,6 +2745,32 @@ reshape the plan below and are called out explicitly where they apply:
   unaffected (352 passed, 2 skipped), as expected for a one-line
   frontend-only change.
 
+- [ ] **59. When Save is clicked, also export every cell's code + notes as a plain, separate `.py` file.**
+  Alongside the existing deck-file save, write a second file containing
+  just each cell's docstring/notes and code -- no `@app.cell`/`@app.slide`
+  decorators, elements, or CodeSlides-specific scaffolding -- so the
+  lesson content can be handed to a student or run standalone as normal
+  Python. Needs a decision on naming/location (e.g. `<deck>_export.py`
+  next to the deck file) and on cell ordering (deck/file order, vs. some
+  other order) before implementing.
+
+- [ ] **60. Fix: the "+ Add cell" button no longer works.**
+  Reported as broken -- previously verified working end-to-end in item 21.
+  Needs reproduction (likely a regression from a later change touching
+  `App.tsx`'s message-scanning effect or the `add_cell`/`cell_added`
+  wire path) before a fix.
+
+- [ ] **61. Add a title slide as the deck's first slide, to introduce the project.**
+  Needs suggestions on how to structure it (e.g. project name, author/
+  course, a one-line summary, maybe a table of contents of the other
+  slides) before implementing.
+
+- [ ] **62. Improve turtle compatibility.**
+  Broaden `src/codeslides/turtle.py`'s coverage of the real stdlib
+  `turtle` API (see item 11) -- needs a concrete list of which
+  currently-unsupported calls/behaviors are actually blocking real lesson
+  content before scoping the fix.
+
 - [ ] **48. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
