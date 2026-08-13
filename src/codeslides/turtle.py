@@ -46,6 +46,19 @@ class _TurtleState:
     pen_width: float = 1.0
     visible: bool = True
     speed: int = 6
+    # Screen/window state (docs/turtle-compatibility-todo.md Phase 1) --
+    # folded into the same per-cell-execution state as the turtle's own
+    # motion/pen fields above, rather than a second parallel contextvar:
+    # a cell has exactly one `turtle_canvas` element (ARCHITECTURE.md
+    # section 7's "auto-targeting" design), so there is only ever one
+    # screen worth of state to track per execution, same as there's only
+    # one turtle's worth. `world_coords` is `None` until
+    # `setworldcoordinates(...)` is called -- `None` means "use the
+    # viewer's existing default mapping" (canvas-center-origin, 1 turtle
+    # unit = 1 pixel), so a script that never calls it draws exactly as
+    # it always has.
+    world_coords: tuple[float, float, float, float] | None = None
+    background_color: str = "white"
     commands: list[dict[str, Any]] = field(default_factory=list)
 
     def emit(self, op: str, **kwargs: Any) -> None:
@@ -325,6 +338,210 @@ def speed(value: int | str | None = None) -> int | None:
     speeds = {"fastest": 0, "fast": 10, "normal": 6, "slow": 3, "slowest": 1}
     state.speed = speeds.get(value, value) if isinstance(value, str) else value
     return None
+
+
+# -- Screen (docs/turtle-compatibility-todo.md Phase 1) ---------------------
+#
+# Real stdlib turtle splits `Turtle` (one cursor's motion/pen/appearance)
+# from `Screen`/`TurtleScreen` (the drawing window: coordinate system,
+# redraw timing, background, window lifecycle). This module previously
+# had no `Screen` concept at all -- `turtle.Screen()` raised
+# `AttributeError` immediately, which is the single most common way a
+# real, unmodified turtle script failed to run here at all (nearly
+# every real-world script opens with `wn = turtle.Screen()`).
+#
+# These are module-level functions, same shape as every motion/pen
+# function above -- `Screen()` at the bottom returns a thin object whose
+# methods just call these, the same relationship `Turtle` already has to
+# the motion functions, so `turtle.Screen()` and `wn.tracer(0)` work
+# exactly like `turtle.Turtle()` and `t.forward(100)` do.
+
+
+def setworldcoordinates(llx: float, lly: float, urx: float, ury: float) -> None:
+    """Establish a user coordinate system: `(llx, lly)` maps to the
+    canvas's bottom-left corner, `(urx, ury)` to its top-right --
+    independently scaled per axis to fit the canvas's actual pixel
+    dimensions (matching real turtle: this does NOT preserve aspect
+    ratio, verified against the stdlib source). Recorded as a command
+    (not just local Python-side state) because the actual pixel-space
+    scale factors depend on the `turtle_canvas` element's own
+    width/height, which only the frontend (`TurtleCanvasViewer.tsx`)
+    knows -- the emitted command carries just the four world-space
+    bounds, and every position the frontend replays afterward
+    (`goto`/`dot`/`stamp`/...) gets mapped through them there. Real
+    turtle also resets the whole screen and switches to "world" mode as
+    a side effect (`self.mode("world")`, `self.update()`) -- not
+    replicated here, since this app has no other coordinate "mode" to
+    switch away from and no separate reset-vs-redraw step (a cell
+    re-run already redraws everything from scratch)."""
+    state = _state()
+    state.world_coords = (llx, lly, urx, ury)
+    state.emit("setworldcoordinates", llx=llx, lly=lly, urx=urx, ury=ury)
+
+
+def tracer(n: int | None = None, delay: int | None = None) -> int | None:
+    """Real turtle's `tracer(0)` disables per-step screen updates
+    (redraw only on `update()`) for faster batch drawing; `tracer(1)`
+    (the default) redraws after every command. This app's rendering is
+    already unconditionally the `tracer(0)` behavior -- a cell runs to
+    completion, then the *entire* finished command list is sent and
+    replayed in one pass (see `docs/turtle-animation-feasibility.md`) --
+    so there is no per-step redraw mode to actually toggle. Accepted
+    as a no-op (not raising) purely so scripts that call it don't break
+    on an otherwise load-bearing-only-in-real-turtle line; `delay` is
+    accepted for the same signature-compatibility reason and also
+    unused. Returns `None` regardless of `n`, since there's no
+    meaningful "current tracer state" to report back (real turtle
+    returns the last-set value; nothing here depends on that return
+    value being accurate, only on the call not raising)."""
+    _state()  # still requires an active cell execution, same as every other call
+    _ = n, delay
+
+
+def update() -> None:
+    """Real turtle's `update()` forces a screen redraw when `tracer(0)`
+    has suppressed automatic ones. A no-op here for the same reason
+    `tracer` is: this app already redraws the complete, finished
+    picture in one pass after the cell returns, so there's no pending
+    partial frame for `update()` to flush."""
+    _state()
+
+
+def bgcolor(color: str | None = None) -> str | None:
+    state = _state()
+    if color is None:
+        return state.background_color
+    state.background_color = color
+    state.emit("bgcolor", color=color)
+    return None
+
+
+def screensize(canvwidth: int | None = None, canvheight: int | None = None, bg: str | None = None) -> tuple[int, int] | None:
+    """Real turtle's `screensize` resizes the *scrollable drawing
+    region* (which can be larger than the visible window, with
+    scrollbars) -- there is no scrolling concept in this app's fixed-
+    size `turtle_canvas` element, so this is accepted for signature
+    compatibility but doesn't resize anything. `bg`, if given, still
+    sets the background color (real turtle documents this as
+    equivalent to a `bgcolor()` call), since that part has real
+    meaning here."""
+    _state()
+    if bg is not None:
+        bgcolor(bg)
+    _ = canvwidth, canvheight
+    return None
+
+
+def colormode(cmode: float | None = None) -> float | None:
+    """Real turtle's `colormode` toggles between `1.0`-scaled and
+    `255`-scaled RGB tuple color values. This shim's colors are always
+    passed straight through to the browser's own CSS color parsing
+    (`TurtleCanvasViewer.tsx`'s `ctx.fillStyle`/`strokeStyle`), which
+    already accepts `"red"`, `"#ff0000"`, `"rgb(255,0,0)"`, etc.
+    directly -- there's no intermediate numeric-tuple color
+    representation here for a color *mode* to apply to, so this is
+    accepted for signature compatibility only."""
+    _state()
+    _ = cmode
+    return None
+
+
+def exitonclick() -> None:
+    """Real turtle's `exitonclick()` blocks until the user clicks the
+    window, then closes it -- typically the very last line of a script,
+    keeping the window open until dismissed. A CodeSlides cell has no
+    window to keep open or close (its output is a static, already-
+    rendered canvas in the browser, not a blocking Tk event loop) --
+    so this is an explicit, intentional no-op, not a missing feature:
+    the closest real-world equivalent behavior (leave the finished
+    drawing on screen) is already exactly what happens without this
+    call doing anything at all."""
+    _state()
+
+
+def bye() -> None:
+    """Real turtle's `bye()` closes the turtle window immediately. Same
+    reasoning as `exitonclick()`: no window exists here to close, so
+    this is an intentional no-op."""
+    _state()
+
+
+_UNSUPPORTED_SCREEN_EVENT_METHODS = (
+    "onclick",
+    "onkey",
+    "onkeypress",
+    "ontimer",
+    "listen",
+    "register_shape",
+    "getshapes",
+)
+
+
+def _unsupported_screen_event_method(name: str):
+    def _raise(*_args: Any, **_kwargs: Any) -> None:
+        raise NotImplementedError(
+            f"turtle.Screen().{name}(...) is not supported -- codeslides.turtle's cells run "
+            "once, synchronously, to completion and then render a finished picture; there is "
+            "no persistent event loop for a keyboard/mouse/timer callback to run against "
+            "later (see docs/turtle-compatibility-todo.md's Gap 4). This is a deliberate "
+            "scope boundary, not an oversight: registering a callback that silently never "
+            "fires would be worse than this clear error."
+        )
+
+    _raise.__name__ = name
+    return _raise
+
+
+for _name in _UNSUPPORTED_SCREEN_EVENT_METHODS:
+    globals()[_name] = _unsupported_screen_event_method(_name)
+del _name
+
+
+class _Screen:
+    """A `turtle.Screen()`/`wn = turtle.Screen()` handle -- mirrors
+    `Turtle`'s own shape (see that class's docstring): every method is
+    the same module-level function above, bound as a `staticmethod`,
+    operating on the one screen's worth of state folded into the
+    currently-executing cell's `_TurtleState` (there is exactly one
+    `turtle_canvas` element per cell, so exactly one screen, the same
+    "auto-targeting" design `Turtle` already relies on). Constructing
+    `_Screen()` does nothing by itself, same as `Turtle()` -- the first
+    method actually called raises the existing `RuntimeError` from
+    `_state()` if there's no active cell execution.
+
+    Named `_Screen`, not `Screen`, for the exact same reason real
+    stdlib turtle does this too: `Screen()` below is the actual public
+    factory function callers use (`turtle.Screen()`), so the class
+    itself needs a different name to avoid the function shadowing its
+    own return type."""
+
+    setworldcoordinates = staticmethod(setworldcoordinates)
+    tracer = staticmethod(tracer)
+    update = staticmethod(update)
+    bgcolor = staticmethod(bgcolor)
+    screensize = staticmethod(screensize)
+    colormode = staticmethod(colormode)
+    exitonclick = staticmethod(exitonclick)
+    bye = staticmethod(bye)
+    onclick = staticmethod(globals()["onclick"])
+    onkey = staticmethod(globals()["onkey"])
+    onkeypress = staticmethod(globals()["onkeypress"])
+    ontimer = staticmethod(globals()["ontimer"])
+    listen = staticmethod(globals()["listen"])
+    register_shape = staticmethod(globals()["register_shape"])
+    getshapes = staticmethod(globals()["getshapes"])
+
+
+def Screen() -> _Screen:  # matches stdlib turtle's own Screen() factory name exactly
+    """`turtle.Screen()` -- returns a handle onto the current cell
+    execution's one screen's worth of state, same relationship
+    `turtle.Turtle()` already has to `Turtle`. Real stdlib `Screen()` is
+    a singleton factory (repeated calls return the same window object);
+    there is no equivalent "the same object" concept to preserve here
+    since every `Screen()` call within one cell execution already
+    operates on the same single `_TurtleState`, singleton or not."""
+    _state()  # requires an active cell execution, same as every other call
+    return _Screen()
 
 
 # -- Queries ------------------------------------------------------------

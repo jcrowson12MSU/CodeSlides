@@ -2995,8 +2995,67 @@ reshape the plan below and are called out explicitly where they apply:
   `docs/turtle-animation-feasibility.md` (already-written prior analysis
   of `speed()`/animated drawing) rather than duplicating it.
 
-  Not yet implemented -- this pass was scoped to producing the gap
-  analysis and plan the user asked for, not to writing the fix itself.
+  **Phase 1 implemented (same task, follow-up): `Screen` support.**
+  `codeslides/turtle.py` gained `Screen()`, a thin handle mirroring
+  `Turtle`'s own shape (module-level functions, bound as
+  `staticmethod`s onto a class), operating on the same per-execution
+  `_TurtleState` rather than a second parallel contextvar -- a cell has
+  exactly one `turtle_canvas` element, so there's only ever one
+  screen's worth of state to track, same as there's only one turtle's.
+  Implemented: `setworldcoordinates(llx, lly, urx, ury)` (the
+  reference deck's actual blocker), `tracer(n)`/`update()` (accepted
+  no-ops -- this app's rendering is already unconditionally the
+  `tracer(0)` behavior), `bgcolor(...)`, `screensize(...)` (accepted,
+  its `bg=` kwarg still sets the background color per real turtle's own
+  documented equivalence, since there's no scrolling-region concept
+  here to actually resize), `colormode(...)` (accepted no-op -- colors
+  already pass straight through to the browser's own CSS color
+  parsing), `exitonclick()`/`bye()` (accepted no-ops -- no window to
+  keep open or close). `onclick`/`onkey`/`onkeypress`/`ontimer`/
+  `listen`/`register_shape`/`getshapes` raise a clear
+  `NotImplementedError` naming the method and explaining why (Gap 4:
+  needs a persistent event loop this app's synchronous, run-once cell
+  execution doesn't have) -- a registered callback that silently never
+  fires would be a worse failure mode than an explicit error.
+
+  `setworldcoordinates` needed a real frontend change, not just a
+  Python-side stub: the actual per-axis pixel scale factors depend on
+  the `turtle_canvas` element's own width/height, which only
+  `TurtleCanvasViewer.tsx` knows -- so `setworldcoordinates` emits a
+  command carrying just the four world-space bounds, and the frontend
+  now scans for that command once per replay and computes a custom
+  `toCanvas` transform from it (independently scaled per axis, matching
+  real turtle's own non-aspect-preserving behavior, verified against
+  the CPython source) instead of always using the previous fixed
+  canvas-center-origin mapping. `bgcolor` similarly needed the viewer
+  to actually paint a background fill (previously `clearRect` only,
+  implicitly transparent/white) before replaying the drawing commands,
+  and again after every `clear()` mid-replay.
+
+  Verified end-to-end in a real browser via Playwright: built a scratch
+  deck reproducing `originalMarchingSquares.py`'s exact setup pattern
+  (`Screen()`, `setworldcoordinates(0, 0, 18, 12)`, `tracer(0)`,
+  `bgcolor(...)`, a red/pink stamp grid, `update()`/`exitonclick()`) and
+  confirmed the rendered canvas shows the full 18x12 grid scaled to
+  fill the 400x400 canvas edge-to-edge with the correct background
+  color and alternating stamp colors, with zero console/page errors --
+  screenshotted, not just checked for the absence of an error.
+  Separately confirmed no regression: `examples/live_demo.py`'s
+  existing turtle star cell (which never calls `Screen()`) still
+  renders identically to before, using the original default coordinate
+  mapping. 11 new backend tests in `tests/test_turtle.py` (calls
+  outside an execution context still raise; `setworldcoordinates`
+  emits the right command; `tracer`/`update`/`exitonclick`/`bye` are
+  true no-ops; `bgcolor`/`screensize(bg=...)` set the background;
+  every unsupported event method raises with a clear message naming
+  itself; the reference deck's exact Screen setup sequence runs
+  without error), full suite green (439 passed), ruff/oxlint clean,
+  `ARCHITECTURE.md` section 7 updated to document `Screen`, frontend
+  bundle rebuilt and committed.
+
+  Phases 2-5 (`shape`/`shapesize`, fill support, behavioral-parity
+  fixes, remaining lower-priority `Turtle` methods) are still open --
+  tracked in `docs/turtle-compatibility-todo.md`, not yet started.
 
 - [ ] **48. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,

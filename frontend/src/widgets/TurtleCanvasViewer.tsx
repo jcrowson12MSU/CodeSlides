@@ -17,6 +17,15 @@ interface TurtleCommand {
   size?: number
   text?: string
   align?: string
+  // setworldcoordinates only (turtle.py's Screen support, docs/
+  // turtle-compatibility-todo.md Phase 1): the four world-space bounds
+  // -- canvas pixel scaling only the frontend can compute (it's the
+  // only side that knows the turtle_canvas element's actual
+  // width/height) happens here, not in Python.
+  llx?: number
+  lly?: number
+  urx?: number
+  ury?: number
 }
 
 export interface TurtleCanvasViewerProps {
@@ -43,13 +52,53 @@ export function TurtleCanvasViewer({ elementId, content, width, height }: Turtle
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    const toCanvas = (x: number, y: number): [number, number] => [width / 2 + x, height / 2 - y]
+    const commands: TurtleCommand[] = Array.isArray(content) ? content : []
 
+    // setworldcoordinates (turtle.py's Screen support, docs/turtle-
+    // compatibility-todo.md Phase 1) establishes a user coordinate
+    // system for the *whole* execution the moment it's called -- real
+    // turtle's own semantics, and it's always the first drawing-
+    // relevant call in scripts that use it (e.g. examples/
+    // originalMarchingSquares.py's `wn.setworldcoordinates(...)` right
+    // after `turtle.Screen()`, before anything is drawn) -- so this
+    // scans for it once up front rather than trying to support the
+    // coordinate system changing mid-replay. `(llx, lly)` maps to the
+    // canvas's bottom-left corner, `(urx, ury)` to its top-right,
+    // scaled independently per axis to fill the canvas's actual pixel
+    // size -- matching real turtle's own non-aspect-preserving
+    // behavior (verified against the CPython source), not the
+    // uniform-scale approach that might otherwise seem more natural.
+    const worldCoords = commands.find((cmd) => cmd.op === 'setworldcoordinates')
+    const toCanvas: (x: number, y: number) => [number, number] =
+      worldCoords &&
+      worldCoords.llx !== undefined &&
+      worldCoords.lly !== undefined &&
+      worldCoords.urx !== undefined &&
+      worldCoords.ury !== undefined
+        ? (() => {
+            const { llx, lly, urx, ury } = worldCoords as Required<
+              Pick<TurtleCommand, 'llx' | 'lly' | 'urx' | 'ury'>
+            >
+            const xspan = urx - llx || 1
+            const yspan = ury - lly || 1
+            const xscale = width / xspan
+            const yscale = height / yspan
+            return (x: number, y: number): [number, number] => [
+              (x - llx) * xscale,
+              height - (y - lly) * yscale,
+            ]
+          })()
+        : (x: number, y: number): [number, number] => [width / 2 + x, height / 2 - y]
+
+    const backgroundColor = commands.findLast((cmd) => cmd.op === 'bgcolor')?.color
     ctx.clearRect(0, 0, width, height)
+    if (backgroundColor) {
+      ctx.fillStyle = backgroundColor
+      ctx.fillRect(0, 0, width, height)
+    }
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
 
-    const commands: TurtleCommand[] = Array.isArray(content) ? content : []
     let cx = 0
     let cy = 0
     let heading = 0
@@ -97,13 +146,19 @@ export function TurtleCanvasViewer({ elementId, content, width, height }: Turtle
         }
         case 'clear':
           ctx.clearRect(0, 0, width, height)
+          if (backgroundColor) {
+            ctx.fillStyle = backgroundColor
+            ctx.fillRect(0, 0, width, height)
+          }
           cx = 0
           cy = 0
           break
         default:
-          // pen/pencolor/fillcolor/pensize/visible only affect state that
-          // future `goto`/`dot` commands already carry inline (color,
-          // width, pen_down) -- nothing to draw for these on their own.
+          // pen/pencolor/fillcolor/pensize/visible/setworldcoordinates/
+          // bgcolor only affect state that either already gets applied
+          // up front (worldCoords/backgroundColor above) or that future
+          // goto/dot commands already carry inline (color, width,
+          // pen_down) -- nothing to draw for these on their own here.
           break
       }
     }

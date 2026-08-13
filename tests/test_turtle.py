@@ -225,3 +225,125 @@ def test_two_turtle_objects_share_the_same_underlying_state():
         pos_from_t2 = t2.position()
 
     assert pos_from_t2 == pytest.approx((5, 5))
+
+
+# -- Screen() object handle (docs/turtle-compatibility-todo.md Phase 1) -----
+
+
+def test_screen_calls_outside_execution_context_raise():
+    with pytest.raises(RuntimeError, match="outside of cell execution"):
+        turtle.Screen()
+
+
+def test_screen_object_calls_outside_execution_context_raise():
+    with turtle.execution_context():
+        wn = turtle.Screen()
+    with pytest.raises(RuntimeError, match="outside of cell execution"):
+        wn.tracer(0)
+
+
+def test_setworldcoordinates_emits_a_command_with_the_four_bounds():
+    with turtle.execution_context() as commands:
+        wn = turtle.Screen()
+        wn.setworldcoordinates(0, 0, 10, 20)
+
+    assert commands[0] == {"op": "setworldcoordinates", "llx": 0, "lly": 0, "urx": 10, "ury": 20}
+
+
+def test_tracer_and_update_are_accepted_as_no_ops():
+    """Real turtle's tracer(0)/update() toggle/flush a per-step redraw
+    mode this app never had in the first place -- it already always
+    redraws the complete, finished picture in one pass (docs/turtle-
+    animation-feasibility.md). Both must be callable without raising or
+    emitting a spurious command, not error out on an otherwise
+    load-bearing-only-in-real-turtle line."""
+    with turtle.execution_context() as commands:
+        wn = turtle.Screen()
+        wn.tracer(0)
+        wn.update()
+
+    assert commands == []
+
+
+def test_exitonclick_and_bye_are_accepted_as_no_ops():
+    """A CodeSlides cell has no window to keep open or close -- these
+    must be safely callable, typically as the very last lines of a
+    real turtle script, without raising or doing anything."""
+    with turtle.execution_context() as commands:
+        wn = turtle.Screen()
+        wn.exitonclick()
+        wn.bye()
+
+    assert commands == []
+
+
+def test_bgcolor_emits_a_command_and_is_queryable():
+    with turtle.execution_context() as commands:
+        wn = turtle.Screen()
+        wn.bgcolor("lightyellow")
+        current = wn.bgcolor()
+
+    assert current == "lightyellow"
+    assert commands[0] == {"op": "bgcolor", "color": "lightyellow"}
+
+
+def test_screensize_with_bg_also_sets_the_background_color():
+    """Real turtle documents screensize(..., bg=...) as equivalent to a
+    separate bgcolor() call -- verified this holds here too, since
+    screensize itself has no scrolling-region concept to actually
+    resize in this app's fixed-size turtle_canvas."""
+    with turtle.execution_context() as commands:
+        wn = turtle.Screen()
+        wn.screensize(400, 400, bg="white")
+
+    assert commands == [{"op": "bgcolor", "color": "white"}]
+
+
+def test_colormode_is_accepted_as_a_no_op():
+    with turtle.execution_context() as commands:
+        wn = turtle.Screen()
+        wn.colormode(255)
+
+    assert commands == []
+
+
+def test_unsupported_screen_event_methods_raise_a_clear_not_implemented_error():
+    """onclick/onkey/onkeypress/ontimer/listen/register_shape/getshapes
+    are architecturally out of scope (docs/turtle-compatibility-todo.md
+    Gap 4): this app's cells run once, synchronously, to completion --
+    there is no persistent event loop for a callback to fire against
+    later. A clear, documented error is much better than silently
+    registering a callback that can never actually run."""
+    with turtle.execution_context():
+        wn = turtle.Screen()
+        for name, args in [
+            ("onclick", (lambda x, y: None,)),
+            ("onkey", (lambda: None, "space")),
+            ("onkeypress", (lambda: None, "space")),
+            ("ontimer", (lambda: None, 100)),
+            ("listen", ()),
+            ("register_shape", ("name",)),
+            ("getshapes", ()),
+        ]:
+            with pytest.raises(NotImplementedError, match=name):
+                getattr(wn, name)(*args)
+
+
+def test_reference_deck_screen_setup_sequence_runs_without_error():
+    """The exact setup sequence from examples/originalMarchingSquares.py
+    that motivated this whole phase -- confirms it no longer fails
+    outright the way it did before Screen existed at all (the original
+    bug report: `wn = turtle.Screen()` raised AttributeError
+    immediately). t.shape(...) is deliberately excluded here -- that's
+    Phase 2, still unimplemented at this point."""
+    with turtle.execution_context():
+        wn = turtle.Screen()
+        wn.setworldcoordinates(0, 0, 18, 12)
+        wn.tracer(0)
+
+        t = turtle.Turtle()
+        t.up()
+        t.hideturtle()
+
+        wn.update()
+        wn.exitonclick()

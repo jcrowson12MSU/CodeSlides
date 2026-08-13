@@ -408,11 +408,42 @@ a fallback.
 `turtle` API as module-level functions (`forward`/`fd`, `right`/`rt`,
 `left`/`lt`, `goto`, `penup`/`pendown`, `pencolor`/`fillcolor`/`color`,
 `circle`, `dot`, `stamp`, `write`, `clear`, `reset`, `hideturtle`/
-`showturtle`, position/heading queries, ...), with **zero** dependency on
-`tkinter`. Lesson authors write `from codeslides import turtle` instead of
-`import turtle`; the call syntax is otherwise identical
-(`turtle.forward(100)`, no element name in any call), so existing
-turtle-based lesson bodies need only the import line changed.
+`showturtle`, position/heading queries, `Screen()`/`Turtle()` object
+handles, ...), with **zero** dependency on `tkinter`. Lesson authors
+write `from codeslides import turtle` instead of `import turtle`; the
+call syntax is otherwise identical (`turtle.forward(100)`, no element
+name in any call), so existing turtle-based lesson bodies need only the
+import line changed. See `docs/turtle-compatibility-todo.md` for the
+full gap analysis against the real stdlib API and the phased plan this
+module's coverage is being built out against.
+
+**`Screen()`** (added in the plan's Phase 1 — real turtle's window/
+canvas object, as opposed to `Turtle()`'s one cursor) returns a thin
+handle onto the same per-execution state `Turtle()` already targets,
+folded into one `_TurtleState` rather than a second parallel contextvar
+— a cell has exactly one `turtle_canvas` element (the auto-targeting
+design below), so there's only ever one screen's worth of state to
+track, same as there's only one turtle's. `setworldcoordinates(llx,
+lly, urx, ury)` is recorded as a command carrying just the four
+world-space bounds — the actual per-axis pixel scale factors depend on
+the `turtle_canvas` element's own width/height, which only
+`TurtleCanvasViewer.tsx` (not the Python side) knows, so the coordinate
+transform is computed there, applied to every other command in the
+same replay pass. `tracer(n)`/`update()` are accepted no-ops: this
+app's rendering is already unconditionally the `tracer(0)` behavior (a
+cell runs to completion, then its whole finished command list is sent
+and replayed in one pass — see `docs/turtle-animation-feasibility.md`),
+so there's no per-step redraw mode to actually toggle.
+`exitonclick()`/`bye()` are also accepted no-ops — a CodeSlides cell has
+no window to keep open or close. `Screen()`'s event/callback methods
+(`onclick`/`onkey`/`onkeypress`/`ontimer`/`listen`/`register_shape`/
+`getshapes`) raise a clear `NotImplementedError` rather than silently
+no-opping — they'd need a persistent event loop this app's synchronous,
+run-once cell execution doesn't have (a registered callback that can
+never actually fire would be a worse failure mode than a clear error);
+see `docs/turtle-compatibility-todo.md`'s Gap 4 for why this is treated
+as a separate, later project rather than folded into "fill in the
+drawing API."
 
 **Auto-targeting, not `cs.image`-style explicit naming.** `cs.image(name,
 ...)` and `cs.iframe(name, ...)` require the author to name their target
