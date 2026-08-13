@@ -233,27 +233,6 @@ def _own_returns(stmts):
                             yield from _own_returns([item])
 
 
-def extract_global_writes(func: ast.FunctionDef | ast.AsyncFunctionDef) -> frozenset[str]:
-    """Every name `func`'s body declares `global` (anywhere, including
-    nested functions -- see `_ReadWriteVisitor`). `kernel.py`'s
-    `_compile_cell_function` calls this directly (not through
-    `extract_reads_writes`, which needs a full re-parse of `source`) to
-    know which names to sync from a cell's real, executed
-    `__globals__` dict back into `session.namespace` after a
-    successful call -- otherwise a `global x; x += 1` write would
-    mutate only the throwaway copy of the namespace the call was given,
-    never reaching any other cell (or this same cell's next run).
-    """
-    params = frozenset(
-        a.arg
-        for a in (*func.args.posonlyargs, *func.args.args, *func.args.kwonlyargs)
-    )
-    visitor = _ReadWriteVisitor(params=params)
-    for stmt in func.body:
-        visitor.visit(stmt)
-    return frozenset(visitor.global_writes)
-
-
 def extract_reads_writes(source: str) -> tuple[frozenset[str], frozenset[str]]:
     """Parse a single function definition's source and return (reads, writes).
 

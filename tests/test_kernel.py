@@ -186,9 +186,9 @@ def test_ordinary_local_reads_before_assignment_raise_unboundlocalerror():
 
 def test_global_declared_write_mutates_and_syncs_back_to_the_namespace():
     """A cell that declares `global x` and mutates it must have that
-    mutation actually reach session.namespace -- not just the throwaway
-    copy of the namespace `execute_cell` builds to call the function
-    with. Regression guard for examples/marchingSquares.py's cell_2."""
+    mutation actually reach session.namespace directly -- the cell's
+    real __globals__ is session.namespace itself, not a copy. Regression
+    guard for examples/marchingSquares.py's cell_2."""
     from codeslides.deck import Cell, Deck
 
     deck = Deck()
@@ -206,6 +206,51 @@ def test_global_declared_write_mutates_and_syncs_back_to_the_namespace():
 
     assert session.instances["cell_2"].status == "idle"
     assert session.namespace["x"] == 9
+
+
+def test_default_argument_values_still_evaluate_correctly():
+    """Regression guard for _compile_cell_function's two-step compile
+    (exec into a scratch copy just to evaluate defaults, then rebuild
+    the function with session.namespace as its real __globals__):
+    default argument values must still work exactly as before, since
+    they're computed by exec's own bytecode as a side effect of
+    defining the function -- a naive "build the function object by
+    hand" approach would silently drop them."""
+    from codeslides.deck import Cell, Deck
+
+    deck = Deck()
+    deck.add_cell(
+        Cell(name="with_defaults", source="def with_defaults(rows=2, cols=5):\n    return rows, cols\n")
+    )
+
+    kernel = Kernel(deck)
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    assert session.instances["with_defaults"].status == "idle"
+    assert session.instances["with_defaults"].output["value"] == [2, 5]
+
+
+def test_a_cells_own_function_is_never_bound_under_its_literal_def_name_on_a_failed_call():
+    """A renamed instance="editable" cell's literal `def` name can
+    differ from its Deck key (cell.name) -- _compile_cell_function's
+    scratch-copy step must never leak that literal def-name into
+    session.namespace as a side effect, even on a call that later
+    fails, or a stale/wrongly-named callable would appear there."""
+    from codeslides.deck import Cell, Deck
+
+    deck = Deck()
+    deck.add_cell(
+        Cell(name="cell_a", source="def renamed_def():\n    raise ValueError('boom')\n")
+    )
+
+    kernel = Kernel(deck)
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    assert session.instances["cell_a"].status == "error"
+    assert "renamed_def" not in session.namespace
+    assert "cell_a" not in session.namespace  # only bound after a successful call
 
 
 def test_two_cells_with_unrelated_same_named_locals_both_load_and_run():

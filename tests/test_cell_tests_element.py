@@ -64,10 +64,66 @@ def test_run_tests_sees_the_passed_namespace():
     assert result["status"] == "pass"
 
 
-def test_run_tests_cannot_mutate_the_caller_s_namespace():
+def test_run_tests_mutates_the_namespace_directly():
+    """A test box's own top-level writes -- and any `global`-declared
+    write made by a cell it calls -- must land in the real namespace,
+    not a throwaway copy: a called cell's `global x` only ever resolves
+    through that cell's own __globals__ dict (fixed at compile time), so
+    a copy here could never make a shared global actually work. See
+    kernel.py's run_tests/_compile_cell_function docstrings."""
     namespace = {"base": 5}
     run_tests("base = 999", namespace)
-    assert namespace["base"] == 5
+    assert namespace["base"] == 999
+
+
+def test_run_tests_seeds_a_global_before_calling_a_cell_that_declares_it():
+    """Regression guard for examples/marchingSquares.py's cell_2/cell_3
+    pattern: a test box seeds a shared global itself, then calls a cell
+    that reads/mutates it via `global`. This can only work if the test
+    runs against the exact same dict object the cell's own __globals__
+    is -- see run_tests/_compile_cell_function's docstrings."""
+    from codeslides.deck import Cell, Deck, Element
+
+    deck = Deck()
+    deck.add_cell(
+        Cell(
+            name="cell_2",
+            source="def cell_2():\n    global x1\n    x1 += 5\n",
+            elements=[Element(name="unit", kind="tests")],
+        )
+    )
+    kernel = Kernel(deck)
+    session = Session(deck=deck)
+    kernel.run_all(session)  # has a tests element -- defined only, never eagerly called
+
+    result = run_tests("x1 = 4\ncell_2()\nassert x1 == 9, f'expected 9, got {x1}'", session.namespace)
+    assert result["status"] == "pass", result["message"]
+    assert session.namespace["x1"] == 9
+
+
+def test_run_tests_cannot_alter_a_cell_it_only_reads_a_global_from():
+    """The read-only half of the same pattern (cell_3 in
+    examples/marchingSquares.py): a cell that reads a name with no
+    `global` declaration is an ordinary local if it ever assigns that
+    name, or a free variable resolving to the shared global if it only
+    reads -- either way, it can never write back to the shared name."""
+    from codeslides.deck import Cell, Deck, Element
+
+    deck = Deck()
+    deck.add_cell(
+        Cell(
+            name="cell_3",
+            source="def cell_3():\n    return x2\n",
+            elements=[Element(name="unit", kind="tests")],
+        )
+    )
+    kernel = Kernel(deck)
+    session = Session(deck=deck)
+    kernel.run_all(session)  # has a tests element -- defined only, never eagerly called
+
+    result = run_tests("x2 = 5\nassert cell_3() == 5", session.namespace)
+    assert result["status"] == "pass", result["message"]
+    assert session.namespace["x2"] == 5  # cell_3 never had a way to alter it
 
 
 def test_run_tests_empty_source_passes_trivially():

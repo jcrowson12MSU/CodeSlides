@@ -20,6 +20,7 @@ import hashlib
 import io
 import textwrap
 import traceback
+import types
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,7 +31,6 @@ from codeslides.deck import Cell, Deck, Element, Slide
 from codeslides.graph import (
     DependencyGraph,
     build_graph,
-    extract_global_writes,
     extract_return_names,
 )
 from codeslides.output import resolve_output, wire_safe_value
@@ -144,18 +144,45 @@ class ExecutionResult:
     element_writes: list[cs.ElementWrite] = field(default_factory=list)
 
 
-def _compile_cell_function(source: str, globals_dict: dict[str, object]):
-    """Define a cell's function into `globals_dict` (so the function's own
-    `__globals__` *is* that dict -- free variables it references resolve
-    via ordinary Python global lookup, exactly like top-level names in a
-    module) and return the callable, the ordered list of names its
-    `return` statement exposes, and the set of names its body declares
-    `global` (see `graph.extract_global_writes` -- the caller needs this
-    to sync a `global x; x += 1`-style mutation back out of `globals_dict`,
-    since real Python's `global` only ever affects the dict actually
-    passed as `__globals__`, never anywhere else). Dedented so cells
-    whose source happens to be nested (e.g. under a test function) still
-    parse.
+def _compile_cell_function(source: str, namespace: dict[str, object]):
+    """Compile a cell's function so its real `__globals__` *is*
+    `namespace` itself -- not a copy -- and return the callable and the
+    ordered list of names its `return` statement exposes. `namespace`
+    is never mutated by this call; the caller decides when (and
+    whether) to actually bind the returned function into it, exactly
+    like the previous copy-based version let it.
+
+    Sharing the real `namespace` object (rather than a `{**namespace}`
+    copy, which was this function's previous behavior) is required, not
+    just an optimization: a `global x` statement always resolves
+    through the specific dict object that ends up as the function's own
+    `__globals__`, fixed once at this compile step -- a copy-then-
+    sync-back approach cannot make `global`-declared writes visible to
+    *other* cells that call this one, because by the time any syncing
+    happens, the callee already ran against the wrong dict. This is
+    what makes `examples/marchingSquares.py`'s cell_2 (`global x1; x1
+    += 5`, meant to be readable/writable by any other cell or test box)
+    actually work like real Python: `x1` genuinely is the same name in
+    the same dict everywhere, exactly like a real module's globals.
+
+    Getting there needs two steps, not just `exec(code, namespace)`,
+    because default argument values (`def f(rows=2, cols=5)`) are
+    computed by the module-level bytecode `exec` runs, as a *side
+    effect* of defining the function -- there's no way to ask Python to
+    "compute the defaults, but don't also bind the function itself into
+    this dict," and binding it directly into `namespace` under the
+    AST's literal `def` name (not necessarily this cell's actual
+    identity, for a renamed `instance="editable"` cell) would violate
+    the "never partially pollute the namespace before the caller
+    decides to" contract every caller here still relies on. So: (1)
+    `exec` into a throwaway shallow copy of `namespace`, purely so
+    default values evaluate against a realistic set of names, and (2)
+    rebuild a fresh function object from the resulting code object,
+    this time with the real `namespace` as `__globals__` -- `namespace`
+    itself is never touched by either step.
+
+    Dedented so cells whose source happens to be nested (e.g. under a
+    test function) still parse.
     """
     dedented = textwrap.dedent(source)
     tree = ast.parse(dedented)
@@ -167,13 +194,18 @@ def _compile_cell_function(source: str, globals_dict: dict[str, object]):
     func.body = strip_noop_turtle_imports(func.body)
 
     return_names = extract_return_names(func)
-    global_writes = extract_global_writes(func)
 
     module = ast.Module(body=[func], type_ignores=[])
     ast.fix_missing_locations(module)
     code = compile(module, filename="<cell>", mode="exec")
-    exec(code, globals_dict)  # noqa: S102 - trusted lesson code, defines the cell function only
-    return globals_dict[func.name], return_names, global_writes
+    scratch = dict(namespace)
+    exec(code, scratch)  # noqa: S102 - trusted lesson code; only evaluates defaults, `namespace` untouched
+    defined = scratch[func.name]
+    fn = types.FunctionType(
+        defined.__code__, namespace, defined.__name__, defined.__defaults__, defined.__closure__
+    )
+    fn.__kwdefaults__ = defined.__kwdefaults__
+    return fn, return_names
 
 
 @contextmanager
@@ -215,19 +247,29 @@ def execute_cell(
     """Call the cell named `cell_name`'s function (compiled fresh from
     `source`, which the caller has already resolved to this Session's
     effective source -- the Deck's, or a per-Session override for
-    `instance="editable"` cells) against `session.namespace`: cross-cell
-    reads are made available as the function's own globals (ordinary
-    Python name resolution, matching how a plain module-level function
-    reads other module-level names), bound input-element values are
-    passed as keyword arguments (they're genuine parameters), and the
-    function's `return`-named values are written back into the namespace.
+    `instance="editable"` cells) directly against `session.namespace`
+    itself: cross-cell reads are made available as the function's own
+    globals (ordinary Python name resolution, matching how a plain
+    module-level function reads other module-level names), bound
+    input-element values are passed as keyword arguments (they're
+    genuine parameters), and the function's `return`-named values are
+    written back into the namespace.
 
-    The function is defined into a *copy* of the namespace, not the
-    namespace itself, so a failed call never partially pollutes it. Never
-    touches any namespace but `session`'s, nor any Deck-level state -- this
-    is what makes cloned Sessions (ARCHITECTURE.md section 1) fully
-    independent at execution time, including per-Session source overrides
-    (section 3), not just in the data model.
+    The function's `__globals__` *is* `session.namespace` (via
+    `_compile_cell_function` -- see its docstring for why a copy cannot
+    work), not a copy of it, so a `global x` write is immediately a
+    real, permanent mutation of `session.namespace`, visible to any
+    other cell (or a `tests` box, `run_tests`) that reads or calls into
+    it afterward -- exactly like real Python. This does mean a cell that
+    raises partway through a `global`-declared mutation leaves whatever
+    it already wrote in place, same as a real Python script would if it
+    crashed mid-function; only the cell's own name and `return`-named
+    bindings still wait for a fully successful call before being bound
+    (below). Never touches any namespace but `session`'s, nor any
+    Deck-level state -- this is what makes cloned Sessions
+    (ARCHITECTURE.md section 1) fully independent at execution time,
+    including per-Session source overrides (section 3), not just in the
+    data model.
 
     `elements` is the cell's static element list (from the Deck, or an
     editable-instance override) -- needed to find its `turtle_canvas`
@@ -251,10 +293,15 @@ def execute_cell(
         # module scope (that import context isn't carried into the
         # per-cell exec). `deck_imports` follows right after for the same
         # reason, for whatever else the deck's own file imports -- both
-        # come before `session.namespace` so a cell's own write always
-        # wins if a cell-level name ever happens to collide with either.
-        call_globals = {"cs": cs, "turtle": turtle, **(deck_imports or {}), **session.namespace}
-        fn, return_names, global_writes = _compile_cell_function(source, call_globals)
+        # are written directly into `session.namespace` (setdefault, so a
+        # cell's own prior write to a same-named global always wins, never
+        # gets clobbered back to the framework's own value on the next
+        # run) since `_compile_cell_function` now shares that dict as the
+        # function's real `__globals__` rather than layering a throwaway
+        # copy on top of it.
+        for name, value in {"cs": cs, "turtle": turtle, **(deck_imports or {})}.items():
+            session.namespace.setdefault(name, value)
+        fn, return_names = _compile_cell_function(source, session.namespace)
 
         # Only bind element values for elements that are also declared
         # parameters -- input elements (slider/button/text_input) are, but
@@ -296,18 +343,6 @@ def execute_cell(
     # after a successful call, matching the "never partially pollute the
     # namespace on failure" rule the return-names binding below follows.
     session.namespace[cell_name] = fn
-
-    # Sync back whatever the cell's `global`-declared names actually
-    # ended up bound to in `call_globals` (its real `__globals__` during
-    # the call) -- a name only appears here if the cell declared it
-    # `global` AND the call actually assigned it (an unassigned `global x`
-    # that only ever reads is a no-op read, already covered by
-    # `session.namespace` having seeded `call_globals` in the first
-    # place), so this can't accidentally introduce a name that was never
-    # really written.
-    for name in global_writes:
-        if name in call_globals:
-            session.namespace[name] = call_globals[name]
 
     if len(return_names) == 1:
         session.namespace[return_names[0]] = result
@@ -385,8 +420,9 @@ def define_cell(
     definition-time problems, not call-time ones, so skipping the call
     doesn't skip catching them."""
     try:
-        call_globals = {"cs": cs, "turtle": turtle, **(deck_imports or {}), **session.namespace}
-        fn, _, _ = _compile_cell_function(source, call_globals)
+        for name, value in {"cs": cs, "turtle": turtle, **(deck_imports or {})}.items():
+            session.namespace.setdefault(name, value)
+        fn, _ = _compile_cell_function(source, session.namespace)
     except Exception:  # noqa: BLE001 - same "a cell's own error must not kill the kernel" rule as execute_cell
         return ExecutionResult(status="error", error=traceback.format_exc())
 
@@ -486,17 +522,27 @@ def run_tests(
       presence rather than an empty list being ambiguous with "no
       canvas at all."
 
-    `cs`/`turtle`/`deck_imports` are seeded into the exec globals exactly
-    like a cell's own execution does (kernel.py's execute_cell docstring)
-    -- test code is still ordinary Python, so it needs the same
-    framework names and deck-level imports available without an explicit
-    import, same as the code it's testing.
+    Runs directly against `namespace` itself (mutated in place), not a
+    copy -- a test box's own top-level code is exactly as "real" a
+    piece of top-level Python as any cell's body, so a name it assigns
+    persists into `session.namespace` the same way a cell's
+    `global`-declared write does (see `execute_cell`/
+    `_compile_cell_function`'s docstrings for why a copy fundamentally
+    cannot make this work: a called cell's `global x` always resolves
+    through that specific cell's own `__globals__` dict, fixed at
+    compile time, never through whatever dict happens to call it). This
+    is what makes a test like `x1 = 4; cell_2()` (where `cell_2` does
+    `global x1; x1 += 5`) able to see and mutate the same `x1` the
+    deck's other cells do, exactly like ordinary top-level script code
+    calling a function that declares `global`.
 
-    Runs in a *copy* of `namespace`, never the namespace itself -- test
-    code must never be able to mutate a cell's actual results out from
-    under it (ARCHITECTURE.md section 1's isolation principle applies
-    just as much to a test run as to any other execution). The turtle
-    context is likewise fresh for every test run (a clean `_TurtleState`,
+    `cs`/`turtle`/`deck_imports` are seeded directly into `namespace`
+    (via `setdefault`, so a cell's own prior write to a same-named
+    global is never clobbered back to the framework's value) exactly
+    like `execute_cell`/`define_cell` do, for the same reason: test code
+    is still ordinary Python, needing the same framework names and
+    deck-level imports available without an explicit import. The turtle
+    context is fresh for every test run (a clean `_TurtleState`,
     position reset to the origin) -- the test's drawing replaces
     whatever the cell's own last run drew, it never draws *on top of*
     stale turtle state left over from the cell."""
@@ -508,7 +554,9 @@ def run_tests(
         return result
 
     stdout, stderr = io.StringIO(), io.StringIO()
-    test_globals = {"cs": cs, "turtle": turtle, **(deck_imports or {}), **namespace}
+    for name, value in {"cs": cs, "turtle": turtle, **(deck_imports or {})}.items():
+        namespace.setdefault(name, value)
+    test_globals = namespace
     try:
         with (
             redirect_stdout(stdout),

@@ -217,16 +217,24 @@ via a direct call (`mx, my = midpoint(p1, p2)`) — only the "another cell
 reads this by an implicit name" path is unavailable, which was never
 possible for an unnamed expression anyway.
 
-**A `global`-declared write really does mutate shared state across
-runs.** A cell that does `global x; x += 1` isn't just tracked as a
-graph-level write — `kernel.py`'s `execute_cell` also syncs that name's
-post-call value back out of the throwaway copy of the namespace the
-call was given, into `session.namespace` itself, so the mutation is
-visible to whatever reads `x` next (another cell, or this same cell on
-its next run) exactly like a plain module-level `global` write would be
-in an ordinary Python script. A local variable that merely happens to
-share a name with something elsewhere is never synced this way — only
-names the cell body actually declared `global`.
+**A `global`-declared write really does mutate shared state, everywhere
+that name is used.** A cell's compiled function has `session.namespace`
+itself as its real `__globals__` (`kernel.py`'s
+`_compile_cell_function`) — not a copy seeded from it — so `global x; x
++= 1` is an immediate, permanent mutation of `session.namespace`,
+visible to whatever reads or calls into `x` next: another cell, a
+`tests` box (`run_tests` runs directly against `session.namespace` for
+the same reason), or this same cell's own next run — exactly like a
+plain module-level `global` write in an ordinary Python script. Only a
+name a cell body actually declares `global` behaves this way; an
+ordinary local that merely shares a name with something elsewhere is
+never visible outside its own cell. A cell's default argument values
+still evaluate correctly despite this (`_compile_cell_function`
+`exec`s into a throwaway scratch copy just to compute them, then
+rebuilds the function object with `session.namespace` as its real
+`__globals__` — the cell function itself is never written into
+`session.namespace` as a side effect of that scratch step, only ever
+by the caller, and only after a call fully succeeds).
 
 ## 3a. Element reactivity (R4)
 
