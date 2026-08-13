@@ -2959,9 +2959,44 @@ reshape the plan below and are called out explicitly where they apply:
 
 - [ ] **62. Improve turtle compatibility.**
   Broaden `src/codeslides/turtle.py`'s coverage of the real stdlib
-  `turtle` API (see item 11) -- needs a concrete list of which
-  currently-unsupported calls/behaviors are actually blocking real lesson
-  content before scoping the fix.
+  `turtle` API (see item 11) so a lesson works "as naturally as if it
+  were running in the IDE" (the user's own framing) -- an unmodified
+  `import turtle` script should need only the import line swapped.
+
+  Full gap analysis and a prioritized implementation plan now live in
+  `docs/turtle-compatibility-todo.md`, built by diffing the shim against
+  the real stdlib `turtle` API (extracted via `ast` from CPython's own
+  source, since `_tkinter` isn't installed in this project's dev
+  environment) and against `examples/originalMarchingSquares.py` (the
+  user's own reference deck, which currently fails outright).
+
+  Headline finding: `turtle.Screen()` doesn't exist in the shim at
+  all -- no `Screen` class, no `wn` object, nothing -- so
+  `originalMarchingSquares.py`'s very first setup line
+  (`wn = turtle.Screen()`) raises `AttributeError` before any drawing
+  code runs. This is almost certainly the single highest-priority gap.
+  `t.shape("circle")`/`t.shapesize(...)` are also missing. The document
+  breaks the remaining gap into: the wider `Turtle`-side API still
+  missing (`begin_fill`/`end_fill`, `distance`/`towards`, `undo`, ...,
+  ranked by how likely each is to show up in real lesson code); existing
+  functions with real behavioral mismatches, not just missing ones
+  (`dot()`'s color args, `write(move=True)`, `speed()` being stored but
+  never affecting rendering); and `Screen`'s event/callback methods
+  (`onclick`/`onkey`/`ontimer`/...), flagged as architecturally distinct
+  from the rest -- they need a real event-loop story this app's
+  synchronous, run-once cell execution model doesn't have, not just a
+  missing function to fill in, so they're scoped as an explicitly
+  separate, larger project rather than folded into this item.
+
+  Proposed phases (details in the doc): 1) `Screen` (unblocks the
+  reference deck), 2) `shape()`/`shapesize()`, 3) fill support
+  (`begin_fill`/`end_fill`), 4) behavioral-parity fixes, 5) remaining
+  lower-priority `Turtle` methods. Cross-references
+  `docs/turtle-animation-feasibility.md` (already-written prior analysis
+  of `speed()`/animated drawing) rather than duplicating it.
+
+  Not yet implemented -- this pass was scoped to producing the gap
+  analysis and plan the user asked for, not to writing the fix itself.
 
 - [ ] **48. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
