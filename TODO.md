@@ -2957,7 +2957,7 @@ reshape the plan below and are called out explicitly where they apply:
   backslash-in-f-string ruff flagged, since `pyproject.toml` requires
   `>=3.11`), oxlint clean, frontend bundle rebuilt and committed.
 
-- [ ] **62. Improve turtle compatibility.**
+- [x] **62. Improve turtle compatibility.**
   Broaden `src/codeslides/turtle.py`'s coverage of the real stdlib
   `turtle` API (see item 11) so a lesson works "as naturally as if it
   were running in the IDE" (the user's own framing) -- an unmodified
@@ -3234,9 +3234,61 @@ reshape the plan below and are called out explicitly where they apply:
   fixes are pure Python-side, emitting the same command shapes the
   frontend already understood.
 
-  Phase 5 (remaining lower-priority `Turtle` methods) and `speed()`'s
-  own animation implementation are still open -- tracked in
-  `docs/turtle-compatibility-todo.md`, not yet started.
+  **Phase 5 implemented (same task, follow-up): `distance()`/
+  `towards()`, the remaining lower-priority `Turtle` methods this
+  phase specifically scoped.** Both are pure math with zero rendering
+  changes, matching real turtle's own three call shapes exactly
+  (verified against the CPython source): `distance(x, y)`,
+  `distance((x, y))`, and `distance(other_turtle)`, via a shared
+  `_resolve_point` helper. `towards()` returns the same
+  0=east/counterclockwise convention `heading()` already uses -- real
+  turtle's own angle-mode conversion simplifies away entirely since
+  this shim only ever supports the default "standard" mode, confirmed
+  by reproducing both of real turtle's own documented docstring
+  examples exactly (`distance(30, 40) == 50.0` from the origin,
+  `towards(0, 0) == 225.0` from `(10, 10)`).
+
+  One documented, deliberate simplification: since this shim has
+  exactly one turtle's worth of state per cell execution (not real
+  independent per-instance state), passing another `Turtle()`/
+  `Screen()` handle as the target always resolves to the *same*
+  position here -- `t1.distance(t2)` is always `0`, unlike real turtle
+  where two turtles genuinely track separate positions. Documented in
+  the code's own docstring and covered by a dedicated test, not
+  silently pretended away.
+
+  `tilt()`/`tiltangle()` stay deferred per the original plan's own "if
+  a real lesson need surfaces" conditional (no concrete lesson has
+  exercised either, unlike every method implemented in Phases 2-5).
+  `clone()`/`getturtle()`/`getscreen()`/`clearstamp()`/`clearstamps()`
+  remain explicitly deprioritized for the reasons the plan already
+  gave. `undo()` was originally flagged "common enough to prioritize"
+  in the initial gap analysis but was never actually in Phase 5's own
+  named scope (the plan named `distance`/`towards` specifically) --
+  it needs real undo-history tracking, a meaningfully bigger feature
+  than the stateless math `distance`/`towards` turned out to be, so
+  it's left open rather than silently implemented as a lesser version
+  of itself.
+
+  Verified end-to-end in a real browser: an interactive "chase the
+  target" deck (two sliders controlling a target position, a turtle
+  using `towards()` to aim and `distance()` to know how far to travel)
+  drew a line from the canvas center to the exact target coordinates
+  with a dot marking the endpoint -- confirmed the line's actual
+  endpoint matched the slider values, not just that some line
+  appeared. 9 new backend tests, full suite green (484 passed), ruff
+  clean.
+
+  With this, every phase in `docs/turtle-compatibility-todo.md`'s plan
+  has reached its own scoped conclusion: Phases 1-3 and the
+  `dot()`/`write()`/`distance()`/`towards()` parts of 4-5 are shipped;
+  `speed()`'s animation work has a detailed implementation plan written
+  up (deferred at the user's explicit request, not abandoned); and the
+  remaining lower-priority methods are deliberately, individually
+  deprioritized with documented reasons rather than left as an
+  unscoped "still open" catch-all. Item 62 itself is complete;
+  `docs/turtle-compatibility-todo.md` remains the live reference for
+  whichever of the deferred/deprioritized items get picked up later.
 
 - [ ] **48. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,

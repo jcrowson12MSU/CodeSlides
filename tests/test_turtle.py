@@ -598,6 +598,85 @@ def test_turtle_object_write_works_the_same_as_the_module_function():
     assert x > 0
 
 
+# -- distance()/towards() (docs/turtle-compatibility-todo.md Phase 5) -------
+
+
+def test_distance_matches_the_stdlib_docstrings_own_example():
+    """turtle.pos() == (0, 0); turtle.distance(30, 40) == 50.0 --
+    verified directly against real turtle's own documented example."""
+    with turtle.execution_context():
+        assert turtle.distance(30, 40) == pytest.approx(50.0)
+
+
+def test_distance_accepts_a_tuple_the_same_as_two_positional_args():
+    with turtle.execution_context():
+        assert turtle.distance((30, 40)) == pytest.approx(turtle.distance(30, 40))
+
+
+def test_distance_to_the_current_position_is_zero():
+    with turtle.execution_context():
+        turtle.goto(12, -7)
+        assert turtle.distance(12, -7) == pytest.approx(0)
+
+
+def test_towards_matches_the_stdlib_docstrings_own_example():
+    """turtle.pos() == (10, 10); turtle.towards(0, 0) == 225.0 --
+    verified directly against real turtle's own documented example."""
+    with turtle.execution_context():
+        turtle.goto(10, 10)
+        assert turtle.towards(0, 0) == pytest.approx(225.0)
+
+
+def test_towards_matches_heading_convention_pointing_east():
+    """0 degrees means pointing east (this shim's own documented
+    convention, matching forward()'s cos/sin usage) -- towards() must
+    agree with it, not some other angle-mode offset."""
+    with turtle.execution_context():
+        assert turtle.towards(10, 0) == pytest.approx(0)
+        assert turtle.towards(0, 10) == pytest.approx(90)
+
+
+def test_distance_and_towards_reject_an_unrecognized_argument_shape():
+    with turtle.execution_context():
+        with pytest.raises(TypeError):
+            turtle.distance("not a point")
+        with pytest.raises(TypeError):
+            turtle.towards(object())
+
+
+def test_distance_and_towards_accept_another_turtle_as_the_target():
+    """Real turtle accepts another Turtle instance as the target
+    (verified against the CPython source) -- this shim has exactly one
+    turtle's worth of state per cell execution (the Turtle class's own
+    docstring), so a second Turtle() handle always resolves to the
+    *same* position, making this a documented degenerate case (always
+    0 here) rather than a genuinely independent second turtle's
+    position the way real turtle would have."""
+    with turtle.execution_context():
+        t1 = turtle.Turtle()
+        t2 = turtle.Turtle()
+        t1.goto(5, 5)
+        assert t1.distance(t2) == pytest.approx(0)
+
+
+def test_distance_and_towards_accept_a_screen_as_the_target():
+    """Same shared-state reasoning as the Turtle-target case above --
+    a Screen() handle resolves to the same position too."""
+    with turtle.execution_context():
+        t = turtle.Turtle()
+        t.goto(3, 4)
+        wn = turtle.Screen()
+        assert t.distance(wn) == pytest.approx(0)
+
+
+def test_turtle_object_distance_and_towards_work_the_same_as_module_functions():
+    t = turtle.Turtle()
+    with turtle.execution_context():
+        t.goto(10, 10)
+        assert t.distance(0, 0) == pytest.approx(math.sqrt(200))
+        assert t.towards(0, 0) == pytest.approx(225.0)
+
+
 # -- Screen() object handle (docs/turtle-compatibility-todo.md Phase 1) -----
 
 

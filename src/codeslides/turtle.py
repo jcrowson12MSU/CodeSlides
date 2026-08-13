@@ -800,6 +800,53 @@ def heading() -> float:
     return _state().heading
 
 
+def _resolve_point(x: Any, y: float | None) -> tuple[float, float]:
+    """Shared by `distance`/`towards`: real turtle accepts an (x, y)
+    pair of numbers, a single (x, y) tuple, *or* another turtle
+    instance (verified against the CPython source, all three call
+    shapes documented on both functions). A `Turtle`/`Screen` instance
+    given here always resolves to the *same* position/state this
+    module already tracks -- there is exactly one turtle's worth of
+    state per cell execution (the `Turtle` class's own docstring), not
+    real independent instances, so `t1.distance(t2)` is always `0` and
+    `t1.towards(t2)` is undefined-but-harmless (an angle to your own
+    current position) here, unlike real turtle where two `Turtle()`s
+    genuinely track separate positions. Documented as a known
+    simplification, not silently pretended away."""
+    if isinstance(x, (Turtle, _Screen)):
+        state = _state()
+        return (state.x, state.y)
+    if y is not None:
+        return (float(x), float(y))
+    if isinstance(x, tuple):
+        return (float(x[0]), float(x[1]))
+    raise TypeError(f"distance()/towards() expects (x, y), (x, y), or a Turtle -- got {x!r}")
+
+
+def distance(x: Any, y: float | None = None) -> float:
+    """Distance from the turtle's current position to `(x, y)`, in
+    turtle step units -- matches real turtle's own three call shapes:
+    `distance(x, y)`, `distance((x, y))`, `distance(other_turtle)` (see
+    `_resolve_point`'s own docstring for the caveat on that last one in
+    this shim's single-shared-state model)."""
+    state = _state()
+    px, py = _resolve_point(x, y)
+    return math.hypot(px - state.x, py - state.y)
+
+
+def towards(x: Any, y: float | None = None) -> float:
+    """Angle from the turtle's current position to `(x, y)`, in the
+    same 0=east/counterclockwise degrees convention `heading()` already
+    uses (this shim only ever supports stdlib turtle's default
+    "standard" angle mode -- there is no `mode("logo")` equivalent here
+    -- so the conversion real turtle's own `towards()` does between
+    angle modes simplifies away to a plain `atan2`, verified against
+    the CPython source). Same three call shapes as `distance()`."""
+    state = _state()
+    px, py = _resolve_point(x, y)
+    return math.degrees(math.atan2(py - state.y, px - state.x)) % 360
+
+
 # -- Object-oriented handle ----------------------------------------------
 
 
@@ -866,3 +913,5 @@ class Turtle:
     xcor = staticmethod(xcor)
     ycor = staticmethod(ycor)
     heading = staticmethod(heading)
+    distance = staticmethod(distance)
+    towards = staticmethod(towards)

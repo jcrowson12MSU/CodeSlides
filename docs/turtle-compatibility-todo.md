@@ -102,11 +102,15 @@ in ordinary teaching code:
 - ~~`begin_fill()`~~ / ~~`end_fill()`~~ / ~~`filling()`~~ — **implemented,
   Phase 3.** Standard-curriculum turtle content (stars, flowers, filled
   polygons).
-- `distance(x, y=None)` / `towards(x, y=None)` — common in slightly
-  more advanced lessons (chasing/following behavior, distance-based
-  logic).
+- ~~`distance(x, y=None)`~~ / ~~`towards(x, y=None)`~~ —
+  **implemented, Phase 5.** Common in slightly more advanced lessons
+  (chasing/following behavior, distance-based logic).
 - `undo()` — common in interactive/exploratory turtle use (though less
-  common in scripted lesson code that just runs top to bottom).
+  common in scripted lesson code that just runs top to bottom). Not
+  part of Phase 5's own scope (the plan named `distance`/`towards`
+  specifically); needs real undo-history tracking, a meaningfully
+  bigger feature than the stateless math `distance`/`towards` turned
+  out to be — still open, not yet scheduled to a phase.
 
 **Less common, lower priority:**
 - `tilt(angle)` / `tiltangle(angle)` / `shapetransform(...)` —
@@ -414,14 +418,52 @@ switch, once the always-animated version is confirmed working
 end-to-end; (3) the default-mode decision (ask the user) folded in
 once (1) and (2) both exist to make an informed choice against.
 
-### Phase 5 — Remaining "less common" `Turtle` methods (Gap 2)
+### Phase 5 — Remaining "less common" `Turtle` methods (Gap 2) — `distance()`/`towards()` done
 
-`distance()`/`towards()` (pure math, no rendering change — cheap to
-add), then `tilt()`/`tiltangle()` if a real lesson need for it surfaces;
-explicitly deprioritize `clone()`/`getturtle()`/`getscreen()` pending a
-design decision on what object identity even means in this shim's
-single-shared-state model, and `clearstamp()`/`clearstamps()` pending
-`stamp()` returning a real id.
+**`distance()`/`towards()` — implemented.** Pure math, no rendering
+change, matching real turtle's own three call shapes exactly (verified
+against the CPython source): `distance(x, y)`, `distance((x, y))`, and
+`distance(other_turtle)` — all three via a shared `_resolve_point`
+helper. `towards()` returns the same 0=east/counterclockwise
+convention `heading()` already uses; real turtle's own angle-mode
+conversion (`standard` vs. `logo` mode) simplifies away entirely since
+this shim only ever supports the default "standard" mode, verified by
+checking both documented stdlib examples produce identical results
+here (`distance(30, 40) == 50.0` from the origin, `towards(0, 0) ==
+225.0` from `(10, 10)`).
+
+The "another turtle" call shape has one documented, deliberate
+simplification: this shim has exactly one turtle's worth of state per
+cell execution (the `Turtle` class's own long-standing docstring), so
+a second `Turtle()`/`Screen()` handle passed as the target always
+resolves to the *same* position — `t1.distance(t2)` is always `0`
+here, unlike real turtle where two turtles genuinely track independent
+positions. Documented in `_resolve_point`'s own docstring and covered
+by a dedicated test, not silently pretended away.
+
+`tilt()`/`tiltangle()` — still deferred, per the original plan's own
+"if a real lesson need for it surfaces" conditional: no concrete
+lesson (the reference script or otherwise) has exercised either, unlike
+every method implemented in Phases 2–5 so far, all of which came from
+a real, identified gap. `clone()`/`getturtle()`/`getscreen()`/
+`clearstamp()`/`clearstamps()` remain explicitly deprioritized for the
+same reasons the original plan already gave (object-identity design
+questions this shim's single-shared-state model doesn't have an
+answer to yet; `stamp()` not returning a real id).
+
+Verified end-to-end in a real browser: an interactive "chase the
+target" deck (two sliders controlling a target position, a turtle
+using `towards()` to aim and `distance()` to know how far to travel)
+correctly draws a line from the canvas center to the exact target
+coordinates with a dot marking the endpoint and the computed distance
+printed alongside — confirmed the line's endpoint matches the slider
+values, not just that *some* line appeared. 9 new backend tests in
+`tests/test_turtle.py` (both stdlib docstring examples reproduced
+exactly; the tuple-vs-two-args call shapes agree; the heading
+convention matches `forward()`'s own east/counterclockwise direction;
+invalid input raises `TypeError`; the Turtle/Screen-as-target
+degenerate case; the `Turtle()` object handle's own methods), full
+suite green (484 passed), ruff clean.
 
 ### Explicitly out of scope for now
 
