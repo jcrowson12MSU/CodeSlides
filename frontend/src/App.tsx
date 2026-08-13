@@ -378,6 +378,20 @@ function App() {
           ]
           addSlidePending.current = false
           setAddSlideError(undefined)
+        } else if (msg.type === 'title_slide_added') {
+          if (!changed) cells = { ...cells }
+          changed = true
+          cells[msg.cell_id] = {
+            instance: msg.instance,
+            source: msg.source,
+            elements: msg.elements,
+            layout: msg.layout,
+          }
+          // Unlike slide_added (always appended -- see its own comment
+          // above), a title slide is inserted first, so the server sends
+          // the deck's whole, now-reordered slide list to replace
+          // wholesale rather than a single slide to append.
+          slides = msg.slides
         }
       }
       return changed ? { ...prev, cells, slides } : prev
@@ -439,6 +453,11 @@ function App() {
     setAddSlideError(undefined)
     addSlidePending.current = true
     send({ type: 'add_slide', session_id: sessionId, title, cell_names: cellNames, reveal_code: revealCode })
+  }
+
+  function handleAddTitleSlide() {
+    if (!sessionId) return
+    send({ type: 'add_title_slide', session_id: sessionId })
   }
 
   // Reorders the deck's slides to match `displayedOrder` -- a
@@ -851,6 +870,7 @@ function App() {
           cellIds={Object.keys(deck.cells)}
           onReorderSlides={handleReorderSlides}
           onAddSlide={handleAddSlide}
+          onAddTitleSlide={handleAddTitleSlide}
           addSlideError={addSlideError}
         />
       )}

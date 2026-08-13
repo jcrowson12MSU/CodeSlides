@@ -6,6 +6,11 @@ export interface EditSlideDeckPanelProps {
   cellIds: string[]
   onReorderSlides: (slideOrder: number[]) => void
   onAddSlide: (title: string, cellNames: string[], revealCode: boolean) => void
+  // One-click title slide (TODO.md #61): unlike onAddSlide, takes no
+  // form input -- the title, summary placeholder, and table of contents
+  // are all generated server-side (kernel.Kernel.add_title_slide) from
+  // the deck's own current state.
+  onAddTitleSlide: () => void
   addSlideError?: string
 }
 
@@ -24,6 +29,7 @@ export function EditSlideDeckPanel({
   cellIds,
   onReorderSlides,
   onAddSlide,
+  onAddTitleSlide,
   addSlideError,
 }: EditSlideDeckPanelProps) {
   const [title, setTitle] = useState('')
@@ -58,7 +64,12 @@ export function EditSlideDeckPanel({
   return (
     <div className="cs-edit-slide-deck-panel">
       <div className="cs-edit-slide-deck-list">
-        <span className="cs-edit-cell-elements-label">Slides</span>
+        <div className="cs-edit-slide-deck-list-header">
+          <span className="cs-edit-cell-elements-label">Slides</span>
+          <button type="button" className="cs-add-title-slide-button" onClick={onAddTitleSlide}>
+            + Add title slide
+          </button>
+        </div>
         {slides.length === 0 && <span className="cs-edit-cell-no-elements">none yet</span>}
         {slides.length > 0 && (
           <p className="cs-edit-slide-deck-hint">Reordering saves with the deck's Save button.</p>

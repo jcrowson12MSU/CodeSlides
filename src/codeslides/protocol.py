@@ -155,6 +155,19 @@ class AddSlide:
 
 
 @dataclass
+class AddTitleSlide:
+    """Create a title slide (TODO.md #61): a new `cs.md(...)` cell holding
+    the deck's title, a one-line summary placeholder, and a generated
+    table of contents, wrapped in a new slide inserted as the deck's
+    *first* slide. One click, no title/cell-selection form -- everything
+    is generated (`kernel.Kernel.add_title_slide`'s docstring). Same
+    write-immediately-to-disk precedent as `AddCell`/`AddSlide`."""
+
+    type: ClassVar[str] = "add_title_slide"
+    session_id: str
+
+
+@dataclass
 class SetSlideOrder:
     """Stage a new slide order for `session_id`, without touching disk --
     the browser-driven "Edit slide deck" panel's reorder UI. Unlike
@@ -401,6 +414,27 @@ class SlideAdded:
 
 
 @dataclass
+class TitleSlideAdded:
+    """Acknowledges a successful `add_title_slide`: the new title cell's
+    static metadata (same shape as `CellAdded`) plus the deck's full,
+    now-reordered slide list (same per-slide shape `/api/deck`/
+    `DeckSaved.slides` use). Unlike `SlideAdded` (which always lands at
+    the end, so the client just appends it), a title slide is inserted
+    as the deck's *first* slide -- sending the whole list lets the
+    client replace its local slide order wholesale instead of needing
+    new "insert at position" client logic."""
+
+    type: ClassVar[str] = "title_slide_added"
+    session_id: str
+    cell_id: str
+    instance: str
+    source: str
+    elements: list[dict[str, Any]]
+    layout: dict[str, Any] | None
+    slides: list[dict[str, Any]]
+
+
+@dataclass
 class CellRenamed:
     """Acknowledges a successful `rename_cell`. `old_cell_id` lets the
     client drop the stale key from local deck/cell-state maps (they're
@@ -543,6 +577,7 @@ ClientMessage = (
     | SaveDeck
     | AddCell
     | AddSlide
+    | AddTitleSlide
     | SetSlideOrder
     | SetCellLayout
     | RenameCell
@@ -563,6 +598,7 @@ ServerMessage = (
     | DeckSaved
     | CellAdded
     | SlideAdded
+    | TitleSlideAdded
     | CellRenamed
     | CellRemoved
     | CellsReordered
@@ -586,6 +622,7 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
         SaveDeck,
         AddCell,
         AddSlide,
+        AddTitleSlide,
         SetSlideOrder,
         SetCellLayout,
         RenameCell,

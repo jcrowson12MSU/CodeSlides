@@ -18,6 +18,7 @@ from codeslides.protocol import (
     AddCell,
     AddElement,
     AddSlide,
+    AddTitleSlide,
     CellAdded,
     CellOutput,
     CellRemoved,
@@ -51,6 +52,7 @@ from codeslides.protocol import (
     SetTestSource,
     SetUiState,
     SlideAdded,
+    TitleSlideAdded,
 )
 from codeslides.serialization import (
     InvalidSourceError,
@@ -562,6 +564,47 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 reveal_code=slide.reveal_code,
                 notes=slide.notes,
             )
+        ]
+
+    if isinstance(message, AddTitleSlide):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if registry.kernel.deck_path is None:
+            return [
+                ErrorMessage(
+                    message="no deck file to add a title slide to (not started from a file)",
+                    session_id=message.session_id,
+                )
+            ]
+        try:
+            cell, _slide, result = registry.kernel.add_title_slide(session)
+        except (InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
+            return [ErrorMessage(message=str(exc), session_id=message.session_id)]
+        results = {cell.name: result}
+        slides_payload = [
+            {
+                "title": s.title,
+                "cells": s.cell_names,
+                "reveal_code": s.reveal_code,
+                "notes": s.notes,
+            }
+            for s in registry.kernel.deck.slides
+        ]
+        return [
+            TitleSlideAdded(
+                session_id=message.session_id,
+                cell_id=cell.name,
+                instance=cell.instance,
+                source=display_source(cell.source, hide_def=cell.hide_def),
+                elements=[
+                    {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
+                ],
+                layout=cell.layout,
+                slides=slides_payload,
+            ),
+            *_results_to_messages(message.session_id, results),
+            *_element_output_messages(session, results),
         ]
 
     if isinstance(message, SetSlideOrder):

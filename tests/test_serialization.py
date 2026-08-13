@@ -3,6 +3,7 @@ import ast
 import pytest
 
 from codeslides import ui
+from codeslides.kernel import Kernel
 from codeslides.loader import load_deck
 from codeslides.serialization import (
     InvalidSourceError,
@@ -10,6 +11,7 @@ from codeslides.serialization import (
     add_element,
     append_cell,
     append_slide,
+    append_title_slide,
     blank_cell_source,
     blank_slide_source,
     display_docstring,
@@ -30,8 +32,10 @@ from codeslides.serialization import (
     set_element_config,
     set_notes_docstring,
     set_tests_default,
+    title_slide_markdown,
     write_export,
 )
+from codeslides.session import Session
 
 DECK_SOURCE = '''"""A tiny demo deck with a comment worth preserving."""
 
@@ -1285,3 +1289,96 @@ def test_blank_slide_source_parses_and_has_an_empty_docstring():
     source = blank_slide_source("Title", ["setup"], reveal_code=False, func_name="slide_title")
     ast.parse(source)
     assert display_docstring(source) == ""
+
+
+def test_title_slide_markdown_includes_the_deck_title_and_summary_placeholder():
+    body = title_slide_markdown("My Deck", [])
+    assert "# My Deck" in body
+    assert "edit me" in body.lower()
+
+
+def test_title_slide_markdown_lists_other_slide_titles_as_a_table_of_contents():
+    # Every generated line uses the literal "1." prefix (CommonMark
+    # renders any ordered-list marker sequentially regardless of the
+    # literal digit used in the source, same as every markdown renderer
+    # -- these don't need to be 1./2./3. in the raw text itself).
+    body = title_slide_markdown("My Deck", ["Setup", "Live Coding"])
+    assert "1. Setup" in body
+    assert "1. Live Coding" in body
+    assert body.index("Setup") < body.index("Live Coding")
+
+
+def test_title_slide_markdown_omits_contents_section_with_no_other_slides():
+    body = title_slide_markdown("My Deck", [])
+    assert "Contents" not in body
+
+
+def test_append_title_slide_inserts_a_new_slide_as_the_first_slide(deck_file):
+    cell_name, slide_title = append_title_slide(str(deck_file), "My Deck")
+
+    deck = load_deck(str(deck_file))
+    assert deck.slides[0].title == slide_title
+    assert deck.slides[0].cell_names == [cell_name]
+    # the deck's pre-existing slide is still there, just no longer first
+    assert any(s.title == "Live Coding" for s in deck.slides[1:])
+
+
+def test_append_title_slide_creates_a_cell_that_executes_and_returns_markdown(deck_file):
+    cell_name, _ = append_title_slide(str(deck_file), "My Deck")
+
+    deck = load_deck(str(deck_file))
+    kernel = Kernel(deck, deck_path=str(deck_file))
+    session = Session(deck=deck)
+    results = kernel.run_all(session)
+
+    result = results[cell_name]
+    assert result.error is None
+    assert result.value.text.startswith("# My Deck")
+
+
+def test_append_title_slide_toc_reflects_the_decks_existing_slide(deck_file):
+    cell_name, _ = append_title_slide(str(deck_file), "My Deck")
+
+    deck = load_deck(str(deck_file))
+    assert "Live Coding" in deck.cells[cell_name].source
+
+
+def test_append_title_slide_adds_the_cs_import_if_missing(deck_file):
+    source = deck_file.read_text().replace("from codeslides import App, ui", "from codeslides import App")
+    deck_file.write_text(source)
+
+    append_title_slide(str(deck_file), "My Deck")
+
+    after = deck_file.read_text()
+    assert "from codeslides import App, cs, ui" not in after  # ui was never imported here
+    assert "from codeslides import App, cs" in after
+    ast.parse(after)
+
+
+def test_append_title_slide_twice_does_not_collide(deck_file):
+    first_cell, first_slide = append_title_slide(str(deck_file), "My Deck")
+    second_cell, second_slide = append_title_slide(str(deck_file), "My Deck")
+
+    assert first_cell != second_cell
+    assert first_slide != second_slide
+    deck = load_deck(str(deck_file))
+    assert first_cell in deck.cells
+    assert second_cell in deck.cells
+
+
+def test_append_title_slide_with_no_existing_slides(tmp_path):
+    path = tmp_path / "deck.py"
+    path.write_text(
+        "from codeslides import App, ui\n\n"
+        "app = App()\n\n"
+        "@app.cell\n"
+        "def setup():\n"
+        "    base = 5\n"
+        "    return base\n"
+    )
+
+    cell_name, slide_title = append_title_slide(str(path), "My Deck")
+
+    deck = load_deck(str(path))
+    assert [s.title for s in deck.slides] == [slide_title]
+    assert deck.cells[cell_name].source.count("def ") == 1

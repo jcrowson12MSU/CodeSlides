@@ -118,6 +118,41 @@ def blank_cell_source(name: str) -> str:
     return f'@app.cell(instance="editable")\ndef {name}():\n    pass\n'
 
 
+def title_slide_markdown(deck_title: str, other_slide_titles: list[str]) -> str:
+    """The generated body of a brand-new title slide's cell (TODO.md #61):
+    the deck's own title as a heading, a one-line summary placeholder the
+    author is expected to replace, and a table of contents listing every
+    *other* slide's title. Confirmed with the user: static, generated
+    once at creation time -- not a live-updating computation -- so a
+    slide added/renamed/reordered afterward doesn't retroactively change
+    this text; the author regenerates it by hand (a fresh "+ Add title
+    slide" click, or a manual edit) if they want it to reflect a changed
+    deck later.
+
+    `other_slide_titles` is deliberately passed in rather than read from
+    a `Deck` here, so this stays a pure string-building function callers
+    can unit-test without constructing a full Deck/Slide graph."""
+    lines = [f"# {deck_title}", "", "*One-line summary -- edit me.*"]
+    if other_slide_titles:
+        lines += ["", "## Contents", ""]
+        lines += [f"1. {title}" for title in other_slide_titles]
+    return "\n".join(lines)
+
+
+def blank_title_slide_cell_source(name: str, deck_title: str, other_slide_titles: list[str]) -> str:
+    """The literal source text for a title slide's backing cell: a
+    `cs.md(...)`-returning `instance="editable"` cell (so the author can
+    tweak the generated summary/TOC afterward the same way they'd edit
+    any other cell), matching `blank_cell_source`'s shape but with real
+    content instead of `pass`."""
+    body = title_slide_markdown(deck_title, other_slide_titles)
+    return (
+        f'@app.cell(instance="editable")\n'
+        f"def {name}():\n"
+        f"    return cs.md({body!r})\n"
+    )
+
+
 def _element_call_source(element: Element) -> str:
     """Serialize an Element back to the literal `ui.<kind>(...)` call that
     would construct it -- `Element.config` always holds exactly the
@@ -572,6 +607,119 @@ def append_slide(deck_path: str, title: str, cell_names: list[str], reveal_code:
     return new_source
 
 
+def append_title_slide(deck_path: str, deck_title: str) -> tuple[str, str]:
+    """Create a title slide (TODO.md #61) -- a new `cs.md(...)` cell
+    holding the deck title, a one-line summary placeholder, and a
+    generated table of contents (`title_slide_markdown`), wrapped in a
+    new slide inserted as the deck's *first* slide -- and write it to
+    `deck_path` immediately, same "no staged/unsaved state" precedent
+    `append_cell`/`append_slide` already set (TODO.md #21/#61's own
+    scoping: a one-click action, never silently lost if the author
+    forgets to click Save).
+
+    Does NOT reuse `append_slide` + `reorder_slides` the way an earlier
+    draft did: `append_slide` always lands at the *end* of the file, so
+    the new cell this function also has to add ends up sitting between
+    the deck's first and last slide blocks -- exactly the "content
+    interleaved between two slide blocks" case `reorder_slides`'s own
+    docstring already warns it doesn't preserve (it only ever moves
+    whole slide *blocks*, back to back). Caught this by hand before
+    shipping it: a smoke test against a deck with one pre-existing slide
+    showed the freshly-added title cell silently vanish from the file
+    the moment `reorder_slides` ran. Fixed by writing the new slide
+    block directly at the position it needs to end up in -- right
+    before the file's current first slide block, or at the end if there
+    are no slides yet -- in the same single write as the new cell,
+    rather than appending-then-moving.
+
+    Never collides with an existing slide/cell: `new_title_slide_title`/
+    `new_title_slide_cell_name` fall back to "Title N"/`title_slide_N`
+    the same way `new_slide_title`/`new_cell_name` already do elsewhere,
+    so a deck that already has a title slide (e.g. a second click of the
+    same button) still gets a distinct one rather than erroring.
+    Raises `InvalidSourceError` if the result wouldn't parse.
+    """
+    path = Path(deck_path)
+    original = path.read_text()
+    cell_spans = _cell_line_spans(original)
+    cell_name = new_title_slide_cell_name(frozenset(cell_spans))
+
+    tree = ast.parse(original)
+    existing_slide_titles = [
+        dec.args[0].value
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        for dec in node.decorator_list
+        if isinstance(dec, ast.Call)
+        and isinstance(dec.func, ast.Attribute)
+        and dec.func.attr == "slide"
+        and dec.args
+        and isinstance(dec.args[0], ast.Constant)
+    ]
+    slide_title = new_title_slide_title(frozenset(existing_slide_titles))
+    func_name = _slide_function_name(slide_title, {n.name for n in tree.body if isinstance(n, ast.FunctionDef)})
+
+    cell_source = blank_title_slide_cell_source(cell_name, deck_title, existing_slide_titles)
+    slide_source = blank_slide_source(slide_title, [cell_name], reveal_code=False, func_name=func_name)
+    # The cell must be defined *before* the slide referencing it -- a
+    # `@app.slide(...)` decorator validates its `cells=[...]` against
+    # `Deck.cells` at the moment it executes (top-to-bottom, like any
+    # Python module), so the two can't be split across "cell at the end
+    # of the file, slide inserted earlier" the way an earlier draft of
+    # this function tried (a `ValueError: references unknown cells` at
+    # load time, caught by hand before shipping it). Both land together,
+    # immediately before wherever the new slide needs to be.
+    block = cell_source.rstrip("\n") + "\n\n\n" + slide_source.rstrip("\n") + "\n"
+
+    original = _ensure_names_imported(original, frozenset({"cs"}))
+    slide_spans = _slide_line_spans(original)
+    if slide_spans:
+        # Insert right before the current first slide block, so the new
+        # slide lands at index 0 without moving any existing slide.
+        first_start = slide_spans[0][0]
+        lines = original.splitlines(keepends=True)
+        lines[first_start - 1 : first_start - 1] = [block, "\n", "\n"]
+        updated = "".join(lines)
+    else:
+        # No existing slides -- same "append at the end" shape as
+        # `append_cell`/`append_slide` themselves.
+        updated = original.rstrip("\n") + "\n\n\n" + block
+
+    try:
+        ast.parse(updated)
+    except SyntaxError as exc:
+        raise InvalidSourceError(
+            f"adding a title slide would leave {deck_path!r} with invalid Python syntax: {exc}"
+        ) from exc
+    path.write_text(updated)
+
+    return cell_name, slide_title
+
+
+def new_title_slide_cell_name(existing_names: frozenset[str] | set[str]) -> str:
+    """Pick an unused name for a title slide's backing cell -- `title_slide`
+    if free, else the smallest-unused-suffix fallback `new_cell_name`
+    already establishes for plain blank cells."""
+    if "title_slide" not in existing_names:
+        return "title_slide"
+    n = 2
+    while f"title_slide_{n}" in existing_names:
+        n += 1
+    return f"title_slide_{n}"
+
+
+def new_title_slide_title(existing_titles: frozenset[str] | set[str]) -> str:
+    """Pick an unused slide title for a new title slide -- "Title" if
+    free, else "Title N", same smallest-unused-suffix convention as
+    `new_slide_title`."""
+    if "Title" not in existing_titles:
+        return "Title"
+    n = 2
+    while f"Title {n}" in existing_titles:
+        n += 1
+    return f"Title {n}"
+
+
 def save_edits(deck_path: str, source_overrides: dict[str, str]) -> None:
     """Rewrite `deck_path` on disk, replacing each named cell's source
     text with its override. `source_overrides` maps cell name -> full
@@ -1007,7 +1155,7 @@ def _replace_elements(
     updated_lines = list(lines)
     updated_lines[start - 1 : end] = [new_cell_source]
     updated = "".join(updated_lines)
-    updated = _ensure_ui_imported(updated)
+    updated = _ensure_names_imported(updated, frozenset({"ui"}))
 
     try:
         ast.parse(updated)
@@ -1114,24 +1262,27 @@ def add_element(deck_path: str, cell_name: str, element: Element) -> None:
     _replace_elements(deck_path, cell_name, build, "add an element to")
 
 
-def _ensure_ui_imported(source: str) -> str:
-    """A cell's `elements=[...]` list always calls `ui.<kind>(...)`
-    (`_element_call_source`) -- if this is the deck's *first* element
-    ever (e.g. `examples/hello.py` never imports `ui` since it never
-    needed it), `add_element` would otherwise silently write a file that
-    `NameError`s the moment it's loaded. Adds `ui` to the existing
-    `from codeslides import ...` line if it's missing one; a deck with no
-    such import at all (nonstandard, but not disallowed) is left alone --
-    that's a pre-existing authoring choice this function shouldn't second-
-    guess by inventing an import statement out of nowhere."""
+def _ensure_names_imported(source: str, needed: frozenset[str]) -> str:
+    """Generalizes what was originally `_ensure_ui_imported` (TODO.md
+    #22): a newly-written cell can reference a `codeslides` name (`ui`,
+    `cs`, ...) that this particular deck never happened to import before
+    (e.g. `examples/hello.py` never imports `ui` since it never needed
+    it) -- writing that cell's code without also checking the import
+    would silently produce a file that `NameError`s the moment it's
+    loaded. Adds whichever of `needed` are missing to the existing
+    `from codeslides import ...` line; a deck with no such import at all
+    (nonstandard, but not disallowed) is left alone -- that's a
+    pre-existing authoring choice this function shouldn't second-guess
+    by inventing an import statement out of nowhere."""
     tree = ast.parse(source)
     for node in tree.body:
         if isinstance(node, ast.ImportFrom) and node.module == "codeslides":
             names = {alias.name for alias in node.names}
-            if "ui" in names:
+            missing = needed - names
+            if not missing:
                 return source
             lines = source.splitlines(keepends=True)
-            imported = sorted(names | {"ui"})
+            imported = sorted(names | missing)
             new_line = f"from codeslides import {', '.join(imported)}\n"
             lines[node.lineno - 1 : node.end_lineno] = [new_line]
             return "".join(lines)

@@ -5,6 +5,7 @@ from codeslides.protocol import (
     AddCell,
     AddElement,
     AddSlide,
+    AddTitleSlide,
     CellAdded,
     CellOutput,
     CellRemoved,
@@ -36,6 +37,7 @@ from codeslides.protocol import (
     SetTestSource,
     SetUiState,
     SlideAdded,
+    TitleSlideAdded,
 )
 from codeslides.ws_handler import SessionRegistry, handle_message
 
@@ -1051,6 +1053,89 @@ def test_add_slide_empty_cell_list_produces_error_not_crash(tmp_path):
 
     assert len(messages) == 1
     assert isinstance(messages[0], ErrorMessage)
+
+
+def test_add_title_slide_emits_title_slide_added_and_writes_to_disk(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(registry, AddTitleSlide(session_id=session.session_id))
+
+    assert isinstance(messages[0], TitleSlideAdded)
+    added = messages[0]
+    assert added.session_id == session.session_id
+    assert added.instance == "editable"
+    assert "cs.md(" in added.source
+    assert "@app.cell" not in added.source  # decorator stripped, same as CellAdded
+    # deck.py: title derived from the deck file's own stem
+    assert path.stem in added.source
+    assert added.slides[0]["title"] == "Title"
+    # written to disk immediately -- no separate save_deck needed
+    assert "cs.md(" in path.read_text()
+    # and the Kernel's own baseline picked it up synchronously, first slide
+    assert registry.kernel.deck.slides[0].title == "Title"
+    # the requesting session's own instances were backfilled (same
+    # precedent as add_cell, so a later run_all/edit_cell for this cell
+    # doesn't KeyError)
+    assert added.cell_id in session.instances
+
+
+def test_add_title_slide_runs_the_new_cell(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(registry, AddTitleSlide(session_id=session.session_id))
+
+    added = messages[0]
+    output_messages = [m for m in messages if isinstance(m, CellOutput) and m.cell_id == added.cell_id]
+    assert len(output_messages) == 1
+    assert output_messages[0].error is None
+
+
+def test_add_title_slide_before_an_existing_slide_keeps_it_second(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    handle_message(
+        registry, AddSlide(session_id=session.session_id, title="Intro", cell_names=["setup"])
+    )
+
+    messages = handle_message(registry, AddTitleSlide(session_id=session.session_id))
+
+    added = messages[0]
+    assert [s["title"] for s in added.slides] == ["Title", "Intro"]
+    assert [s.title for s in registry.kernel.deck.slides] == ["Title", "Intro"]
+    # the pre-existing slide's own cell is untouched
+    assert "def setup():" in path.read_text()
+
+
+def test_add_title_slide_without_a_deck_path_errors_cleanly():
+    registry = SessionRegistry(kernel=Kernel(_build_deck().deck))  # no deck_path
+    session = registry.create()
+
+    messages = handle_message(registry, AddTitleSlide(session_id=session.session_id))
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_add_title_slide_unknown_session_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+
+    messages = handle_message(registry, AddTitleSlide(session_id="does-not-exist"))
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_add_title_slide_twice_picks_different_names(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    first = handle_message(registry, AddTitleSlide(session_id=session.session_id))[0]
+    second = handle_message(registry, AddTitleSlide(session_id=session.session_id))[0]
+
+    assert first.cell_id != second.cell_id
+    assert first.slides != second.slides
 
 
 def test_rename_cell_emits_cell_renamed_and_writes_to_disk(tmp_path):

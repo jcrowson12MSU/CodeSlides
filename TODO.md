@@ -2836,10 +2836,79 @@ reshape the plan below and are called out explicitly where they apply:
   browser tab from before a recent merge, not a real regression. No
   code changes.
 
-- [ ] **61. Add a title slide as the deck's first slide, to introduce the project.**
-  Needs suggestions on how to structure it (e.g. project name, author/
-  course, a one-line summary, maybe a table of contents of the other
-  slides) before implementing.
+- [x] **61. Add a title slide as the deck's first slide, to introduce the project.**
+  Confirmed with the user: content is the deck title + a one-line
+  summary placeholder + a static (generated-once, not live-updating)
+  table of contents of the deck's other slides; created via a one-click
+  "+ Add title slide" button (no title/cell-picker form -- everything's
+  generated), not a hand-authoring pattern documented in examples/.
+
+  `serialization.py` gained `title_slide_markdown()` (pure string
+  builder: `# <deck title>`, an "edit me" placeholder line, and a
+  `## Contents` bullet list of the other slides -- static by design, so
+  a slide added/renamed later doesn't retroactively change already-
+  generated text; the author regenerates by hand if they want that),
+  `blank_title_slide_cell_source()` (wraps it in an `instance="editable"`
+  `cs.md(...)`-returning cell, live-editable afterward same as any other
+  cell), and `append_title_slide()` (writes the new cell + slide
+  together, immediately, same write-now precedent `append_cell`/
+  `append_slide` already set).
+
+  Generalized `_ensure_ui_imported` into `_ensure_names_imported(source,
+  needed)` (was already `ui`-specific for `add_element`'s own case) so
+  the title cell's `cs.md(...)` call doesn't `NameError` on a deck that
+  never imported `cs` before.
+
+  Found and fixed a real bug via a smoke test before writing any
+  frontend code: an early draft composed `append_cell` (cell always at
+  the *end* of the file) + `append_slide` (slide always at the end) +
+  `reorder_slides` (move the slide to index 0) -- but the new cell ended
+  up sitting *between* the deck's existing first and last slide blocks,
+  exactly the "content interleaved between two slide blocks" case
+  `reorder_slides`'s own docstring already warns it doesn't preserve
+  (it only moves whole slide blocks, back to back); the cell
+  silently vanished from the file the moment `reorder_slides` ran, only
+  caught by loading the result back and checking the cell actually
+  still existed, not just checking the file "looked" right. Fixed by
+  writing the new cell and slide together in one pass, positioned
+  directly before wherever the new slide needs to land (the deck's
+  current first slide block, or the end of the file if there are no
+  slides yet) -- no `reorder_slides` call at all. A second related
+  ordering bug (cell appended at the end, slide referencing it inserted
+  earlier -- fails at load time, since `@app.slide(...)` validates its
+  `cells=[...]` against already-defined cells at the moment it executes,
+  top-to-bottom like any Python module) was caught the same way and
+  fixed by keeping the cell and slide adjacent, cell first.
+
+  New `AddTitleSlide`/`TitleSlideAdded` websocket messages
+  (`protocol.py`/`protocol.ts`, hand-synced) and `Kernel.add_title_slide`
+  (creates the cell+slide, reloads the baseline, backfills the
+  requesting session's instance, runs the new cell once -- same
+  consistency precedent `add_cell` set, since this cell has real content
+  to show immediately rather than a blank `pass`). Unlike `SlideAdded`
+  (always lands at the end, so the client just appends it),
+  `TitleSlideAdded` carries the deck's whole, now-reordered slide list
+  (same shape `DeckSaved.slides` already uses) since a title slide is
+  inserted first, not appended.
+
+  Frontend: a "+ Add title slide" button in `EditSlideDeckPanel.tsx`
+  (top-right of the existing slide list, no form -- one click), wired
+  through `App.tsx`'s message-scanning effect to splice in the new cell
+  and replace `deck.slides` wholesale from the ack's `slides` field.
+
+  Verified end-to-end in a real browser via Playwright against
+  `examples/live_demo.py` (which already has 3 slides): clicked "+ Add
+  title slide" and confirmed the new "Title" slide became slide 1/4,
+  the three pre-existing slides ("Setup", "Image Preview", "Live
+  Coding") stayed in their original relative order right after it, the
+  rendered slide showed the deck title, the "edit me" summary
+  placeholder, and a correct table of contents of the other three
+  slides, and the underlying `title_slide` cell's real `cs.md(...)`
+  source was visible and editable in the code editor -- confirmed with
+  a screenshot, not just DOM text. 15 new backend tests (9 in
+  `test_serialization.py`, 6 in `test_ws_handler.py`), full suite green
+  (427 passed), ruff/oxlint clean, frontend bundle rebuilt (`tsc -b`,
+  the actual build-mode check, not just `tsc --noEmit`) and committed.
 
 - [ ] **62. Improve turtle compatibility.**
   Broaden `src/codeslides/turtle.py`'s coverage of the real stdlib

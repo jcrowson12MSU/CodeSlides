@@ -895,6 +895,46 @@ class Kernel:
 
         return self.deck.slides[-1]
 
+    def add_title_slide(self, session: Session) -> tuple[Cell, Slide, ExecutionResult]:
+        """Create a title slide (TODO.md #61): a new `cs.md(...)` cell
+        holding the deck's own title, a one-line summary placeholder, and
+        a generated table of contents of the deck's other slides,
+        inserted as the deck's *first* slide -- one click, no form to
+        fill in first (confirmed with the user: the title/TOC are
+        generated, the author edits the placeholder summary afterward
+        the same way they'd edit any other cell). Same "write to disk
+        immediately" precedent as `add_cell`/`add_slide` -- no staged/
+        unsaved state, so a title slide is never silently lost if the
+        author forgets to click Save.
+
+        Backfills `session`'s own `instances` for the new cell (same
+        reason as `add_cell`: every existing lookup assumes
+        `session.instances[cell_name]` always exists) and runs it once,
+        for the same "shouldn't look conspicuously unlike every other
+        cell by the time the author sees it" consistency `add_cell`
+        already established -- unlike a blank cell's `pass` body, this
+        one actually has real content to show immediately.
+
+        Requires `self.deck_path` (raises `ValueError` without one, same
+        as `add_cell`/`add_slide`)."""
+        if self.deck_path is None:
+            raise ValueError("cannot add a title slide: this Kernel was not started from a deck file")
+
+        from codeslides.serialization import append_title_slide
+
+        deck_title = Path(self.deck_path).stem
+        cell_name, slide_title = append_title_slide(self.deck_path, deck_title)
+
+        from codeslides.loader import load_deck
+
+        self.reload_deck(load_deck(self.deck_path))
+
+        cell = self.deck.cells[cell_name]
+        session.seed_cell_instance(cell_name, cell)
+        results = self._run_cells([cell_name], session)
+        slide = next(s for s in self.deck.slides if s.title == slide_title)
+        return cell, slide, results[cell_name]
+
     def rename_cell(self, session: Session, old_name: str, new_name: str) -> Cell:
         """Rename a cell's identity (TODO.md #22 -- the edit button's
         "edit the title of a cell"), on disk, immediately: rewrites the

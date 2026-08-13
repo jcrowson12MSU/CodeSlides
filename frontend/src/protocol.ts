@@ -89,6 +89,11 @@ export interface AddSlide {
   reveal_code: boolean
 }
 
+export interface AddTitleSlide {
+  type: 'add_title_slide'
+  session_id: string
+}
+
 export interface SetSlideOrder {
   type: 'set_slide_order'
   session_id: string
@@ -163,6 +168,7 @@ export type ClientMessage =
   | SaveDeck
   | AddCell
   | AddSlide
+  | AddTitleSlide
   | SetSlideOrder
   | SetCellLayout
   | RenameCell
@@ -260,6 +266,21 @@ export interface SlideAdded {
   notes: string
 }
 
+export interface TitleSlideAdded {
+  type: 'title_slide_added'
+  session_id: string
+  cell_id: string
+  instance: 'static' | 'editable'
+  source: string
+  elements: ElementMeta[]
+  layout: CellLayout | null
+  // Unlike SlideAdded (which always lands at the end -- the client just
+  // appends it), a title slide is inserted as the deck's *first* slide,
+  // so this carries the deck's whole, now-reordered slide list (same
+  // shape DeckSaved.slides uses) rather than a single slide to append.
+  slides: SlideMeta[]
+}
+
 export interface CellRenamed {
   type: 'cell_renamed'
   session_id: string
@@ -340,6 +361,7 @@ export type ServerMessage =
   | DeckSaved
   | CellAdded
   | SlideAdded
+  | TitleSlideAdded
   | CellRenamed
   | CellRemoved
   | CellsReordered
