@@ -3171,8 +3171,71 @@ reshape the plan below and are called out explicitly where they apply:
   `docs/turtle-compatibility-todo.md` updated (Gap 2's list and Phase
   3's own section marked done), frontend bundle rebuilt and committed.
 
-  Phases 4-5 (behavioral-parity fixes, remaining lower-priority
-  `Turtle` methods) are still open -- tracked in
+  **Phase 4 partially implemented (same task, follow-up): `dot()`/
+  `write()` behavioral-parity fixes done, `speed()` deliberately
+  deferred at the user's request.**
+
+  `dot()` now matches real turtle's own `dot(size=None, *color)`
+  signature exactly (verified against the CPython source): a bare
+  color positional with no size (`dot("red")`), `*color` as a real
+  varargs tuple accepting one color string/tuple or three separate RGB
+  numbers (`dot(20, 255, 0, 0)`), and a corrected default-size formula
+  (`pensize + max(pensize, 4)` -- the old shim computed a different
+  value, 8 instead of 5, for the common `pensize=1` case). A numeric
+  RGB triple is converted to a real CSS `rgb(r, g, b)` string
+  (`_color_to_css`) before being emitted, since a bare JSON-serialized
+  tuple has no meaning to the browser's own CSS color parsing.
+  Deliberately doesn't implement `colormode()`-dependent 0-1-vs-0-255
+  numeric scaling -- `colormode` is already an accepted no-op (Phase
+  1), so this always assumes the common 0-255 scale.
+
+  `write(move=True)` now moves the turtle to the drawn text's
+  estimated right edge, using a simple average-character-width
+  heuristic calibrated to `TurtleCanvasViewer.tsx`'s fixed font, rather
+  than true font metrics -- this app has no equivalent of Tk's actual
+  text-rendering engine to measure exactly, and no round trip back
+  into an already-finished, synchronous cell execution to ask the
+  browser how wide text actually rendered. Explicitly does NOT move
+  the turtle at all when `setworldcoordinates(...)` is active: the
+  pixel-to-turtle-unit scale in that case depends on the
+  `turtle_canvas` element's actual on-screen size, which only the
+  frontend knows -- moving to a confidently wrong position was judged
+  worse than leaving the turtle in place, a deliberate documented gap
+  rather than an oversight.
+
+  `speed()` itself was scoped in detail but deliberately not
+  implemented this pass -- the user explicitly asked to skip the
+  animation work and instead write up a thorough plan for later. A new
+  "`speed()` discussion" section in `docs/turtle-compatibility-todo.md`
+  covers: the core client-side replay approach (per-command
+  `requestAnimationFrame`, not per-pixel), a speed-to-delay mapping,
+  the `tracer(0)`-based instant/animated mode switch, animation
+  cancellation on cell re-render (a `useEffect` cleanup concern), how
+  animation interacts with Phase 3's fill support (the fill only
+  appears once `end_fill` is actually reached, matching real turtle's
+  own behavior), how to verify timing-dependent behavior (a real gap in
+  every prior phase's screenshot-based verification method), and an
+  open question flagged for the user rather than decided unilaterally:
+  whether a cell that never calls `tracer` at all should default to
+  animated or instant, since -- unlike every fix in Phases 1-4 so
+  far -- that single default would change the *visible* behavior of
+  every existing turtle deck with zero code changes on the author's
+  side, not just add new opt-in functionality.
+
+  Verified `dot()`/`write()` end-to-end in a real browser: four `dot()`
+  call shapes (bare, size+string, bare color, RGB varargs) rendered as
+  four distinct dots; `write("Score: ", move=True)` followed by
+  `write("42")` correctly chained without overlapping, confirming the
+  turtle actually advanced. 13 new backend tests in `tests/
+  test_turtle.py` covering every `dot()` call shape, `write(move=True)`
+  across all three alignments, the `setworldcoordinates` guard, and the
+  `Turtle()` object handle's own methods, full suite green (475
+  passed), ruff clean. No frontend changes needed for this pass -- both
+  fixes are pure Python-side, emitting the same command shapes the
+  frontend already understood.
+
+  Phase 5 (remaining lower-priority `Turtle` methods) and `speed()`'s
+  own animation implementation are still open -- tracked in
   `docs/turtle-compatibility-todo.md`, not yet started.
 
 - [ ] **48. Polish, README, and packaging**

@@ -325,15 +325,49 @@ def filling() -> bool:
 # -- Drawing marks ----------------------------------------------------------
 
 
-def dot(size: float | None = None, color_: str | None = None) -> None:
+def _color_to_css(value: Any) -> str:
+    """Every other color-accepting function here takes a plain CSS
+    color string and passes it straight through -- `dot()` is the one
+    place real turtle also accepts a bare `(r, g, b)` numeric tuple
+    (`dot(20, 255, 0, 0)`), which has no meaning to the browser's own
+    CSS color parsing (`TurtleCanvasViewer.tsx`'s `ctx.fillStyle`)
+    without conversion first. Deliberately does not implement real
+    turtle's `colormode()`-dependent 0-1-vs-0-255 scaling -- `colormode`
+    is already an accepted no-op (Phase 1, `Screen`), so this always
+    assumes the common 0-255 scale, matching the vast majority of real
+    lesson code that calls this at all."""
+    if isinstance(value, str):
+        return value
+    r, g, b = value
+    return f"rgb({r}, {g}, {b})"
+
+
+def dot(size: float | str | None = None, *color: Any) -> None:
+    """Matches real turtle's own `dot(size=None, *color)` signature
+    (verified against the CPython source), not just the common
+    `dot(size, "colorname")` shape: a lone string/tuple positional with
+    no `size` at all is also valid (`dot("red")`), and `color` can be
+    three separate RGB numbers (`dot(20, 255, 0, 0)`) as well as one
+    color string/tuple (`dot(20, "red")`) -- `*color` is a real varargs
+    tuple in both call shapes, not a single positional.
+
+    Default size when none is given matches real turtle's own formula
+    exactly (`pensize + max(pensize, 4)`, verified against the CPython
+    source) -- the shim's previous `max(pen_width + 4, 8)` computed a
+    different value for the common pensize=1 case (8 instead of 5)."""
     state = _state()
-    state.emit(
-        "dot",
-        x=state.x,
-        y=state.y,
-        size=size or max(state.pen_width + 4, 8),
-        color=color_ or state.pen_color,
-    )
+    default_size = state.pen_width + max(state.pen_width, 4)
+    if not color:
+        if isinstance(size, (str, tuple)):
+            dot_color = size
+            dot_size = default_size
+        else:
+            dot_color = state.pen_color
+            dot_size = size if size else default_size
+    else:
+        dot_size = size if size is not None else default_size
+        dot_color = color[0] if len(color) == 1 else color
+    state.emit("dot", x=state.x, y=state.y, size=dot_size, color=_color_to_css(dot_color))
 
 
 def stamp() -> None:
@@ -351,10 +385,48 @@ def stamp() -> None:
     )
 
 
+_APPROX_PIXELS_PER_CHAR = 7  # calibrated to TurtleCanvasViewer.tsx's fixed "12px sans-serif"
+
+
 def write(text: str, *, move: bool = False, align: str = "left", font: tuple | None = None) -> None:
+    """`move=True` moves the turtle to the drawn text's right edge (real
+    turtle's own semantics -- verified against the CPython source),
+    approximated here rather than measured exactly: real turtle asks
+    Tk's actual font-rendering engine for the text's real pixel
+    bounding box, which this app has no equivalent of -- rendering
+    happens entirely client-side (`TurtleCanvasViewer.tsx`) and there's
+    no round trip back into an already-finished, synchronous cell
+    execution to ask the browser how wide the text actually came out.
+    `_APPROX_PIXELS_PER_CHAR` is a simple average-character-width
+    estimate calibrated to the viewer's fixed `"12px sans-serif"` font
+    -- close enough for `move=True`'s common real use (chaining
+    `write()` calls to build up a line of text) without needing true
+    font metrics.
+
+    Only estimated when there's no active `setworldcoordinates(...)`
+    (Phase 1): the pixel-to-turtle-unit scale factor in that case
+    depends on the `turtle_canvas` element's actual on-screen
+    width/height, which only the frontend knows -- this module can't
+    convert a pixel-width estimate into the right number of turtle
+    units without it. Silently leaving the turtle in place in that one
+    case (same as this function's behavior everywhere before this fix)
+    was judged less misleading than moving it to a confidently wrong
+    position; `move=True` under `setworldcoordinates` is the one
+    remaining honest gap here, not a further approximation."""
     state = _state()
     state.emit("write", x=state.x, y=state.y, text=str(text), align=align)
-    _ = move, font  # accepted for stdlib-signature compatibility, not yet used
+    if move and state.world_coords is None:
+        # Matches real turtle's own anchor-point semantics (its own
+        # canvas anchor mapping -- "left"->sw, "center"->s, "right"->se
+        # -- confirms "right" already anchors text at its own right
+        # edge, so there's nothing further to move for that case).
+        approx_width = len(str(text)) * _APPROX_PIXELS_PER_CHAR
+        if align == "center":
+            approx_width /= 2
+        elif align == "right":
+            approx_width = 0
+        _move_to(state, state.x + approx_width, state.y)
+    _ = font  # accepted for stdlib-signature compatibility, not yet used
 
 
 def clear() -> None:

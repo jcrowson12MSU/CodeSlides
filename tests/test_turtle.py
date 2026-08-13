@@ -453,6 +453,151 @@ def test_turtle_object_fill_methods_work_the_same_as_module_functions():
         assert t.filling() is False
 
 
+# -- dot()/write() behavioral-parity fixes (docs/turtle-compatibility-todo.md Phase 4) --
+
+
+def test_dot_with_no_args_uses_pencolor_and_default_size():
+    """Default size matches real turtle's own formula exactly
+    (`pensize + max(pensize, 4)`, verified against the CPython source)
+    -- the pre-Phase-4 shim computed a different value (8, not 5) for
+    the common pensize=1 case."""
+    with turtle.execution_context() as commands:
+        turtle.pencolor("green")
+        turtle.dot()
+
+    assert commands[-1] == {"op": "dot", "x": 0.0, "y": 0.0, "size": 5.0, "color": "green"}
+
+
+def test_dot_with_size_and_color_string():
+    with turtle.execution_context() as commands:
+        turtle.dot(20, "red")
+
+    assert commands[-1] == {"op": "dot", "x": 0.0, "y": 0.0, "size": 20, "color": "red"}
+
+
+def test_dot_with_only_a_color_string_no_size():
+    """Real turtle allows a bare color positional with no size at all
+    (verified against the CPython source's own `isinstance(size, (str,
+    tuple))` branch) -- this shape was never supported by the pre-
+    Phase-4 shim's `dot(size=None, color_=None)` two-positional-only
+    signature."""
+    with turtle.execution_context() as commands:
+        turtle.dot("blue")
+
+    assert commands[-1]["color"] == "blue"
+    assert commands[-1]["size"] == pytest.approx(5.0)
+
+
+def test_dot_with_rgb_varargs_converts_to_a_css_rgb_string():
+    """Real turtle's `dot(size, r, g, b)` varargs shape (verified
+    against the CPython source) -- the pre-Phase-4 shim's
+    `dot(size=None, color_=None)` signature couldn't accept this at
+    all (TypeError: too many positional arguments)."""
+    with turtle.execution_context() as commands:
+        turtle.dot(20, 255, 0, 0)
+
+    assert commands[-1] == {"op": "dot", "x": 0.0, "y": 0.0, "size": 20, "color": "rgb(255, 0, 0)"}
+
+
+def test_dot_with_an_rgb_tuple_converts_to_a_css_rgb_string():
+    with turtle.execution_context() as commands:
+        turtle.dot(20, (10, 20, 30))
+
+    assert commands[-1]["color"] == "rgb(10, 20, 30)"
+
+
+def test_turtle_object_dot_works_the_same_as_the_module_function():
+    t = turtle.Turtle()
+    with turtle.execution_context() as commands:
+        t.dot(20, "purple")
+
+    assert commands[-1] == {"op": "dot", "x": 0.0, "y": 0.0, "size": 20, "color": "purple"}
+
+
+def test_write_without_move_leaves_the_turtle_in_place():
+    with turtle.execution_context():
+        turtle.write("Hello")
+        assert turtle.position() == pytest.approx((0, 0))
+
+
+def test_write_with_move_true_advances_the_turtle_rightward():
+    """move=True moves the turtle to the drawn text's estimated right
+    edge (real turtle's own semantics, verified against the CPython
+    source) -- approximated via a fixed per-character width rather than
+    real font metrics, since this app has no equivalent of Tk's actual
+    text-rendering engine to measure exactly (see the function's own
+    docstring for the full reasoning)."""
+    with turtle.execution_context():
+        turtle.penup()
+        turtle.write("Hello", move=True)
+        x, y = turtle.position()
+
+    assert x > 0
+    assert y == pytest.approx(0)
+
+
+def test_write_with_move_true_and_center_align_advances_half_as_far():
+    with turtle.execution_context():
+        turtle.penup()
+        turtle.write("Hello", move=True)
+        left_aligned_x, _ = turtle.position()
+
+    with turtle.execution_context():
+        turtle.penup()
+        turtle.write("Hello", move=True, align="center")
+        center_aligned_x, _ = turtle.position()
+
+    assert center_aligned_x == pytest.approx(left_aligned_x / 2)
+
+
+def test_write_with_move_true_and_right_align_does_not_move():
+    """Real turtle's own canvas anchor mapping ("right" -> "se", the
+    southeast/bottom-right corner) already anchors right-aligned text
+    at its own right edge -- verified against the CPython source --
+    so there's nothing further to move for this alignment."""
+    with turtle.execution_context():
+        turtle.penup()
+        turtle.write("Hello", move=True, align="right")
+        x, y = turtle.position()
+
+    assert (x, y) == pytest.approx((0, 0))
+
+
+def test_write_with_move_true_under_active_setworldcoordinates_does_not_move():
+    """The pixel-to-turtle-unit scale factor under an active
+    setworldcoordinates(...) depends on the turtle_canvas element's
+    actual on-screen size, which only the frontend knows -- this
+    module can't convert a pixel-width estimate into the right number
+    of turtle units without it, so it deliberately leaves the turtle
+    in place rather than moving it to a confidently wrong position."""
+    with turtle.execution_context():
+        turtle.penup()
+        turtle.setworldcoordinates(0, 0, 10, 10)
+        turtle.write("Hello", move=True)
+        x, y = turtle.position()
+
+    assert (x, y) == pytest.approx((0, 0))
+
+
+def test_write_still_emits_the_write_command_regardless_of_move():
+    with turtle.execution_context() as commands:
+        turtle.write("Hello", move=True)
+
+    write_commands = [c for c in commands if c["op"] == "write"]
+    assert len(write_commands) == 1
+    assert write_commands[0]["text"] == "Hello"
+
+
+def test_turtle_object_write_works_the_same_as_the_module_function():
+    t = turtle.Turtle()
+    with turtle.execution_context():
+        t.up()
+        t.write("Hi", move=True)
+        x, _ = t.position()
+
+    assert x > 0
+
+
 # -- Screen() object handle (docs/turtle-compatibility-todo.md Phase 1) -----
 
 

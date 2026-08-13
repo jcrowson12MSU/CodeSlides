@@ -277,16 +277,142 @@ now fixed, while confirming `reset()` correctly still leaves the shape
 *name* itself alone (real turtle's own `_reset` never touches it
 either, it lives on a separate object).
 
-### Phase 4 — Behavioral-parity fixes (Gap 3)
+### Phase 4 — Behavioral-parity fixes (Gap 3) — `dot()`/`write()` done, `speed()` deferred
 
-Lower engineering effort than Phases 1–3, but real correctness bugs:
-fix `dot()`'s signature to accept `*color` varargs matching stdlib;
-either implement `write(..., move=True)` properly or make the
-docstring/behavior explicit that it's unsupported (current silent
-no-op is the worst of the three options); wire `speed()` into an actual
-rendering behavior via `docs/turtle-animation-feasibility.md`'s
-recommended client-side replay approach (frontend-only, no
-kernel/protocol changes — see that document for the full plan).
+**`dot()` — implemented.** Now matches real turtle's own
+`dot(size=None, *color)` signature exactly (verified against the
+CPython source): a bare color positional with no size at all
+(`dot("red")`), `*color` as a real varargs tuple accepting either one
+color string/tuple or three separate RGB numbers (`dot(20, 255, 0,
+0)`), and a corrected default-size formula (`pensize + max(pensize,
+4)` — the old shim's `max(pen_width + 4, 8)` computed a different
+value, 8 instead of 5, for the common `pensize=1` case). A numeric RGB
+triple is converted to a real CSS `rgb(r, g, b)` string before being
+emitted (`_color_to_css`), since the browser's own CSS color parsing
+(`TurtleCanvasViewer.tsx`) has no meaning for a bare JSON-serialized
+tuple. Deliberately does not implement real turtle's
+`colormode()`-dependent 0-1-vs-0-255 numeric scaling — `colormode` is
+already an accepted no-op (Phase 1), so this always assumes the
+overwhelmingly common 0-255 scale.
+
+**`write(move=True)` — implemented, with one deliberate, documented
+gap.** Moves the turtle to the drawn text's estimated right edge using
+a simple average-character-width heuristic (`_APPROX_PIXELS_PER_CHAR`,
+calibrated to `TurtleCanvasViewer.tsx`'s fixed `"12px sans-serif"`)
+rather than true font metrics — real turtle asks Tk's actual
+font-rendering engine for the text's real pixel bounding box, which
+this app has no equivalent of (rendering happens entirely client-side,
+and there's no round trip back into an already-finished, synchronous
+cell execution to ask the browser how wide the text actually came
+out). Close enough for the common real use (chaining `write()` calls
+to build up a line of text) without needing true font metrics.
+Explicitly **does not move the turtle at all when
+`setworldcoordinates(...)` is active**: the pixel-to-turtle-unit scale
+factor in that case depends on the `turtle_canvas` element's actual
+on-screen size, which only the frontend knows — moving to a
+confidently *wrong* position was judged worse than leaving the turtle
+in place (a judgment call, not an oversight; the reasoning is in the
+function's own docstring). This is the one remaining honest gap in
+`write()`, not something Phase 4 tried and failed to close.
+
+**`speed()` — deferred.** Scoped in detail below rather than
+implemented in this pass, at the user's explicit request (asked to
+skip the animation work itself and instead write up the plan here for
+a later pass).
+
+#### `speed()` discussion: what's actually involved
+
+`speed()` is currently accepted and stored (`_TurtleState.speed`) but
+nothing reads it — every drawing replays instantly regardless of the
+value set. `docs/turtle-animation-feasibility.md` already did the deep
+architectural analysis (read that document in full before starting
+this); this section is the *implementation* plan for its "client-side
+replay animation" recommendation specifically — the piece that
+document calls "easy, hours not days" and confirms needs **no**
+kernel/protocol/execution-model changes, only frontend work.
+
+**The core idea.** `TurtleCanvasViewer.tsx` currently replays the
+entire command list in one synchronous `for` loop inside a `useEffect`
+— the whole picture appears in one paint. The animated mode replaces
+that loop with a driver that draws one command per animation frame (or
+per `setInterval` tick), using the turtle's `speed` value (already
+recorded on every relevant command, or trackable as running state the
+same way `heading`/`shapeName` already are) to pick a per-step delay.
+
+**Concretely, this needs:**
+
+1. **A per-canvas "animate vs. instant" mode.** The simplest version:
+   always animate unless `tracer(0)` was called anywhere in the
+   command stream (mirroring real turtle's own `tracer(0)`/`tracer(1)`
+   distinction) — `tracer` is already emitted as a command (Phase 1),
+   so this is just one more `commands.find(...)` scan, the same
+   pattern already used for `setworldcoordinates`/`bgcolor`. A cell
+   that never calls `tracer` at all needs a decision: default to
+   animated (closer to "looks like the IDE," the whole point of this
+   effort) or default to instant (today's behavior, zero risk of
+   surprising every existing deck in `examples/`). Recommend asking
+   the user which before implementing — this single default affects
+   every existing turtle deck's visible behavior with no code changes
+   on the author's side, unlike every other phase so far, which only
+   changed behavior for scripts calling the *new* functionality.
+2. **A speed-to-delay mapping.** Real turtle's `speed` is `0`
+   (fastest, no animation) through `10` (slowest), with `1-3` "slow,"
+   `4-6` "normal," `7-9` "fast" in its own internal grouping. A simple
+   `delayMs = speed === 0 ? 0 : (11 - speed) * K` for some constant
+   `K` (tune by feel, not by trying to match Tk's actual per-pixel
+   step timing exactly — no other part of this app's turtle rendering
+   claims pixel/frame-timing fidelity to real turtle either).
+3. **Per-command granularity, not per-pixel.** Real turtle animates
+   continuously along a line (many small steps per `forward()` call);
+   the practical version here almost certainly animates per *command*
+   (one `goto` = one visible jump, not a smooth slide) — much simpler
+   to implement (`requestAnimationFrame` driving an index into the
+   command array, drawing commands\[i\] then incrementing) and still
+   delivers "the picture is drawn stroke by stroke," the actual
+   experience most lessons want. A smooth per-pixel slide *within* one
+   `goto` is a strictly harder, separate enhancement on top of this —
+   don't conflate the two when scoping the work.
+4. **Cancellation on re-render.** A cell re-run (edit, slider change)
+   sends a brand new complete command list — the existing `useEffect`
+   already re-runs on `[content, width, height]` changes. The animation
+   driver must cancel any in-flight `requestAnimationFrame`/
+   `setInterval` from the *previous* render before starting the new
+   one's animation from scratch (a `useEffect` cleanup function
+   returning `cancelAnimationFrame(...)`/`clearInterval(...)`) —
+   otherwise two overlapping animations could both be drawing onto the
+   same canvas simultaneously. This is ordinary React cleanup
+   discipline, not a new architectural concept, but easy to miss if
+   the animation driver is written as a bare loop instead of properly
+   integrated into the existing effect's lifecycle.
+5. **Interaction with fill (Phase 3).** `begin_fill`/`end_fill`
+   currently only paint the filled polygon once `end_fill` is reached
+   in the loop — mid-animation, the region between the two markers is
+   only partially drawn (the outline appears stroke-by-stroke, but the
+   *fill* can't render until the whole boundary is known). Real turtle
+   has this exact same limitation (the fill only appears once
+   `end_fill()` actually runs) — so this isn't a new problem to solve,
+   just something to verify holds correctly once animation exists (the
+   fill should still appear, just only once the animation driver
+   reaches the `end_fill` command, not before).
+6. **A real device to verify against.** Every other phase's
+   verification method (Playwright screenshot of the final rendered
+   state) doesn't observe *timing* — confirming "it looks right" needs
+   either a video/frame-capture Playwright verification (checking
+   partial-completion frames mid-animation, e.g. take a screenshot
+   after a few hundred ms and confirm the drawing is genuinely
+   incomplete, not just checking the end state matches) or accepting a
+   lower verification bar for the animation *behavior* itself (visual
+   confirmation only, the way a human would eyeball it) while still
+   holding the *final* rendered picture to the same
+   screenshot-and-compare standard every other phase already used.
+
+**Suggested implementation order** (each independently shippable and
+testable, not one large change): (1) the speed-to-delay mapping and
+per-command `requestAnimationFrame` driver, gated behind a temporary
+always-on flag for initial testing; (2) the `tracer`-based mode
+switch, once the always-animated version is confirmed working
+end-to-end; (3) the default-mode decision (ask the user) folded in
+once (1) and (2) both exist to make an informed choice against.
 
 ### Phase 5 — Remaining "less common" `Turtle` methods (Gap 2)
 
