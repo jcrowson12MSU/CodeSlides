@@ -64,19 +64,24 @@ implementation. This single script exercises:
 
 | Call | Status |
 |---|---|
-| `turtle.Screen()` | **missing** — no `Screen` concept exists |
-| `wn.setworldcoordinates(...)` | **missing** (part of `Screen`) |
-| `wn.tracer(0)` | **missing** (part of `Screen`) — though see note below, the *effect* of `tracer(0)` is already this app's only behavior |
-| `wn.update()` | **missing** (part of `Screen`) |
-| `wn.exitonclick()` | **missing** (part of `Screen`) — also conceptually N/A: there's no window to "click to exit," see Gap 4 |
+| `turtle.Screen()` | implemented (Phase 1) |
+| `wn.setworldcoordinates(...)` | implemented (Phase 1) |
+| `wn.tracer(0)` | implemented as an accepted no-op (Phase 1) — the *effect* of `tracer(0)` was already this app's only behavior |
+| `wn.update()` | implemented as an accepted no-op (Phase 1) |
+| `wn.exitonclick()` | implemented as an accepted no-op (Phase 1) — conceptually N/A: there's no window to "click to exit," see Gap 4 |
 | `turtle.Turtle()` | implemented |
 | `t.up()` / `t.down()` | implemented |
 | `t.hideturtle()` | implemented |
-| `t.shape("circle")` | **missing** |
+| `t.shape("circle")` | implemented (Phase 2) |
 | `t.color(...)` | implemented |
 | `t.goto(...)` | implemented |
 | `t.stamp()` | implemented |
-| `t.shapesize(...)` | **missing** (commented out in the script itself, but real lesson code will use it) |
+| `t.shapesize(...)` | implemented (Phase 2) |
+
+**Every call in `examples/originalMarchingSquares.py`'s setup is now
+implemented** as of Phase 2 — the script that motivated this whole
+document no longer fails outright, and its actual visual result (a
+grid of colored circular stamps) now renders correctly.
 
 **`Screen` is the single highest-priority gap.** Virtually every
 real-world turtle script (not just this one) opens with
@@ -91,12 +96,9 @@ API with no shim implementation, grouped by how likely it is to show up
 in ordinary teaching code:
 
 **Common enough to prioritize:**
-- `shape(name)` — set the turtle's cursor shape (`"circle"`,
-  `"square"`, `"triangle"`, `"arrow"`, `"turtle"`, `"classic"`). Used in
-  the reference script; one of the first things any turtle tutorial
-  covers.
-- `shapesize(stretch_wid, stretch_len, outline)` — resize the cursor.
-  Used (commented out) in the reference script.
+- ~~`shape(name)`~~ / ~~`shapesize(stretch_wid, stretch_len, outline)`~~
+  — **implemented, Phase 2.** Used in the reference script; one of the
+  first things any turtle tutorial covers.
 - `begin_fill()` / `end_fill()` / `filling()` — filled-shape drawing
   (draw a polygon outline, then fill it). This is standard-curriculum
   turtle content (stars, flowers, filled polygons) and a real, common
@@ -234,17 +236,20 @@ recent `TODO.md` entries) before moving to the next.
    text ("turtle calls are bare module functions... no `Screen`/`wn`
    object at all") will be out of date.
 
-### Phase 2 — `shape()` / `shapesize()`
+### Phase 2 — `shape()` / `shapesize()` — **implemented**
 
-Both are pure appearance state (no new protocol needed beyond what
-`stamp`/the turtle-marker drawing already carries) — extend
-`_TurtleState` with `shape_name`/`shape_stretch`, thread them into the
-`stamp` command's payload (the frontend's `drawTurtleMarker` already
-draws a fixed triangular marker; extend it to pick a shape from a small
-built-in set matching stdlib's `"circle"`/`"square"`/`"triangle"`/
-`"arrow"`/`"classic"`/`"turtle"`, matching `originalMarchingSquares.py`'s
-own `t.shape("circle")` call). Lower engineering risk than Phase 1 —
-mostly `TurtleCanvasViewer.tsx` drawing-primitive work.
+Done. `_TurtleState` gained `shape_name`/`stretch_wid`/`stretch_len`/
+`outline_width`; `stamp()`'s own command snapshots them the same way it
+already snapshots `heading`, and a new `shape` command tracks the
+running "latest shape" state for the final position marker, the same
+pattern `heading`/`pencolor` already used. `TurtleCanvasViewer.tsx`'s
+`drawTurtleMarker` now draws six distinguishable primitives (arrow,
+turtle, circle, square, triangle, classic) instead of one fixed
+triangular marker, with `stretch_wid`/`stretch_len` applied via
+`ctx.scale` after rotating into the turtle's heading (so "along
+heading" vs. "perpendicular" stay correct regardless of facing
+direction) and `outline_width` as the stroke width. See TODO.md #62's
+own entry for full implementation/verification details.
 
 ### Phase 3 — Fill support (`begin_fill`/`end_fill`/`filling`)
 

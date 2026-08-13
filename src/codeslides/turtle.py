@@ -59,6 +59,17 @@ class _TurtleState:
     # it always has.
     world_coords: tuple[float, float, float, float] | None = None
     background_color: str = "white"
+    # Appearance state (docs/turtle-compatibility-todo.md Phase 2) --
+    # `"classic"` matches real stdlib turtle's own actual default cursor
+    # shape (`_CFG["shape"]`, not the "arrow" a bare `shape()` query
+    # happens to report on a never-configured turtle in some contexts)
+    # and is also what this app's own `TurtleCanvasViewer.tsx` marker
+    # already looked like before shapes existed at all -- so a script
+    # that never calls `shape(...)` renders identically to before.
+    shape_name: str = "classic"
+    stretch_wid: float = 1.0  # perpendicular to heading (real turtle's own term for "width")
+    stretch_len: float = 1.0  # along heading ("length")
+    outline_width: float = 1.0
     commands: list[dict[str, Any]] = field(default_factory=list)
 
     def emit(self, op: str, **kwargs: Any) -> None:
@@ -276,7 +287,17 @@ def dot(size: float | None = None, color_: str | None = None) -> None:
 
 def stamp() -> None:
     state = _state()
-    state.emit("stamp", x=state.x, y=state.y, heading=state.heading, color=state.pen_color)
+    state.emit(
+        "stamp",
+        x=state.x,
+        y=state.y,
+        heading=state.heading,
+        color=state.pen_color,
+        shape=state.shape_name,
+        stretch_wid=state.stretch_wid,
+        stretch_len=state.stretch_len,
+        outline=state.outline_width,
+    )
 
 
 def write(text: str, *, move: bool = False, align: str = "left", font: tuple | None = None) -> None:
@@ -338,6 +359,81 @@ def speed(value: int | str | None = None) -> int | None:
     speeds = {"fastest": 0, "fast": 10, "normal": 6, "slow": 3, "slowest": 1}
     state.speed = speeds.get(value, value) if isinstance(value, str) else value
     return None
+
+
+# -- Appearance (docs/turtle-compatibility-todo.md Phase 2) -----------------
+#
+# `shape`/`shapesize` change how the turtle's own cursor (drawn at its
+# current position/heading, and by `stamp()`) looks -- pure appearance
+# state, same category as `pencolor`/`pensize` above, with no effect on
+# motion. Emitted as a `shape` command (mirroring how `heading`/
+# `pencolor`/`visible` already track state changes into the command
+# stream) so `TurtleCanvasViewer.tsx`'s replay can pick up the latest
+# shape/stretch for both `stamp` and the final "here's where the turtle
+# ended up" marker drawn after replay.
+
+_SHAPE_NAMES = frozenset({"arrow", "turtle", "circle", "square", "triangle", "classic"})
+
+
+def shape(name: str | None = None) -> str | None:
+    """Set/query the turtle's cursor shape. Matches real turtle's own
+    validation: an unknown name raises rather than silently doing
+    nothing -- real turtle validates against `screen.getshapes()`
+    (unsupported here, see `Screen`'s docstring on its event/registry
+    methods), so this validates against the same fixed built-in set
+    every stdlib turtle installation ships with instead."""
+    state = _state()
+    if name is None:
+        return state.shape_name
+    if name not in _SHAPE_NAMES:
+        raise ValueError(f"there is no shape named {name!r} -- expected one of {sorted(_SHAPE_NAMES)}")
+    state.shape_name = name
+    _emit_shape(state)
+    return None
+
+
+def shapesize(
+    stretch_wid: float | None = None, stretch_len: float | None = None, outline: float | None = None
+) -> tuple[float, float, float] | None:
+    """Set/query the turtle's cursor stretch factors and outline width.
+    Mirrors real turtle's own defaulting exactly (verified against the
+    stdlib source): querying with all three args `None` returns the
+    current `(stretch_wid, stretch_len, outline)`; giving only
+    `stretch_wid` stretches both axes uniformly (`stretch_len` defaults
+    to match it); giving only `stretch_len` leaves the existing
+    `stretch_wid` alone; `outline`, if given, is independent of
+    stretching, applied on top of whichever combination of the above."""
+    state = _state()
+    if stretch_wid is None and stretch_len is None and outline is None:
+        return (state.stretch_wid, state.stretch_len, state.outline_width)
+    if stretch_wid == 0 or stretch_len == 0:
+        raise ValueError("stretch_wid/stretch_len must not be zero")
+    if stretch_wid is not None:
+        state.stretch_wid = stretch_wid
+        state.stretch_len = stretch_len if stretch_len is not None else stretch_wid
+    elif stretch_len is not None:
+        state.stretch_len = stretch_len
+    if outline is not None:
+        state.outline_width = outline
+    _emit_shape(state)
+    return None
+
+
+def _emit_shape(state: _TurtleState) -> None:
+    """Shared by `shape`/`shapesize`: always emits the *complete*
+    current appearance state (name + both stretch factors + outline),
+    never just whichever field one particular call changed -- so the
+    frontend replay can take the latest `shape` command's fields
+    wholesale for both `stamp` and the final position marker, instead
+    of needing to merge partial updates across multiple commands the
+    way it already has to avoid for `heading`/`pencolor`."""
+    state.emit(
+        "shape",
+        name=state.shape_name,
+        stretch_wid=state.stretch_wid,
+        stretch_len=state.stretch_len,
+        outline=state.outline_width,
+    )
 
 
 # -- Screen (docs/turtle-compatibility-todo.md Phase 1) ---------------------
@@ -624,6 +720,8 @@ class Turtle:
     showturtle = st = staticmethod(showturtle)
     isvisible = staticmethod(isvisible)
     speed = staticmethod(speed)
+    shape = staticmethod(shape)
+    shapesize = staticmethod(shapesize)
     position = pos = staticmethod(position)
     xcor = staticmethod(xcor)
     ycor = staticmethod(ycor)

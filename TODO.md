@@ -3053,9 +3053,73 @@ reshape the plan below and are called out explicitly where they apply:
   `ARCHITECTURE.md` section 7 updated to document `Screen`, frontend
   bundle rebuilt and committed.
 
-  Phases 2-5 (`shape`/`shapesize`, fill support, behavioral-parity
-  fixes, remaining lower-priority `Turtle` methods) are still open --
-  tracked in `docs/turtle-compatibility-todo.md`, not yet started.
+  **Phase 2 implemented (same task, follow-up): `shape()`/`shapesize()`.**
+  `_TurtleState` gained `shape_name` (default `"classic"`, matching real
+  stdlib turtle's own actual default cursor -- not the `"arrow"` a bare
+  query happens to report in some contexts -- and also what this app's
+  marker already looked like before shapes existed, so a script that
+  never calls `shape(...)` renders identically to before),
+  `stretch_wid`/`stretch_len`/`outline_width` (all defaulting to `1.0`).
+  `shape(name)` validates against a fixed built-in set (`arrow`,
+  `turtle`, `circle`, `square`, `triangle`, `classic`) matching every
+  stdlib turtle installation's own built-ins, since `register_shape`/
+  `getshapes` (real turtle's actual validation source) are unsupported
+  (Gap 4) -- raises `ValueError` for an unknown name, same as real
+  turtle raising for one `screen.getshapes()` doesn't recognize.
+  `shapesize(stretch_wid, stretch_len, outline)` mirrors real turtle's
+  own defaulting exactly (verified against the CPython source): a
+  lone `stretch_wid` stretches both axes uniformly, a lone
+  `stretch_len` leaves `stretch_wid` alone, querying with no args
+  returns the current triple.
+
+  Both emit a `shape` command carrying the *complete* current
+  appearance state (never just whichever field one call changed), so
+  the frontend can take the latest one wholesale rather than merging
+  partial updates. `stamp()` additionally snapshots shape/stretch/
+  outline directly into its own command, the same way it already
+  snapshots `heading` -- so a stamp reflects the shape active at the
+  moment it was called even if the shape changes again afterward,
+  before the cell finishes running.
+
+  `TurtleCanvasViewer.tsx`'s `drawTurtleMarker` (previously one fixed
+  triangular marker) now draws six distinguishable primitives per
+  shape name, with `stretch_len`/`stretch_wid` applied via `ctx.scale`
+  after rotating into the turtle's current heading -- so "along
+  heading" vs. "perpendicular" stretch stay correct regardless of
+  which way the turtle currently faces -- and `outline_width` as the
+  stroke width. A running "latest shape" state is tracked in the
+  replay loop the same way `heading` already is, read by the final
+  "here's where the turtle ended up" marker after replay; `stamp`
+  commands use their own inline snapshot instead.
+
+  Verified end-to-end in a real browser: built a scratch deck stamping
+  all six shapes in a row and confirmed each renders as a visually
+  distinct primitive (screenshotted and pixel-zoomed to confirm), and
+  a second deck confirming `shapesize(3, 1, 2)` on a `"square"` shape
+  renders as a tall, narrow stretched rectangle (not a plain square) in
+  the exact color set immediately before the stamp -- distinguished
+  from the turtle's own final-position marker by moving the turtle away
+  after stamping and confirming the stamp's pixel color independently
+  (`(220, 20, 60)`, exactly CSS `crimson`, not the marker's fixed
+  `#2a2a2a`).
+  Also directly re-confirmed `t.shape("circle")` -- the exact line from
+  `examples/originalMarchingSquares.py` this whole document's Gap 1
+  table listed as "missing" -- now works standalone. 11 new backend
+  tests in `tests/test_turtle.py` (default shape/shapesize values;
+  set-and-query round trips; real turtle's own uniform-stretch
+  defaulting; unknown-shape and zero-stretch-factor validation errors;
+  shape state shared correctly between `shape()`/`shapesize()`; a
+  stamp's shape snapshot surviving a later shape change; the `Turtle()`
+  object handle's own methods matching the module-level functions),
+  full suite green (450 passed), ruff/oxlint clean,
+  `docs/turtle-compatibility-todo.md` updated (Gap 1's table, Gap 2's
+  "common enough to prioritize" list, and Phase 2's own section all
+  marked done), frontend bundle rebuilt and committed. Every call in
+  the reference script's setup is now implemented.
+
+  Phases 3-5 (fill support, behavioral-parity fixes, remaining
+  lower-priority `Turtle` methods) are still open -- tracked in
+  `docs/turtle-compatibility-todo.md`, not yet started.
 
 - [ ] **48. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,

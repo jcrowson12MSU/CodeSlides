@@ -227,6 +227,112 @@ def test_two_turtle_objects_share_the_same_underlying_state():
     assert pos_from_t2 == pytest.approx((5, 5))
 
 
+# -- shape()/shapesize() (docs/turtle-compatibility-todo.md Phase 2) --------
+
+
+def test_shape_default_is_classic():
+    with turtle.execution_context():
+        assert turtle.shape() == "classic"
+
+
+def test_shape_sets_and_queries():
+    with turtle.execution_context() as commands:
+        turtle.shape("circle")
+        current = turtle.shape()
+
+    assert current == "circle"
+    assert commands[0] == {
+        "op": "shape",
+        "name": "circle",
+        "stretch_wid": 1.0,
+        "stretch_len": 1.0,
+        "outline": 1.0,
+    }
+
+
+def test_shape_rejects_an_unknown_name():
+    """Real turtle raises for a shape name that's never been registered
+    -- validated here against the same fixed built-in set every stdlib
+    turtle installation ships with (register_shape/getshapes are
+    unsupported, see Gap 4), rather than silently accepting anything."""
+    with turtle.execution_context(), pytest.raises(ValueError, match="not-a-real-shape"):
+        turtle.shape("not-a-real-shape")
+
+
+def test_shapesize_default_is_1_1_1():
+    with turtle.execution_context():
+        assert turtle.shapesize() == (1.0, 1.0, 1.0)
+
+
+def test_shapesize_with_only_stretch_wid_stretches_both_axes_uniformly():
+    """Matches real turtle's own defaulting: stretch_len defaults to
+    match stretch_wid when only stretch_wid is given."""
+    with turtle.execution_context():
+        turtle.shapesize(3)
+        assert turtle.shapesize() == (3, 3, 1.0)
+
+
+def test_shapesize_with_only_stretch_len_leaves_stretch_wid_alone():
+    with turtle.execution_context():
+        turtle.shapesize(stretch_len=5)
+        assert turtle.shapesize() == (1.0, 5, 1.0)
+
+
+def test_shapesize_sets_all_three_independently():
+    with turtle.execution_context() as commands:
+        turtle.shapesize(2, 3, outline=4)
+
+    assert commands[-1] == {
+        "op": "shape",
+        "name": "classic",
+        "stretch_wid": 2,
+        "stretch_len": 3,
+        "outline": 4,
+    }
+
+
+def test_shapesize_rejects_a_zero_stretch_factor():
+    with turtle.execution_context(), pytest.raises(ValueError, match="must not be zero"):
+        turtle.shapesize(0)
+
+
+def test_shape_and_shapesize_share_state_so_shapesize_preserves_the_current_shape_name():
+    with turtle.execution_context() as commands:
+        turtle.shape("square")
+        turtle.shapesize(2)
+
+    assert commands[-1]["name"] == "square"
+    assert commands[-1]["stretch_wid"] == 2
+
+
+def test_stamp_snapshots_the_shape_at_the_moment_its_called():
+    """A stamp must reflect whatever shape/stretch was active when
+    stamp() ran, not whatever the shape happens to be by the time the
+    frontend replays the whole command list -- verified here the same
+    way the existing heading-snapshot behavior already is, by changing
+    the shape again *after* the stamp and confirming the stamp's own
+    command still shows the earlier value."""
+    with turtle.execution_context() as commands:
+        turtle.shape("triangle")
+        turtle.shapesize(2, 2)
+        turtle.stamp()
+        turtle.shape("circle")  # changed again after the stamp
+
+    stamp_cmd = next(c for c in commands if c["op"] == "stamp")
+    assert stamp_cmd["shape"] == "triangle"
+    assert stamp_cmd["stretch_wid"] == 2
+    assert stamp_cmd["stretch_len"] == 2
+
+
+def test_turtle_object_shape_and_shapesize_work_the_same_as_module_functions():
+    t = turtle.Turtle()
+    with turtle.execution_context():
+        t.shape("square")
+        t.shapesize(2, 2, 3)
+        assert t.shape() == "square"
+        assert t.shapesize() == (2, 2, 3)
+
+
 # -- Screen() object handle (docs/turtle-compatibility-todo.md Phase 1) -----
 
 
