@@ -1327,11 +1327,30 @@ def export_source(deck: Deck) -> str:
     `ui.notes(...)`'s content, ARCHITECTURE.md section 3a) -- so "code
     plus notes" falls out for free rather than needing separate
     docstring handling.
+
+    A `hide_def=True` cell (`@app.cell(hide_def=True)`, `Cell.hide_def`)
+    is exported the same shape it's already shown in the browser's own
+    code editor: no `def name(...):` wrapper at all, just its dedented
+    body as plain top-level-looking statements -- reported directly by
+    the user after testing this against `examples/marchingSquares.py`,
+    whose `setup` cell (`import turtle`/`import random`, `hide_def=True`
+    specifically because a parameterless `def setup():` wrapper is pure
+    boilerplate the author never needed to see) was exporting as a
+    function despite never looking like one anywhere else in the app.
+    Mirrors `display_source`'s own `hide_def` handling (dedent everything
+    after the `def` line by one level) without reusing that function
+    outright, since `display_source` also strips the docstring -- wanted
+    here as a viewer concern only (redundant on top of the code editor),
+    not in an export where the docstring/notes are the whole point of
+    keeping.
     """
     parts = []
     for cell in deck.cells.values():
         def_line, body_lines = _split_cell_source(cell.source)
-        parts.append("\n".join([def_line, *body_lines]))
+        if cell.hide_def:
+            parts.append(textwrap.dedent("\n".join(body_lines)))
+        else:
+            parts.append("\n".join([def_line, *body_lines]))
     return "\n\n\n".join(parts) + "\n" if parts else ""
 
 

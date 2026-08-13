@@ -2799,6 +2799,25 @@ reshape the plan below and are called out explicitly where they apply:
   changes -- purely a Save-time backend side effect, nothing to wire up
   in the browser.
 
+  **Follow-up (same task): the user reported a real bug after testing
+  against `examples/marchingSquares.py`.** A `@app.cell(hide_def=True)`
+  cell (that file's `setup`, a parameterless cell whose `def setup():`
+  line is pure boilerplate the browser's own code editor already hides,
+  `Cell.hide_def`'s original purpose) was exporting as an ordinary
+  function anyway -- the export never looked at `hide_def` at all, so it
+  silently gave that cell a wrapper it doesn't have anywhere else in the
+  app. Fixed by mirroring `display_source`'s own `hide_def`
+  handling (dedent the body one level, drop the `def` line) directly
+  inside `export_source`, rather than calling `display_source` itself --
+  that function also strips the docstring, which is wanted in the
+  browser's code editor (redundant next to the notes viewer) but not in
+  an export, where the docstring/notes are the entire point of keeping.
+  One new regression test
+  (`test_export_source_omits_the_def_line_for_a_hide_def_cell`), full
+  suite green (412 passed), ruff clean. Regenerated the stale
+  `examples/marchingSquares_export.py` the user had already produced by
+  hand so it reflects the fix.
+
 - [ ] **60. Fix: the "+ Add cell" button no longer works.**
   Reported as broken -- previously verified working end-to-end in item 21.
   Needs reproduction (likely a regression from a later change touching

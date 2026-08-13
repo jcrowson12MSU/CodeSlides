@@ -932,6 +932,28 @@ def test_export_source_keeps_a_cells_docstring_as_its_notes(deck_file):
     assert '"""Scales base by speed."""' in exported
 
 
+def test_export_source_omits_the_def_line_for_a_hide_def_cell(deck_file):
+    """User report: a `hide_def=True` cell (its `def name(...):` line is
+    pure boilerplate the author never sees/edits in the browser, e.g.
+    examples/marchingSquares.py's parameterless `setup()`) was exporting
+    as an ordinary function anyway -- it should keep the exact same
+    def-less, dedented-body shape the browser's own editor already shows
+    it in, not silently gain a wrapper it never had anywhere else."""
+    source = DECK_SOURCE.replace(
+        "@app.cell\ndef setup():\n    # a comment that must survive untouched\n    base = 5\n"
+        "    return base\n",
+        "@app.cell(hide_def=True)\ndef setup():\n    base = 5\n",
+    )
+    deck_file.write_text(source)
+    deck = load_deck(str(deck_file))
+
+    exported = export_source(deck)
+    assert "def setup():" not in exported
+    assert "base = 5" in exported
+    # the second cell (no hide_def) is untouched, still a real function
+    assert "def live_demo(speed):" in exported
+
+
 def test_export_source_omits_slides_and_app_setup(deck_file):
     deck = load_deck(str(deck_file))
     exported = export_source(deck)
