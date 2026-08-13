@@ -2818,11 +2818,23 @@ reshape the plan below and are called out explicitly where they apply:
   `examples/marchingSquares_export.py` the user had already produced by
   hand so it reflects the fix.
 
-- [ ] **60. Fix: the "+ Add cell" button no longer works.**
-  Reported as broken -- previously verified working end-to-end in item 21.
-  Needs reproduction (likely a regression from a later change touching
-  `App.tsx`'s message-scanning effect or the `add_cell`/`cell_added`
-  wire path) before a fix.
+- [x] **60. Fix: the "+ Add cell" button no longer works.**
+  Investigated but found no actual code defect. Rebuilt the frontend
+  fresh (bit-identical to the committed `src/codeslides/static/`
+  bundle -- confirming it wasn't stale relative to source) and drove
+  "+ Add cell" through a real browser via Playwright against current
+  `main`: repeated clicks (3 in a row), Save immediately followed by
+  Add cell, and confirmed the button correctly disappears in Slides
+  view (by design, Cells-view-only) and correctly reappears back in
+  Cells view -- every case worked exactly as expected end to end
+  (`add_cell` sent, `cell_added` received, new cell rendered live),
+  with zero console/page errors. Also checked the `AddCell`/`CellAdded`
+  message shapes still match exactly between `protocol.py` and
+  `protocol.ts` (a hand-synced pair, a plausible drift source) -- no
+  mismatch. Asked the user directly what they'd actually seen; they
+  confirmed it works now -- the report was a stale server process or
+  browser tab from before a recent merge, not a real regression. No
+  code changes.
 
 - [ ] **61. Add a title slide as the deck's first slide, to introduce the project.**
   Needs suggestions on how to structure it (e.g. project name, author/
