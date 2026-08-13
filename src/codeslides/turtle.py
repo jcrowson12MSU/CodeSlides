@@ -70,6 +70,14 @@ class _TurtleState:
     stretch_wid: float = 1.0  # perpendicular to heading (real turtle's own term for "width")
     stretch_len: float = 1.0  # along heading ("length")
     outline_width: float = 1.0
+    # docs/turtle-compatibility-todo.md Phase 3: whether a
+    # begin_fill()/end_fill() region is currently open. Purely a local
+    # Python-side query flag for `filling()` -- the actual fill-path
+    # (which points bound the filled region) is reconstructed by
+    # `TurtleCanvasViewer.tsx` from the `goto` commands already emitted
+    # between the `begin_fill`/`end_fill` markers, not tracked here, so
+    # this module never needs its own polygon-accumulation logic.
+    filling: bool = False
     commands: list[dict[str, Any]] = field(default_factory=list)
 
     def emit(self, op: str, **kwargs: Any) -> None:
@@ -271,6 +279,49 @@ def pensize(width: float | None = None) -> float | None:
 width = pensize
 
 
+# -- Fill (docs/turtle-compatibility-todo.md Phase 3) ------------------------
+#
+# `begin_fill()`/`end_fill()` bracket a filled-shape's outline: every
+# `goto` (directly, or via `forward`/`circle`/etc., all of which end up
+# calling `_move_to` -> `goto`) between the two calls traces the
+# region's boundary, and `end_fill()` paints the enclosed area in the
+# turtle's current `fillcolor` -- matching real turtle's own semantics
+# exactly (verified against the CPython source: `begin_fill` starts
+# recording `_position` on every subsequent move, `end_fill` fills the
+# accumulated polygon). This module only ever emits `begin_fill`/
+# `end_fill` as markers in the command stream; it never accumulates the
+# polygon's points itself -- `TurtleCanvasViewer.tsx` already replays
+# every `goto` in order, so reconstructing "which points fell between
+# these two markers" there avoids a second, parallel bookkeeping
+# structure on the Python side that would need to stay in sync with the
+# `goto` commands already being emitted for the pen stroke itself.
+
+
+def begin_fill() -> None:
+    """Idempotent, matching real turtle: calling this while already
+    filling doesn't restart the region or emit a second marker (real
+    turtle's own `if not self.filling(): ...` guard)."""
+    state = _state()
+    if state.filling:
+        return
+    state.filling = True
+    state.emit("begin_fill", color=state.fill_color)
+
+
+def end_fill() -> None:
+    """Idempotent, matching real turtle: calling this while not
+    currently filling is a safe no-op, not an error."""
+    state = _state()
+    if not state.filling:
+        return
+    state.filling = False
+    state.emit("end_fill")
+
+
+def filling() -> bool:
+    return _state().filling
+
+
 # -- Drawing marks ----------------------------------------------------------
 
 
@@ -324,6 +375,20 @@ def reset() -> None:
     state.pen_width = fresh.pen_width
     state.visible = fresh.visible
     state.speed = fresh.speed
+    # Stretch/outline reset matches real turtle's own `TPen._reset`
+    # (verified against the CPython source) -- a real, pre-existing gap
+    # caught while touching this function again for Phase 3: shapesize
+    # (Phase 2) added these fields but never wired them into reset().
+    # `shape_name` itself is deliberately NOT reset here, matching real
+    # turtle: shape lives on a separate object (`self.turtle`) `_reset`
+    # never touches.
+    state.stretch_wid = fresh.stretch_wid
+    state.stretch_len = fresh.stretch_len
+    state.outline_width = fresh.outline_width
+    # An in-progress fill is aborted by a reset, matching real turtle's
+    # own `_clear()` (`self._fillitem = self._fillpath = None`) --
+    # verified against the CPython source.
+    state.filling = fresh.filling
     state.emit("clear")
 
 
@@ -711,6 +776,9 @@ class Turtle:
     fillcolor = staticmethod(fillcolor)
     color = staticmethod(color)
     pensize = width = staticmethod(pensize)
+    begin_fill = staticmethod(begin_fill)
+    end_fill = staticmethod(end_fill)
+    filling = staticmethod(filling)
     dot = staticmethod(dot)
     stamp = staticmethod(stamp)
     write = staticmethod(write)

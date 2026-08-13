@@ -333,6 +333,126 @@ def test_turtle_object_shape_and_shapesize_work_the_same_as_module_functions():
         assert t.shapesize() == (2, 2, 3)
 
 
+def test_reset_restores_stretch_and_outline_to_defaults():
+    """Real turtle's own TPen._reset resets stretch/outline (verified
+    against the CPython source) -- a real gap caught while touching
+    reset() again for Phase 3: shapesize (Phase 2) added these fields
+    but never wired them into reset()."""
+    with turtle.execution_context():
+        turtle.shapesize(3, 4, 5)
+        turtle.reset()
+        assert turtle.shapesize() == (1.0, 1.0, 1.0)
+
+
+def test_reset_does_not_touch_the_shape_name():
+    """Also verified against the CPython source: shape lives on a
+    separate object real turtle's own _reset() never touches, unlike
+    stretch/outline -- reset() must not revert an explicitly-set shape
+    back to the default."""
+    with turtle.execution_context():
+        turtle.shape("circle")
+        turtle.reset()
+        assert turtle.shape() == "circle"
+
+
+# -- begin_fill()/end_fill()/filling() (docs/turtle-compatibility-todo.md Phase 3) --
+
+
+def test_filling_defaults_to_false():
+    with turtle.execution_context():
+        assert turtle.filling() is False
+
+
+def test_begin_fill_sets_filling_true():
+    with turtle.execution_context():
+        turtle.begin_fill()
+        assert turtle.filling() is True
+
+
+def test_end_fill_sets_filling_false():
+    with turtle.execution_context():
+        turtle.begin_fill()
+        turtle.end_fill()
+        assert turtle.filling() is False
+
+
+def test_begin_fill_emits_a_command_carrying_the_current_fill_color():
+    with turtle.execution_context() as commands:
+        turtle.fillcolor("gold")
+        turtle.begin_fill()
+
+    assert commands[-1] == {"op": "begin_fill", "color": "gold"}
+
+
+def test_end_fill_emits_a_bare_command():
+    with turtle.execution_context() as commands:
+        turtle.begin_fill()
+        turtle.end_fill()
+
+    assert commands[-1] == {"op": "end_fill"}
+
+
+def test_begin_fill_is_idempotent():
+    """Matches real turtle: calling begin_fill() while already filling
+    doesn't emit a second marker (verified against the CPython source's
+    own `if not self.filling(): ...` guard)."""
+    with turtle.execution_context() as commands:
+        turtle.begin_fill()
+        turtle.begin_fill()
+
+    assert sum(1 for c in commands if c["op"] == "begin_fill") == 1
+
+
+def test_end_fill_is_idempotent():
+    """Matches real turtle: calling end_fill() while not filling is a
+    safe no-op, not an error, and never emits a spurious marker."""
+    with turtle.execution_context() as commands:
+        turtle.end_fill()
+        assert commands == []
+
+        turtle.begin_fill()
+        turtle.end_fill()
+        turtle.end_fill()
+
+    assert sum(1 for c in commands if c["op"] == "end_fill") == 1
+
+
+def test_goto_calls_between_begin_and_end_fill_still_emit_normal_goto_commands():
+    """begin_fill/end_fill are pure markers -- the actual boundary
+    points are reconstructed by the frontend from the ordinary `goto`
+    commands already emitted for the pen stroke itself, so this module
+    must not suppress or alter them while filling is active."""
+    with turtle.execution_context() as commands:
+        turtle.begin_fill()
+        turtle.goto(10, 0)
+        turtle.goto(10, 10)
+        turtle.end_fill()
+
+    goto_commands = [c for c in commands if c["op"] == "goto"]
+    assert len(goto_commands) == 2
+    assert goto_commands[0]["x"] == pytest.approx(10)
+    assert goto_commands[1]["y"] == pytest.approx(10)
+
+
+def test_reset_aborts_an_in_progress_fill():
+    """Matches real turtle's own _clear() (`self._fillitem =
+    self._fillpath = None`, verified against the CPython source) --
+    reset() must abort filling, not leave it dangling true."""
+    with turtle.execution_context():
+        turtle.begin_fill()
+        turtle.reset()
+        assert turtle.filling() is False
+
+
+def test_turtle_object_fill_methods_work_the_same_as_module_functions():
+    t = turtle.Turtle()
+    with turtle.execution_context():
+        t.begin_fill()
+        assert t.filling() is True
+        t.end_fill()
+        assert t.filling() is False
+
+
 # -- Screen() object handle (docs/turtle-compatibility-todo.md Phase 1) -----
 
 

@@ -99,11 +99,9 @@ in ordinary teaching code:
 - ~~`shape(name)`~~ / ~~`shapesize(stretch_wid, stretch_len, outline)`~~
   — **implemented, Phase 2.** Used in the reference script; one of the
   first things any turtle tutorial covers.
-- `begin_fill()` / `end_fill()` / `filling()` — filled-shape drawing
-  (draw a polygon outline, then fill it). This is standard-curriculum
-  turtle content (stars, flowers, filled polygons) and a real, common
-  gap — `fillcolor()` already exists but does nothing without
-  `begin_fill`/`end_fill` bracketing a path.
+- ~~`begin_fill()`~~ / ~~`end_fill()`~~ / ~~`filling()`~~ — **implemented,
+  Phase 3.** Standard-curriculum turtle content (stars, flowers, filled
+  polygons).
 - `distance(x, y=None)` / `towards(x, y=None)` — common in slightly
   more advanced lessons (chasing/following behavior, distance-based
   logic).
@@ -251,14 +249,33 @@ heading" vs. "perpendicular" stay correct regardless of facing
 direction) and `outline_width` as the stroke width. See TODO.md #62's
 own entry for full implementation/verification details.
 
-### Phase 3 — Fill support (`begin_fill`/`end_fill`/`filling`)
+### Phase 3 — Fill support (`begin_fill`/`end_fill`/`filling`) — **implemented**
 
-Needs a new command shape (`begin_fill`/`end_fill` markers in the
-command stream, since a filled region's boundary is whatever `goto`
-calls happen between them) and `TurtleCanvasViewer.tsx` support for
-`ctx.beginPath()`/`ctx.fill()` bracketing instead of just stroking each
-segment independently. Real, common-curriculum functionality (Gap 2) —
-prioritize above the "less common" Gap 2 items.
+Done. `begin_fill`/`end_fill` are pure markers in the command stream
+(plus a `filling: bool` field on `_TurtleState` for the `filling()`
+query) — this module never accumulates the polygon's points itself;
+`TurtleCanvasViewer.tsx` reconstructs the filled region's boundary from
+the ordinary `goto` commands already emitted between the two markers
+(whether from a direct `goto` call or from `forward`/`circle`/etc.,
+all of which already funnel through `_move_to` -> `goto`), avoiding a
+second, parallel bookkeeping structure that would need to stay in sync
+with the pen-stroke commands. `end_fill` closes and fills the
+accumulated polygon in whichever `fillcolor` was active when
+`begin_fill` itself was called (snapshotted onto the `begin_fill`
+command, the same per-command-snapshot pattern `stamp`'s `heading`/
+`shape` already use). Both are idempotent, matching real turtle
+exactly (verified against the CPython source): a second `begin_fill()`
+while already filling doesn't restart the region or emit a duplicate
+marker, and `end_fill()` while not filling is a safe no-op.
+
+Also fixed two real, related gaps caught while touching `reset()`
+again for this phase: it never reset Phase 2's `stretch_wid`/
+`stretch_len`/`outline_width` (real turtle's own `TPen._reset` does,
+verified against the CPython source) or aborted an in-progress fill
+(real turtle's `_clear()` sets `_fillitem = _fillpath = None`) — both
+now fixed, while confirming `reset()` correctly still leaves the shape
+*name* itself alone (real turtle's own `_reset` never touches it
+either, it lives on a separate object).
 
 ### Phase 4 — Behavioral-parity fixes (Gap 3)
 

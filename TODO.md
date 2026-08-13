@@ -3117,8 +3117,62 @@ reshape the plan below and are called out explicitly where they apply:
   marked done), frontend bundle rebuilt and committed. Every call in
   the reference script's setup is now implemented.
 
-  Phases 3-5 (fill support, behavioral-parity fixes, remaining
-  lower-priority `Turtle` methods) are still open -- tracked in
+  **Phase 3 implemented (same task, follow-up): fill support
+  (`begin_fill`/`end_fill`/`filling`).** `_TurtleState` gained
+  `filling: bool` (query-only -- the actual fill-path polygon is
+  reconstructed entirely on the frontend from the ordinary `goto`
+  commands already emitted between the two markers, whether from a
+  direct call or `forward`/`circle`/etc., all of which already funnel
+  through `_move_to` -> `goto` -- no second, parallel bookkeeping
+  structure on the Python side). `begin_fill()` emits a command
+  snapshotting the current `fillcolor` (same per-command-snapshot
+  pattern `stamp`'s `heading`/`shape` fields already use); `end_fill()`
+  emits a bare marker. Both are idempotent, matching real turtle
+  exactly (verified against the CPython source): a second
+  `begin_fill()` while already filling is a no-op, `end_fill()` while
+  not filling is a safe no-op, neither ever emits a duplicate/spurious
+  command.
+
+  `TurtleCanvasViewer.tsx`'s replay loop tracks a `fillPath` array
+  (`null` while not filling): `begin_fill` seeds it with the turtle's
+  current canvas position (matching real turtle's own `_fillpath =
+  [self._position]`), every subsequent `goto` while filling pushes its
+  endpoint, and `end_fill` closes and fills the accumulated polygon in
+  whichever color `begin_fill` snapshotted, then clears back to `null`.
+  `clear` also aborts an in-progress fill, matching real turtle's own
+  `_clear()`.
+
+  Found and fixed two real, related gaps while touching `reset()`
+  again for this phase, not just adding fill on top: it never reset
+  Phase 2's `stretch_wid`/`stretch_len`/`outline_width` back to
+  defaults (real turtle's own `TPen._reset` does this, verified against
+  the CPython source -- shapesize's own fields were simply never wired
+  into `reset()` when Phase 2 added them) and never aborted an
+  in-progress fill either (real turtle's `_clear()` explicitly does).
+  Both fixed, while confirming by the same source-reading that `shape`
+  itself must NOT reset (real turtle's own `_reset` never touches it --
+  it lives on a separate object) -- added a regression test for that
+  specific "must NOT reset" case too, not just the two "must reset"
+  fixes, so a future change can't silently break either direction.
+
+  Verified end-to-end in a real browser: a filled five-pointed star
+  (straight-line `goto` path, gold fill with black outline), a filled
+  circle (`circle()`'s internal arc-approximation `goto` steps, proving
+  fill isn't special-cased to only work with direct `goto` calls), and
+  an ordinary unfilled square on a third canvas in the same deck to
+  confirm normal drawing is completely unaffected -- all screenshotted
+  and visually confirmed correct, zero page errors. 12 new backend
+  tests in `tests/test_turtle.py` (default/set/query `filling()`;
+  `begin_fill`/`end_fill` command shapes and idempotence; `goto` calls
+  between the markers still emit normally; `reset()`'s new
+  stretch/outline restoration and fill-abort behavior; `reset()`
+  correctly leaving `shape` alone; the `Turtle()` object handle's own
+  fill methods), full suite green (462 passed), ruff/oxlint clean,
+  `docs/turtle-compatibility-todo.md` updated (Gap 2's list and Phase
+  3's own section marked done), frontend bundle rebuilt and committed.
+
+  Phases 4-5 (behavioral-parity fixes, remaining lower-priority
+  `Turtle` methods) are still open -- tracked in
   `docs/turtle-compatibility-todo.md`, not yet started.
 
 - [ ] **48. Polish, README, and packaging**

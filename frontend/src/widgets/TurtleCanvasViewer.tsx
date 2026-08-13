@@ -41,6 +41,12 @@ interface TurtleCommand {
   stretch_wid?: number
   stretch_len?: number
   outline?: number
+  // begin_fill()/end_fill() (docs/turtle-compatibility-todo.md Phase
+  // 3): `{op: "begin_fill", color}` reuses this same `color` field
+  // (already meaningful on goto/dot/stamp) to snapshot the fill color
+  // at the moment filling started, matching every other per-command
+  // color snapshot on this interface -- `end_fill` carries no fields
+  // of its own, it's purely a boundary marker.
 }
 
 export interface TurtleCanvasViewerProps {
@@ -129,6 +135,17 @@ export function TurtleCanvasViewer({ elementId, content, width, height }: Turtle
     let stretchWid = 1
     let stretchLen = 1
     let outlineWidth = 1
+    // begin_fill()/end_fill() (docs/turtle-compatibility-todo.md Phase
+    // 3): `fillPath` is `null` while not filling; `begin_fill` seeds it
+    // with the turtle's current canvas position (matching real
+    // turtle's own `_fillpath = [self._position]`) and every
+    // subsequent `goto` -- whether from a direct call or from
+    // `forward`/`circle`/etc., all of which already emit `goto` -- adds
+    // its endpoint. `end_fill` closes and fills the accumulated
+    // polygon in whichever color `begin_fill` itself snapshotted, then
+    // clears `fillPath` back to `null`.
+    let fillPath: [number, number][] | null = null
+    let fillColor = 'black'
 
     for (const cmd of commands) {
       switch (cmd.op) {
@@ -145,8 +162,24 @@ export function TurtleCanvasViewer({ elementId, content, width, height }: Turtle
           }
           cx = cmd.x ?? cx
           cy = cmd.y ?? cy
+          fillPath?.push([tx, ty])
           break
         }
+        case 'begin_fill':
+          fillColor = cmd.color ?? fillColor
+          fillPath = [toCanvas(cx, cy)]
+          break
+        case 'end_fill':
+          if (fillPath && fillPath.length > 2) {
+            ctx.fillStyle = fillColor
+            ctx.beginPath()
+            ctx.moveTo(fillPath[0][0], fillPath[0][1])
+            for (const [px, py] of fillPath.slice(1)) ctx.lineTo(px, py)
+            ctx.closePath()
+            ctx.fill()
+          }
+          fillPath = null
+          break
         case 'heading':
           heading = cmd.heading ?? heading
           break
@@ -190,6 +223,11 @@ export function TurtleCanvasViewer({ elementId, content, width, height }: Turtle
           }
           cx = 0
           cy = 0
+          // Matches turtle.py's own reset()/clear() -- an in-progress
+          // fill is aborted, not carried across a clear (real turtle's
+          // `_clear()` does the same: `self._fillitem = self._fillpath
+          // = None`).
+          fillPath = null
           break
         default:
           // pen/pencolor/fillcolor/pensize/visible/setworldcoordinates/
