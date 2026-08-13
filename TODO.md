@@ -3333,6 +3333,26 @@ reshape the plan below and are called out explicitly where they apply:
   `docs/turtle-compatibility-todo.md`'s new section is now the
   authoritative "what's actually left" reference, not this entry.
 
+  **Follow-up (same task): both audit-found bugs fixed.** `circle()`
+  now matches real turtle's algorithm exactly (a leading/trailing
+  half-step rotation around the chord loop, verified against the
+  CPython source and re-confirmed numerically to floating-point
+  precision against real turtle's own documented examples --
+  `circle(120, 180)` now correctly ends at `(0, 240)`, not the old
+  `(10.47, 199.73)`). `hideturtle()` now actually hides the final
+  position marker in the rendered canvas (`TurtleCanvasViewer.tsx`
+  gained a running `visible` state variable gating that one draw call
+  -- deliberately not gating `stamp()`, matching real turtle's own
+  behavior there). Both re-verified in a real browser (a semicircle
+  renders with a clean, correct curve; a hidden-then-drawn star shows
+  no marker while the same star with no `hideturtle()` call still
+  does). 4 new backend tests for `circle()`'s non-360°/negative-radius
+  cases the original single test never covered; full suite green (488
+  passed); ruff/oxlint clean; `docs/turtle-compatibility-todo.md`'s
+  "Remaining work" section updated in place to mark both bugs fixed
+  rather than rewritten, so the original finding stays intact as a
+  record of how they were caught.
+
 - [ ] **48. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local

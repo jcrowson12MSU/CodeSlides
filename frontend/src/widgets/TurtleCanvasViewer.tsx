@@ -47,6 +47,13 @@ interface TurtleCommand {
   // at the moment filling started, matching every other per-command
   // color snapshot on this interface -- `end_fill` carries no fields
   // of its own, it's purely a boundary marker.
+  //
+  // hideturtle()/showturtle() (docs/turtle-compatibility-todo.md's
+  // "Remaining work" section, post-Phase-5 bugfix): turtle.py has
+  // always emitted this correctly -- this field was simply never read
+  // here until now (a real, previously-uncaught bug: the final
+  // position marker below drew unconditionally regardless of it).
+  visible?: boolean
 }
 
 export interface TurtleCanvasViewerProps {
@@ -123,6 +130,15 @@ export function TurtleCanvasViewer({ elementId, content, width, height }: Turtle
     let cx = 0
     let cy = 0
     let heading = 0
+    // hideturtle()/showturtle() (post-Phase-5 bugfix, docs/turtle-
+    // compatibility-todo.md's "Remaining work" section): tracked the
+    // same running-state way `heading`/`shapeName` already are, read
+    // only by the final position marker below -- real turtle's own
+    // `stamp()` is unconditional regardless of visibility (verified
+    // against the CPython source: hiding the cursor hides the live
+    // turtle icon, not anything explicitly stamped), so `stamp` below
+    // deliberately does NOT check this.
+    let visible = true
     // shape()/shapesize() (docs/turtle-compatibility-todo.md Phase 2):
     // tracked the same way `heading` already is above -- a running
     // "latest value" updated by its own command type, read by whatever
@@ -183,6 +199,9 @@ export function TurtleCanvasViewer({ elementId, content, width, height }: Turtle
         case 'heading':
           heading = cmd.heading ?? heading
           break
+        case 'visible':
+          visible = cmd.visible ?? visible
+          break
         case 'shape':
           shapeName = cmd.name ?? shapeName
           stretchWid = cmd.stretch_wid ?? stretchWid
@@ -230,11 +249,14 @@ export function TurtleCanvasViewer({ elementId, content, width, height }: Turtle
           fillPath = null
           break
         default:
-          // pen/pencolor/fillcolor/pensize/visible/setworldcoordinates/
-          // bgcolor only affect state that either already gets applied
-          // up front (worldCoords/backgroundColor above) or that future
+          // pen/pencolor/fillcolor/pensize/setworldcoordinates/bgcolor
+          // only affect state that either already gets applied up
+          // front (worldCoords/backgroundColor above) or that future
           // goto/dot commands already carry inline (color, width,
           // pen_down) -- nothing to draw for these on their own here.
+          // (`visible` used to be lumped in with this list too -- it
+          // isn't: it has its own `case` above now, since nothing
+          // downstream carries it inline the way color/width are.)
           break
       }
     }
@@ -242,14 +264,19 @@ export function TurtleCanvasViewer({ elementId, content, width, height }: Turtle
     // Draw the turtle's current position/heading/shape as a small
     // marker, like the real turtle module's default cursor, so
     // students can see where it ended up even on a cell that only
-    // moves without drawing.
-    const [hx, hy] = toCanvas(cx, cy)
-    drawTurtleMarker(ctx, hx, hy, heading, '#2a2a2a', {
-      shape: shapeName,
-      stretchWid,
-      stretchLen,
-      outlineWidth,
-    })
+    // moves without drawing -- unless hideturtle() was the last
+    // visibility call (post-Phase-5 bugfix: this used to draw
+    // unconditionally, so hideturtle() had no observable effect on
+    // the rendered picture at all).
+    if (visible) {
+      const [hx, hy] = toCanvas(cx, cy)
+      drawTurtleMarker(ctx, hx, hy, heading, '#2a2a2a', {
+        shape: shapeName,
+        stretchWid,
+        stretchLen,
+        outlineWidth,
+      })
+    }
   }, [content, width, height])
 
   return (

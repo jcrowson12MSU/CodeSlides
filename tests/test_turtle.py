@@ -101,6 +101,55 @@ def test_circle_returns_to_a_point_close_to_start_after_full_circle():
     assert end == pytest.approx(start, abs=1.0)
 
 
+def test_circle_semicircle_ends_at_the_stdlib_docstrings_own_example():
+    """Regression test for a real bug found by a post-Phase-5 audit
+    (docs/turtle-compatibility-todo.md's "Remaining work" section): an
+    earlier version of circle() had no leading/trailing half-step
+    rotation (real turtle rotates by half a step-angle before the
+    first chord and unwinds it after the last, verified against the
+    CPython source, so the chord polygon is centered on the true arc)
+    -- invisible for a *full* circle (both endpoints coincide with the
+    start regardless), which is exactly why the test above alone never
+    caught it. Reproduces real turtle's own documented
+    `circle(120, 180)` docstring example exactly (semicircle from the
+    origin facing east ends at (0, 2*radius))."""
+    with turtle.execution_context():
+        turtle.circle(120, 180)
+        end = turtle.position()
+
+    assert end == pytest.approx((0, 240), abs=1e-6)
+
+
+def test_circle_quarter_arc_ends_at_the_expected_position():
+    with turtle.execution_context():
+        turtle.circle(100, 90)
+        end = turtle.position()
+
+    assert end == pytest.approx((100, 100), abs=1e-6)
+
+
+def test_circle_changes_heading_by_the_full_extent():
+    with turtle.execution_context():
+        turtle.circle(100, 180)
+        h = turtle.heading()
+
+    assert h == pytest.approx(180)
+
+
+def test_circle_with_negative_radius_curves_clockwise():
+    """Real turtle: positive radius curves counterclockwise, negative
+    radius curves clockwise (verified against the CPython source's own
+    docstring) -- a quarter-turn clockwise from due east ends pointing
+    south, at (radius, -radius)."""
+    with turtle.execution_context():
+        turtle.circle(-50, 90)
+        end = turtle.position()
+        h = turtle.heading()
+
+    assert end == pytest.approx((50, -50), abs=1e-6)
+    assert h == pytest.approx(270)
+
+
 def test_clear_emits_clear_command():
     with turtle.execution_context() as commands:
         turtle.forward(10)

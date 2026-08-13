@@ -486,60 +486,81 @@ place *during* Phases 1–5's own work without ever being logged. Two
 real bugs turned up doing this, plus a longer tail of unimplemented
 stdlib surface area the original analysis simply never enumerated.
 
-### Confirmed bugs (not stubs, not scope gaps — silently wrong output)
+**Update (2026-08-13):** both confirmed bugs below are now fixed —
+see each one's own entry for the fix and its verification. The
+"stdlib surface area never entered into the Gap 1–4 analysis" and
+"still-open items" sections further down remain open.
 
-**1. `circle(radius, extent)` draws to the wrong final position for
-any arc that isn't a full 360° circle.** `src/codeslides/turtle.py`'s
-`circle()` (implemented well before Phase 1, untouched since) does a
-plain `forward(step_length); left(step_angle)` loop with no leading or
-trailing half-step. Real stdlib `turtle.circle()` (verified directly
-against the CPython 3.13 source) rotates the turtle by *half* a
-step-angle before the first chord and unwinds it by the same amount
+### Confirmed bugs (not stubs, not scope gaps — silently wrong output) — both fixed
+
+**1. `circle(radius, extent)` drew to the wrong final position for any
+arc that isn't a full 360° circle — fixed.** `src/codeslides/turtle.py`'s
+`circle()` (implemented well before Phase 1, untouched until this fix)
+did a plain `forward(step_length); left(step_angle)` loop with no
+leading or trailing half-step. Real stdlib `turtle.circle()` (verified
+directly against the CPython 3.13 source) rotates the turtle by *half*
+a step-angle before the first chord and unwinds it by the same amount
 after the last chord, so the polygon approximating the arc is centered
 on the true arc rather than uniformly rotated off of it. Verified
-numerically here (not just by reading the two algorithms side by
-side): `circle(100, 180)` — the exact semicircle example from stdlib's
-own docstring, starting at the origin facing east — ends at `(0, 200)`
-in real turtle; this shim's implementation ends at `(10.47, 199.73)`.
-`circle(100, 90)` ends at `(100, 100)` in real turtle vs. `(105.1,
-94.6)` here. The bug is invisible for a *full* circle (`extent=360`,
-the only case this repo's own test,
+numerically before the fix (not just by reading the two algorithms
+side by side): `circle(100, 180)` — the exact semicircle example from
+stdlib's own docstring, starting at the origin facing east — ends at
+`(0, 200)` in real turtle; the shim's old implementation ended at
+`(10.47, 199.73)`. `circle(100, 90)` ends at `(100, 100)` in real
+turtle vs. `(105.1, 94.6)` in the old implementation. The bug was
+invisible for a *full* circle (`extent=360`, the only case this repo's
+original test,
 `test_circle_returns_to_a_point_close_to_start_after_full_circle`,
-actually exercises) because both endpoints coincide with the start
-point regardless of the rotational offset — which is exactly why nine
-tests and five phases' worth of manual browser verification never
-caught it. Any lesson drawing an arc, a rounded shape, or a pie/fan
-slice (all common, non-exotic teaching content — more common than
-several things Phases 2–5 *did* prioritize) will silently draw a
-visibly wrong picture with no error. The shim's own docstring
-currently claims "same strategy the real turtle module uses
-internally," which this finding shows is not accurate.
+exercised) because both endpoints coincide with the start point
+regardless of the rotational offset — which is exactly why nine tests
+and five phases' worth of manual browser verification never caught it.
 
-**2. `hideturtle()`/`showturtle()`/`visible` have zero effect on
-rendered output — worse than an unimplemented stub, because the
-frontend's own code comment asserts this is fine.**
-`src/codeslides/turtle.py`'s `hideturtle`/`showturtle`/`isvisible`
-(implemented before Phase 1) correctly track state and emit a
-`{"op": "visible", "visible": ...}` command — confirmed by hand,
-`turtle.hideturtle()` really does produce that command. But
-`frontend/src/widgets/TurtleCanvasViewer.tsx`'s replay loop never
-reads it: the string `"visible"` appears exactly once in that entire
-file, inside a comment lumping it in with `pencolor`/`fillcolor`/
-`pensize`/`pen` as "state that's already handled elsewhere" — true for
-those (verified: `goto`/`dot`/`stamp`/`begin_fill` all snapshot the
-relevant color/width value inline at the moment they're emitted), but
-false for `visible`, which has no running state variable anywhere in
-the file and no check anywhere the final "here's where the turtle
-ended up" marker gets drawn (`TurtleCanvasViewer.tsx`'s unconditional
-`drawTurtleMarker(...)` call at the very end of the replay). Net
-effect, confirmed against a real cell: a script that calls
+Fixed by adding the same leading/trailing half-step rotation real
+turtle uses (`left(half_step)` before the loop, `left(-half_step)`
+after), matching the CPython algorithm exactly including the
+negative-radius (clockwise) sign-flip case. Re-verified numerically
+against real turtle's exact documented results (`circle(120, 180)`
+now ends at `(0, 240)`, `circle(100, 90)` now ends at `(100, 100)`,
+both to floating-point precision) and in a real browser (a
+`circle(120, 180)` cell now renders a visually clean, correctly-curved
+semicircle). 4 new regression tests in `tests/test_turtle.py`
+(`test_circle_semicircle_ends_at_the_stdlib_docstrings_own_example`,
+`test_circle_quarter_arc_ends_at_the_expected_position`,
+`test_circle_changes_heading_by_the_full_extent`,
+`test_circle_with_negative_radius_curves_clockwise`) specifically
+target the non-360°/negative-radius cases the original single test
+never covered.
+
+**2. `hideturtle()`/`showturtle()`/`visible` had zero effect on
+rendered output — fixed.** `src/codeslides/turtle.py`'s
+`hideturtle`/`showturtle`/`isvisible` (implemented before Phase 1)
+correctly tracked state and emitted a `{"op": "visible", "visible":
+...}` command — confirmed by hand, `turtle.hideturtle()` really did
+produce that command. But `frontend/src/widgets/TurtleCanvasViewer.tsx`'s
+replay loop never read it: the string `"visible"` appeared exactly
+once in that entire file, inside a comment lumping it in with
+`pencolor`/`fillcolor`/`pensize`/`pen` as "state that's already
+handled elsewhere" — true for those (verified: `goto`/`dot`/`stamp`/
+`begin_fill` all snapshot the relevant color/width value inline at the
+moment they're emitted), but false for `visible`, which had no
+running state variable anywhere in the file and no check anywhere the
+final "here's where the turtle ended up" marker got drawn. Net effect,
+confirmed against a real cell before the fix: a script calling
 `turtle.hideturtle()` — a completely ordinary thing to do, e.g. to
 draw a picture with the cursor arrow/marker itself hidden from the
-final result — will still see the marker rendered anyway, silently,
-every time, since nothing in the render path ever branches on
-visibility. No test exists that would catch this (the one visibility
-test, `test_hideturtle_showturtle_toggle_visibility`, only checks
-`isvisible()`'s Python-side return value, never the rendered output).
+final result — still saw the marker rendered anyway, silently, every
+time.
+
+Fixed by adding a running `visible` state variable (tracked the same
+way `heading`/`shapeName` already are) and gating the final position
+marker's draw call on it. Deliberately does NOT gate `stamp()` on
+visibility, matching real turtle's own behavior (verified against the
+CPython source: hiding the cursor hides the live turtle icon, not
+anything explicitly stamped — a hidden turtle can still `stamp()`
+visibly). Re-verified in a real browser: a star drawn then
+`hideturtle()`-ed now shows no cursor marker at all, while the same
+star with no `hideturtle()` call still shows the marker as before,
+confirming the default (visible) path is unaffected.
 
 Both bugs were found by an audit pass specifically constructed to
 independently re-verify the "all done" claim rather than trust it —

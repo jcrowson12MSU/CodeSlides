@@ -190,15 +190,34 @@ def home() -> None:
 
 
 def circle(radius: float, extent: float = 360, steps: int | None = None) -> None:
-    """Approximate a circle/arc as a series of short line segments, same
-    strategy the real turtle module uses internally."""
+    """Approximate a circle/arc as a series of short line segments.
+
+    Matches real turtle's own algorithm exactly (verified against the
+    CPython source), including a detail an earlier version of this
+    function got wrong: real turtle rotates by *half* a step-angle
+    before the first chord and unwinds it by the same half-step after
+    the last chord, so the chord polygon is centered on the true arc
+    rather than uniformly rotated off of it. Without that leading/
+    trailing half-rotation, the two endpoints of a full 360-degree
+    circle still coincide (so that case looked fine), but any partial
+    arc (a semicircle, a pie slice, ...) landed at a visibly wrong
+    final position -- caught by hand, not by any existing test: a
+    reproduction of stdlib's own documented `circle(120, 180)`
+    docstring example (a semicircle starting at the origin facing
+    east) showed a real, measurable divergence from real turtle's
+    documented result."""
     state = _state()
     steps = steps or max(int(abs(extent) / 6), 6)
     step_angle = extent / steps
-    step_length = 2 * radius * math.sin(math.radians(step_angle) / 2) * (1 if radius >= 0 else -1)
+    half_step = step_angle / 2
+    step_length = 2 * radius * math.sin(math.radians(half_step))
+    if radius < 0:
+        step_length, step_angle, half_step = -step_length, -step_angle, -half_step
+    left(half_step)
     for _ in range(steps):
         forward(step_length)
         left(step_angle)
+    left(-half_step)
     _ = state  # state mutated via forward/left above
 
 
