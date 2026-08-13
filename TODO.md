@@ -2745,14 +2745,59 @@ reshape the plan below and are called out explicitly where they apply:
   unaffected (352 passed, 2 skipped), as expected for a one-line
   frontend-only change.
 
-- [ ] **59. When Save is clicked, also export every cell's code + notes as a plain, separate `.py` file.**
-  Alongside the existing deck-file save, write a second file containing
-  just each cell's docstring/notes and code -- no `@app.cell`/`@app.slide`
-  decorators, elements, or CodeSlides-specific scaffolding -- so the
-  lesson content can be handed to a student or run standalone as normal
-  Python. Needs a decision on naming/location (e.g. `<deck>_export.py`
-  next to the deck file) and on cell ordering (deck/file order, vs. some
-  other order) before implementing.
+- [x] **59. When Save is clicked, also export every cell's code + notes as a plain, separate `.py` file.**
+  Confirmed with the user: written to `<deck>_export.py` next to the
+  deck file (e.g. `lesson.py` -> `lesson_export.py`), cells in deck/file
+  order (not slide order, since a cell can be on several slides or none
+  -- no single well-defined slide-order placement for every cell).
+
+  `serialization.py` gained `export_source(deck) -> str` and
+  `write_export(deck_path, deck) -> str`. Reused `_split_cell_source`
+  (already existed for `rename_cell`/`add_element`'s decorator-stripping)
+  rather than writing new AST-walking logic: it splits a cell's full
+  source into its `def` line and body, discarding the decorator -- since
+  a cell's docstring is already part of its body text and *is* the
+  cell's notes (`Cell.docstring`/`ui.notes(...)`'s content), "code plus
+  notes" falls out for free with no separate docstring handling needed.
+  Each cell's `def name(...):` + body is joined with two blank lines
+  (matching this codebase's own top-level-def convention), producing a
+  plain file with no `@app.cell`/`@app.slide` decorators, no `App()`
+  setup, no `ui`/element wiring -- just the functions as written, notes
+  and all.
+
+  Wired into `ws_handler.py`'s `SaveDeck` handler: writes the export
+  unconditionally on every Save click with a valid `deck_path`,
+  including the "nothing else pending" no-op path -- the export is a
+  snapshot of the deck's *current* state regenerated fresh every time
+  Save is pressed, not gated behind whether this particular click
+  happened to change anything. On the normal path it's written from the
+  just-reloaded `Kernel.deck` (after any cell-edit/slide-reorder/layout
+  writes already applied), so it always reflects the actual just-saved
+  on-disk state, never stale pre-save data. A *failed* save (a syntax
+  error, a conflict) returns before reaching the export write, so
+  nothing gets exported when nothing was actually saved. Always
+  overwrites the previous export -- it's a derived artifact regenerated
+  every Save, not something an author is expected to hand-edit.
+
+  Verified end-to-end in a real browser: clicked Save against
+  `examples/live_demo.py` and confirmed `live_demo_export.py` appeared
+  next to it with all four cells present in file order, decorators
+  stripped, `live_demo`'s docstring (`"""# Live Coding\n..."""`, its
+  notes) preserved as a real docstring in the exported function, and the
+  whole file parsing as valid Python (`ast.parse`, no syntax errors) --
+  even though it isn't meant to be *run* standalone as-is (cell bodies
+  reference cross-cell names like `base` and CodeSlides-only names like
+  `cs`/`turtle` that only exist inside the app's own execution context).
+  12 new backend tests (8 in `test_serialization.py` covering
+  `export_source`/`write_export` directly: decorator-stripping,
+  docstring/notes preservation, slide/`App()`/import omission, cell
+  order, empty-deck edge case, overwrite behavior; 4 in
+  `test_ws_handler.py` covering the `SaveDeck` wiring: written on a
+  normal save, written on the no-op "nothing pending" path, reflects a
+  just-saved edit, and *not* written on a failed save), full suite green
+  (411 passed), ruff clean on every file this task touched. No frontend
+  changes -- purely a Save-time backend side effect, nothing to wire up
+  in the browser.
 
 - [ ] **60. Fix: the "+ Add cell" button no longer works.**
   Reported as broken -- previously verified working end-to-end in item 21.

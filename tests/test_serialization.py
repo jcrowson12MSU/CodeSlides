@@ -14,6 +14,7 @@ from codeslides.serialization import (
     blank_slide_source,
     display_docstring,
     display_source,
+    export_source,
     new_cell_name,
     new_slide_title,
     reattach_decorator,
@@ -29,6 +30,7 @@ from codeslides.serialization import (
     set_element_config,
     set_notes_docstring,
     set_tests_default,
+    write_export,
 )
 
 DECK_SOURCE = '''"""A tiny demo deck with a comment worth preserving."""
@@ -904,6 +906,81 @@ def test_set_cell_layout_overwrites_a_previous_layout(deck_file):
 def test_set_cell_layout_raises_if_the_cell_does_not_exist(deck_file):
     with pytest.raises(SaveConflictError):
         set_cell_layout(str(deck_file), "does_not_exist", {"code_fraction": 0.5})
+
+
+def test_export_source_strips_decorators_but_keeps_def_and_body(deck_file):
+    deck = load_deck(str(deck_file))
+    exported = export_source(deck)
+
+    assert "@app.cell" not in exported
+    assert "def setup():" in exported
+    assert "# a comment that must survive untouched" in exported
+    assert "base = 5" in exported
+    assert "def live_demo(speed):" in exported
+    assert "result = base * speed" in exported
+
+
+def test_export_source_keeps_a_cells_docstring_as_its_notes(deck_file):
+    source = DECK_SOURCE.replace(
+        'def live_demo(speed):\n    result',
+        'def live_demo(speed):\n    """Scales base by speed."""\n    result',
+    )
+    deck_file.write_text(source)
+    deck = load_deck(str(deck_file))
+
+    exported = export_source(deck)
+    assert '"""Scales base by speed."""' in exported
+
+
+def test_export_source_omits_slides_and_app_setup(deck_file):
+    deck = load_deck(str(deck_file))
+    exported = export_source(deck)
+
+    assert "@app.slide" not in exported
+    assert "App()" not in exported
+    assert "import" not in exported
+
+
+def test_export_source_preserves_deck_cell_order(deck_file):
+    deck = load_deck(str(deck_file))
+    exported = export_source(deck)
+
+    assert exported.index("def setup") < exported.index("def live_demo")
+
+
+def test_export_source_is_valid_standalone_python(deck_file):
+    deck = load_deck(str(deck_file))
+    exported = export_source(deck)
+
+    ast.parse(exported)  # raises SyntaxError if this isn't valid Python
+
+
+def test_export_source_of_an_empty_deck_is_empty_string():
+    from codeslides.deck import Deck
+
+    assert export_source(Deck()) == ""
+
+
+def test_write_export_writes_next_to_the_deck_file_with_export_suffix(deck_file):
+    deck = load_deck(str(deck_file))
+    export_path = write_export(str(deck_file), deck)
+
+    assert export_path == str(deck_file.with_name("deck_export.py"))
+    from pathlib import Path
+
+    written = Path(export_path).read_text()
+    assert written == export_source(deck)
+
+
+def test_write_export_overwrites_a_previous_export(deck_file):
+    deck = load_deck(str(deck_file))
+    export_path = write_export(str(deck_file), deck)
+    from pathlib import Path
+
+    Path(export_path).write_text("stale content that should be replaced")
+
+    write_export(str(deck_file), deck)
+    assert Path(export_path).read_text() == export_source(deck)
 
 
 def test_add_element_raises_on_a_duplicate_element_name(deck_file):

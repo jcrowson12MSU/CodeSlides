@@ -20,7 +20,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from codeslides.deck import Cell, Element
+from codeslides.deck import Cell, Deck, Element
 
 
 class SaveConflictError(ValueError):
@@ -1301,3 +1301,51 @@ def set_tests_default(current_full_source: str, element_name: str, default_text:
         current_full_source,
         hide_def=hide_def,
     )
+
+
+def export_source(deck: Deck) -> str:
+    """Render `deck` as a plain, standalone `.py` file: every cell's code
+    plus its notes (docstring), with none of CodeSlides' own authoring
+    scaffolding -- no `@app.cell`/`@app.slide` decorators, no `App`/`ui`
+    setup, no element wiring. The point (TODO.md #59) is a file an
+    instructor can hand to a student, or run directly with plain
+    `python`, that reads like an ordinary teaching script rather than a
+    CodeSlides deck.
+
+    Cells are emitted in `deck.cells` order, which is deck/file order
+    (insertion order -- `App.cell()` calls `Deck.add_cell()` in the same
+    top-to-bottom order the decorators execute in when `loader.load_deck`
+    runs the file) -- the same order the deck's own source already reads
+    in, not slide order (a cell can appear on a slide, on several, or on
+    none at all, so slide order has no single well-defined placement for
+    every cell).
+
+    Reuses `_split_cell_source` to strip each cell's decorator (pure
+    CodeSlides authoring syntax, meaningless outside this app) while
+    keeping its `def` line and full body -- including the docstring,
+    which already *is* the cell's notes (`Cell.docstring`/
+    `ui.notes(...)`'s content, ARCHITECTURE.md section 3a) -- so "code
+    plus notes" falls out for free rather than needing separate
+    docstring handling.
+    """
+    parts = []
+    for cell in deck.cells.values():
+        def_line, body_lines = _split_cell_source(cell.source)
+        parts.append("\n".join([def_line, *body_lines]))
+    return "\n\n\n".join(parts) + "\n" if parts else ""
+
+
+def write_export(deck_path: str, deck: Deck) -> str:
+    """Write `export_source(deck)` to `<deck_path>_export.py` (e.g.
+    `lesson.py` -> `lesson_export.py`, next to the deck file itself) and
+    return the path written. Called from the Save flow (TODO.md #59) --
+    unlike every other function in this module, this doesn't touch the
+    deck file itself at all; it's a read-only render of the *current*
+    Deck model to a second, independent file, so it can't conflict with
+    or corrupt the deck's own on-disk source. Always overwrites: the
+    export is a derived artifact regenerated fresh on every Save, not
+    something an author edits by hand and expects preserved.
+    """
+    export_path = Path(deck_path).with_name(Path(deck_path).stem + "_export.py")
+    export_path.write_text(export_source(deck))
+    return str(export_path)

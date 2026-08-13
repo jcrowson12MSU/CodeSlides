@@ -547,6 +547,66 @@ def test_save_deck_with_no_overrides_is_a_noop(tmp_path):
     assert path.read_text() == before
 
 
+def test_save_deck_also_writes_a_standalone_export_file(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    handle_message(registry, SaveDeck(session_id=session.session_id))
+
+    export_path = path.with_name("deck_export.py")
+    assert export_path.exists()
+    exported = export_path.read_text()
+    assert "@app.cell" not in exported
+    assert "def setup():" in exported
+    assert "def live_demo(speed):" in exported
+
+
+def test_save_deck_writes_the_export_even_with_nothing_else_pending(tmp_path):
+    """TODO.md #59: the export reflects the deck's current state on every
+    Save click, not just saves that also had a pending edit/reorder/
+    layout -- covers the early "nothing to save" return path
+    specifically, separate from the normal path already covered by
+    test_save_deck_also_writes_a_standalone_export_file above."""
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(registry, SaveDeck(session_id=session.session_id))
+
+    assert messages == [DeckSaved(session_id=session.session_id, cells=[])]
+    export_path = path.with_name("deck_export.py")
+    assert export_path.exists()
+    assert "def live_demo(speed):" in export_path.read_text()
+
+
+def test_save_deck_export_reflects_a_just_saved_edit(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    edited_body = (
+        "def live_demo(speed):\n"
+        "    result = base * speed * 10  # noqa: F821\n"
+        "    return result\n"
+    )
+    handle_message(registry, EditCell(session_id=session.session_id, cell_id="live_demo", source=edited_body))
+
+    handle_message(registry, SaveDeck(session_id=session.session_id))
+
+    export_path = path.with_name("deck_export.py")
+    assert "base * speed * 10" in export_path.read_text()
+
+
+def test_save_deck_does_not_write_an_export_on_a_failed_save(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    handle_message(
+        registry,
+        EditCell(session_id=session.session_id, cell_id="live_demo", source="def live_demo(speed:\n"),
+    )
+
+    handle_message(registry, SaveDeck(session_id=session.session_id))
+
+    assert not path.with_name("deck_export.py").exists()
+
+
 def test_save_deck_without_a_deck_path_errors_cleanly():
     registry = SessionRegistry(kernel=Kernel(_build_deck().deck))  # no deck_path
     session = registry.create()

@@ -57,6 +57,7 @@ from codeslides.serialization import (
     SaveConflictError,
     display_source,
     save_edits,
+    write_export,
 )
 from codeslides.session import Session
 
@@ -389,6 +390,12 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
             and session.slide_order_override is None
             and not session.cell_layout_overrides
         ):
+            # Still export (TODO.md #59) even with nothing else pending --
+            # Save is the trigger the user asked for, not "only if
+            # something changed," and the export is a derived snapshot of
+            # the deck's *current* state regardless of whether this
+            # particular click happened to change anything.
+            write_export(deck_path, registry.kernel.deck)
             return [DeckSaved(session_id=message.session_id, cells=[])]
         if session.source_overrides:
             try:
@@ -471,6 +478,11 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                     session_id=message.session_id,
                 )
             ]
+        # Regenerated fresh from the just-reloaded Kernel.deck, so this
+        # always reflects the actual on-disk state this save just
+        # produced (not whatever the pre-save in-memory Deck looked
+        # like).
+        write_export(deck_path, registry.kernel.deck)
         slides_payload = (
             [
                 {
