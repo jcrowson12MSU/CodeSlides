@@ -159,13 +159,91 @@ def test_multi_value_return_unpacks_by_name():
     assert session.namespace["c"] == 3
 
 
+def test_ordinary_local_reads_before_assignment_raise_unboundlocalerror():
+    """A plain local (no `global` declaration) that's read before its
+    own assignment must behave exactly like real Python: the whole
+    function treats it as local from the first assignment onward, so
+    reading it earlier is an UnboundLocalError, not a silent read of
+    some outer/previous value. Regression guard for
+    examples/marchingSquares.py's cell_1, which does exactly this on
+    purpose to document the expected failure."""
+    from codeslides.deck import Cell, Deck
+
+    deck = Deck()
+    deck.add_cell(
+        Cell(name="cell_1", source="def cell_1():\n    print(x)\n    x = 5\n    print(x)\n")
+    )
+
+    kernel = Kernel(deck)
+    session = Session(deck=deck)
+    session.namespace["x"] = 4
+    kernel.run_all(session)
+
+    assert session.instances["cell_1"].status == "error"
+    assert "UnboundLocalError" in session.instances["cell_1"].error
+    assert session.namespace["x"] == 4  # untouched -- the cell never got past its own error
+
+
+def test_global_declared_write_mutates_and_syncs_back_to_the_namespace():
+    """A cell that declares `global x` and mutates it must have that
+    mutation actually reach session.namespace -- not just the throwaway
+    copy of the namespace `execute_cell` builds to call the function
+    with. Regression guard for examples/marchingSquares.py's cell_2."""
+    from codeslides.deck import Cell, Deck
+
+    deck = Deck()
+    deck.add_cell(
+        Cell(
+            name="cell_2",
+            source="def cell_2():\n    global x\n    x += 5\n",
+        )
+    )
+
+    kernel = Kernel(deck)
+    session = Session(deck=deck)
+    session.namespace["x"] = 4
+    kernel.run_all(session)
+
+    assert session.instances["cell_2"].status == "idle"
+    assert session.namespace["x"] == 9
+
+
+def test_two_cells_with_unrelated_same_named_locals_both_load_and_run():
+    """Regression guard for the exact examples/marchingSquares.py bug
+    report: a cell with a `for x in range(...)` loop and an unrelated
+    cell with a plain local `x` used to fail to even load the deck
+    (MultipleDefinitionError), even though in real Python two such
+    functions never interact."""
+    app = App()
+
+    @app.cell
+    def loop_cell():
+        total = 0
+        for x in range(3):
+            total += x
+        return total
+
+    @app.cell
+    def other_cell():
+        x = "unrelated"
+        return x
+
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+
+    assert session.instances["loop_cell"].status == "idle"
+    assert session.instances["other_cell"].status == "idle"
+    assert session.namespace["total"] == 3
+    assert session.namespace["x"] == "unrelated"
+
+
 def test_return_of_a_computed_expression_runs_fine_with_no_extra_namespace_binding():
     """A `return`ed computed expression (not a bare name/tuple-of-names)
     is not an error -- there's simply no existing name to publish it
-    under (graph.py never inspects `return` at all), so it's treated
-    like a bare `return` with no value: nothing extra is bound into
-    session.namespace. The cell's own displayed output still carries
-    the real computed value regardless."""
+    under, so it's treated like a bare `return` with no value: nothing
+    extra is bound into session.namespace. The cell's own displayed
+    output still carries the real computed value regardless."""
     from codeslides.deck import Cell, Deck
 
     deck = Deck()

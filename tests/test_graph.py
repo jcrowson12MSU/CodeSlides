@@ -11,11 +11,14 @@ from codeslides.graph import (
 
 
 def test_extract_reads_writes_basic():
+    # `x` is an ordinary local (no `global` declaration) -- it must NOT
+    # be a graph-level write, matching real Python function scoping.
+    # `y` is a write only because it's the name the `return` exposes.
     reads, writes = extract_reads_writes(
         "def cell():\n    x = 1\n    y = x + 1\n    return y\n"
     )
     assert reads == frozenset()
-    assert writes == frozenset({"x", "y"})
+    assert writes == frozenset({"y"})
 
 
 def test_extract_reads_writes_cross_cell_read():
@@ -58,7 +61,12 @@ def test_lambda_reads_propagate_params_dont():
     assert writes == frozenset({"f"})
 
 
-def test_for_loop_and_with_targets_are_writes():
+def test_for_loop_and_with_targets_are_locals_not_writes():
+    # `item` and `handle` are ordinary locals -- real Python scoping
+    # means a `for`/`with` target is exactly as local as a plain
+    # assignment, so neither is a graph-level write. `total` and `data`
+    # are writes only because they're the names the `return` exposes,
+    # not because they were assigned.
     reads, writes = extract_reads_writes(
         """
 def cell():
@@ -70,13 +78,68 @@ def cell():
     return total, data
 """
     )
-    assert writes >= {"total", "item", "data", "handle"}
+    assert writes == frozenset({"total", "data"})
     assert reads == frozenset({"items", "path"})
 
 
 def test_rejects_non_single_function_source():
     with pytest.raises(ValueError):
         extract_reads_writes("x = 1\ny = 2\n")
+
+
+def test_global_declared_name_is_a_write():
+    reads, writes = extract_reads_writes(
+        "def cell():\n    global x\n    print(x)\n    x += 1\n"
+    )
+    assert writes == frozenset({"x"})
+    assert reads == frozenset()
+
+
+def test_nested_function_global_folds_into_outer_writes():
+    # A `global` statement always refers to the same module/exec-globals
+    # dict regardless of nesting depth (real Python behavior) -- so a
+    # nested function's own `global` declaration must still register as
+    # a write of the enclosing cell.
+    _, writes = extract_reads_writes(
+        """
+def cell():
+    def inner():
+        global x
+        x = 1
+    inner()
+    return inner
+"""
+    )
+    assert writes == frozenset({"x", "inner"})
+
+
+def test_two_cells_with_unrelated_same_named_locals_dont_collide():
+    """Regression: examples/marchingSquares.py had a `for x in range(...)`
+    loop in one cell and an unrelated `global x` cell, which used to
+    collide as MultipleDefinitionError purely because both cells
+    happened to assign a local (or global) named `x` under the old
+    "every Store-context Name is a write" model. Two cells with
+    unrelated plain locals of the same name must not collide at all."""
+    deck = Deck()
+    deck.add_cell(Cell(name="a", source="def a():\n    for x in range(3):\n        pass\n"))
+    deck.add_cell(Cell(name="b", source="def b():\n    x = 1\n    return x\n"))
+
+    graph = build_graph(deck)
+    assert graph is not None
+    assert deck.cells["a"].writes == frozenset({"a"})
+    assert deck.cells["b"].writes == frozenset({"x", "b"})
+
+
+def test_global_writes_from_two_cells_still_collide():
+    """Two cells that both genuinely declare `global x` are a real
+    conflict -- both intend to own the same shared name -- so this must
+    still raise, unlike the unrelated-locals case above."""
+    deck = Deck()
+    deck.add_cell(Cell(name="a", source="def a():\n    global x\n    x = 1\n"))
+    deck.add_cell(Cell(name="b", source="def b():\n    global x\n    x = 2\n"))
+
+    with pytest.raises(MultipleDefinitionError):
+        build_graph(deck)
 
 
 def test_build_graph_linear_dependency():

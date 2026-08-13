@@ -27,12 +27,15 @@ from typing import Any
 
 from codeslides import cs, turtle
 from codeslides.deck import Cell, Deck, Element, Slide
-from codeslides.graph import DependencyGraph, build_graph
+from codeslides.graph import (
+    DependencyGraph,
+    build_graph,
+    extract_global_writes,
+    extract_return_names,
+)
 from codeslides.output import resolve_output, wire_safe_value
 from codeslides.serialization import reattach_decorator, set_notes_docstring, set_tests_default
 from codeslides.session import CellInstance, Session, _deck_asset_url
-
-_NESTED_SCOPE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
 
 # Extension for each image MIME type a browser's <input type="file"
 # accept="image/*"> can plausibly hand back via FileReader.readAsDataURL.
@@ -129,12 +132,6 @@ def strip_noop_turtle_imports(stmts: list[ast.stmt]) -> list[ast.stmt]:
     ]
 
 
-class CellDefinitionError(ValueError):
-    """Raised when a cell's `return` statement doesn't cleanly name its
-    declared writes (ARCHITECTURE.md section 3: cells expose named
-    bindings, not arbitrary expressions)."""
-
-
 @dataclass
 class ExecutionResult:
     """What running one cell produced, ready to populate a CellInstance."""
@@ -151,9 +148,14 @@ def _compile_cell_function(source: str, globals_dict: dict[str, object]):
     """Define a cell's function into `globals_dict` (so the function's own
     `__globals__` *is* that dict -- free variables it references resolve
     via ordinary Python global lookup, exactly like top-level names in a
-    module) and return the callable plus the ordered list of names its
-    `return` statement exposes. Dedented so cells whose source happens to
-    be nested (e.g. under a test function) still parse.
+    module) and return the callable, the ordered list of names its
+    `return` statement exposes, and the set of names its body declares
+    `global` (see `graph.extract_global_writes` -- the caller needs this
+    to sync a `global x; x += 1`-style mutation back out of `globals_dict`,
+    since real Python's `global` only ever affects the dict actually
+    passed as `__globals__`, never anywhere else). Dedented so cells
+    whose source happens to be nested (e.g. under a test function) still
+    parse.
     """
     dedented = textwrap.dedent(source)
     tree = ast.parse(dedented)
@@ -164,77 +166,14 @@ def _compile_cell_function(source: str, globals_dict: dict[str, object]):
     func.decorator_list = []  # strip @app.cell(...) -- only the plain function is executed
     func.body = strip_noop_turtle_imports(func.body)
 
-    return_names = _extract_return_names(func)
+    return_names = extract_return_names(func)
+    global_writes = extract_global_writes(func)
 
     module = ast.Module(body=[func], type_ignores=[])
     ast.fix_missing_locations(module)
     code = compile(module, filename="<cell>", mode="exec")
     exec(code, globals_dict)  # noqa: S102 - trusted lesson code, defines the cell function only
-    return globals_dict[func.name], return_names
-
-
-def _extract_return_names(func) -> list[str]:
-    """Find the function's own `return` statement (if any) and return the
-    name(s) it exposes to the dependency graph, in order. A bare `return
-    name` yields `[name]`; a `return a, b` yields `[a, b]`; no return, or
-    any other return shape (a computed expression, e.g. `return (x1 +
-    x2) / 2, (y1 + y2) / 2`, not a bare name/tuple-of-names), yields
-    `[]` -- there's simply no existing name to publish a computed
-    expression's value under (`graph.py`'s dependency graph is built
-    entirely from ordinary top-level assignments, and never inspects
-    `return` at all), so it's treated the same as no return at all:
-    nothing extra gets bound into `session.namespace` for other cells to
-    read by name.
-
-    This does *not* make a computed-expression return unusable -- the
-    cell's own displayed output still shows the returned value regardless
-    of `return_names` (`ExecutionResult.value`/`resolve_output`, set from
-    the function's actual return value unconditionally), and the
-    function itself is still bound into `session.namespace` under its
-    own name after a successful call (ARCHITECTURE.md section 3's "a
-    cell's own name is itself an implicit write"), so another cell can
-    still get the real computed value by calling it directly, e.g.
-    `mx, my = midpoint(p1, p2)` -- exactly like calling any other
-    cell's function. Only an *implicit*, graph-level name for the
-    computed value is unavailable, which was never possible for an
-    unnamed expression anyway.
-
-    Returns nested inside an `if`/`for`/`with` block still belong to
-    `func`; returns inside a nested function/lambda do not and are
-    skipped."""
-    returns = list(_own_returns(func.body))
-    if not returns:
-        return []
-    if len(returns) > 1:
-        raise CellDefinitionError(f"cell {func.name!r} has multiple return statements")
-    (ret,) = returns
-    if ret.value is None:
-        return []
-    if isinstance(ret.value, ast.Name):
-        return [ret.value.id]
-    if isinstance(ret.value, ast.Tuple) and all(isinstance(e, ast.Name) for e in ret.value.elts):
-        return [e.id for e in ret.value.elts]
-    return []
-
-
-def _own_returns(stmts):
-    """Yield `Return` nodes belonging to this scope, recursing into
-    control-flow blocks (if/for/while/with/try) but not into nested
-    function/class/lambda definitions."""
-    for stmt in stmts:
-        if isinstance(stmt, ast.Return):
-            yield stmt
-        elif isinstance(stmt, _NESTED_SCOPE_TYPES):
-            continue
-        else:
-            for field_name in ("body", "orelse", "finalbody", "handlers"):
-                child = getattr(stmt, field_name, None)
-                if isinstance(child, list):
-                    for item in child:
-                        if isinstance(item, ast.ExceptHandler):
-                            yield from _own_returns(item.body)
-                        elif isinstance(item, ast.stmt):
-                            yield from _own_returns([item])
+    return globals_dict[func.name], return_names, global_writes
 
 
 @contextmanager
@@ -315,7 +254,7 @@ def execute_cell(
         # come before `session.namespace` so a cell's own write always
         # wins if a cell-level name ever happens to collide with either.
         call_globals = {"cs": cs, "turtle": turtle, **(deck_imports or {}), **session.namespace}
-        fn, return_names = _compile_cell_function(source, call_globals)
+        fn, return_names, global_writes = _compile_cell_function(source, call_globals)
 
         # Only bind element values for elements that are also declared
         # parameters -- input elements (slider/button/text_input) are, but
@@ -357,6 +296,18 @@ def execute_cell(
     # after a successful call, matching the "never partially pollute the
     # namespace on failure" rule the return-names binding below follows.
     session.namespace[cell_name] = fn
+
+    # Sync back whatever the cell's `global`-declared names actually
+    # ended up bound to in `call_globals` (its real `__globals__` during
+    # the call) -- a name only appears here if the cell declared it
+    # `global` AND the call actually assigned it (an unassigned `global x`
+    # that only ever reads is a no-op read, already covered by
+    # `session.namespace` having seeded `call_globals` in the first
+    # place), so this can't accidentally introduce a name that was never
+    # really written.
+    for name in global_writes:
+        if name in call_globals:
+            session.namespace[name] = call_globals[name]
 
     if len(return_names) == 1:
         session.namespace[return_names[0]] = result
@@ -435,7 +386,7 @@ def define_cell(
     doesn't skip catching them."""
     try:
         call_globals = {"cs": cs, "turtle": turtle, **(deck_imports or {}), **session.namespace}
-        fn, _ = _compile_cell_function(source, call_globals)
+        fn, _, _ = _compile_cell_function(source, call_globals)
     except Exception:  # noqa: BLE001 - same "a cell's own error must not kill the kernel" rule as execute_cell
         return ExecutionResult(status="error", error=traceback.format_exc())
 
@@ -707,6 +658,21 @@ class Kernel:
         except (SyntaxError, ValueError) as exc:
             session.instances[cell_name].status = "error"
             session.instances[cell_name].error = str(exc)
+            # A bad definition (e.g. `CellDefinitionError`'s multiple-return
+            # check) is now caught here, at graph-build time, rather than
+            # only surfacing once `_run_cells` actually tries to run the
+            # cell -- `extract_reads_writes` needs a cell's return names to
+            # know its graph-level writes, so it now runs this analysis (and
+            # can raise this same error) earlier than before. A tested cell
+            # must still see this reflected as its own test error (matching
+            # `_run_cells`'s "cell errored -> mark test error" branch), not
+            # silently keep showing whatever pass/fail it last had.
+            tests_element = _find_tests_element(self.deck.cells[cell_name].elements)
+            if tests_element is not None:
+                session.instances[cell_name].elements[tests_element].content = {
+                    "status": "error",
+                    "message": "cell did not run successfully",
+                }
             return {
                 cell_name: ExecutionResult(status="error", error=str(exc)),
             }

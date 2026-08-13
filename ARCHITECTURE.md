@@ -143,12 +143,23 @@ Design points:
 
 ## 3. Dependency graph & reactivity
 
-Static analysis (via `ast`, same approach as marimo): for each Cell, walk
-its function body to collect (a) names assigned at the top level of the
-function (its "defines") and (b) free variable names it reads that aren't
-locals (its "reads"). Build a directed graph: an edge `A -> B` exists if `B`
-reads a name `A` defines. Multiple cells defining the same name is a build
-error (ambiguous — same as marimo).
+Static analysis via `ast`, but — unlike marimo, whose own cells are
+flattened module-level statements with no real function-local scoping —
+CodeSlides compiles each cell as a genuine Python function
+(`kernel.py`'s `_compile_cell_function`), so its "defines" can't just be
+"every name assigned anywhere in the body" the way marimo's can: that
+would make an ordinary local (a loop variable, a helper's parameter)
+collide with an unrelated cell's same-named local, even though real
+Python never would. Instead, for each Cell, walk its function body to
+collect (a) the names it actually declares `global` and assigns
+(anywhere, including inside a nested function — `global` always refers
+to the same namespace regardless of nesting depth) plus whatever its
+`return` statement exposes (its "writes"), and (b) free variable names
+it reads that aren't locals (its "reads") — an ordinary local
+assignment with no `global` is never a write, exactly like scoping in
+any two unrelated Python functions. Build a directed graph: an edge
+`A -> B` exists if `B` reads a name `A` writes. Multiple cells writing
+the same name (via `global` or `return`) is a build error (ambiguous).
 
 Execution order is the topological sort of this graph. On a source edit to
 a Cell:
@@ -198,14 +209,24 @@ example.
 still usable.** `return name` and `return a, b` expose `name`/`a`/`b` as
 graph-level names other cells can read from the Session namespace; a
 computed expression (`return (x1 + x2) / 2, (y1 + y2) / 2`) has no
-existing name to publish under, so it exposes none — not an error,
-since the graph is built entirely from ordinary top-level assignments
-and never inspects `return` at all. The cell's own displayed output
-still shows the real value, and the cell's own name still resolves to
-its function (the paragraph above), so a helper cell like `midpoint`
-remains fully usable via a direct call (`mx, my = midpoint(p1, p2)`) —
-only the "another cell reads this by an implicit name" path is
-unavailable, which was never possible for an unnamed expression anyway.
+existing name to publish under, so it exposes none — not an error, just
+nothing extra to bind. The cell's own displayed output still shows the
+real value, and the cell's own name still resolves to its function (the
+paragraph above), so a helper cell like `midpoint` remains fully usable
+via a direct call (`mx, my = midpoint(p1, p2)`) — only the "another cell
+reads this by an implicit name" path is unavailable, which was never
+possible for an unnamed expression anyway.
+
+**A `global`-declared write really does mutate shared state across
+runs.** A cell that does `global x; x += 1` isn't just tracked as a
+graph-level write — `kernel.py`'s `execute_cell` also syncs that name's
+post-call value back out of the throwaway copy of the namespace the
+call was given, into `session.namespace` itself, so the mutation is
+visible to whatever reads `x` next (another cell, or this same cell on
+its next run) exactly like a plain module-level `global` write would be
+in an ordinary Python script. A local variable that merely happens to
+share a name with something elsewhere is never synced this way — only
+names the cell body actually declared `global`.
 
 ## 3a. Element reactivity (R4)
 
