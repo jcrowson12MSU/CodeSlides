@@ -1298,19 +1298,35 @@ def test_title_slide_markdown_includes_the_deck_title_and_summary_placeholder():
 
 
 def test_title_slide_markdown_lists_other_slide_titles_as_a_table_of_contents():
-    # Every generated line uses the literal "1." prefix (CommonMark
-    # renders any ordered-list marker sequentially regardless of the
-    # literal digit used in the source, same as every markdown renderer
-    # -- these don't need to be 1./2./3. in the raw text itself).
     body = title_slide_markdown("My Deck", ["Setup", "Live Coding"])
-    assert "1. Setup" in body
-    assert "1. Live Coding" in body
+    assert "Setup" in body
+    assert "Live Coding" in body
     assert body.index("Setup") < body.index("Live Coding")
 
 
 def test_title_slide_markdown_omits_contents_section_with_no_other_slides():
     body = title_slide_markdown("My Deck", [])
     assert "Contents" not in body
+
+
+def test_title_slide_markdown_toc_items_are_links_to_their_slide_index():
+    """User follow-up request: hyperlink the TOC items so clicking one
+    jumps to that slide. `#slide-N` fragments (no real per-slide URL
+    exists) are resolved client-side by App.tsx's own click handler.
+    `other_slide_titles[i]` (0-indexed here) ends up at slide index i+1
+    once the title slide itself is inserted and takes index 0."""
+    body = title_slide_markdown("My Deck", ["Setup", "Live Coding"])
+    assert "[Setup](#slide-1)" in body
+    assert "[Live Coding](#slide-2)" in body
+
+
+def test_title_slide_markdown_escapes_a_closing_bracket_in_a_slide_title():
+    """A literal ']' in a slide title would otherwise prematurely close
+    the generated link's own '[...]' label (verified against `marked`,
+    this app's markdown renderer, before writing this test) -- e.g.
+    "Weird ] Title" must not silently produce a broken, unlinked line."""
+    body = title_slide_markdown("My Deck", ["Weird ] Title"])
+    assert "[Weird \\] Title](#slide-1)" in body
 
 
 def test_append_title_slide_inserts_a_new_slide_as_the_first_slide(deck_file):

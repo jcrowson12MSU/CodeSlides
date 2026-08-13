@@ -122,20 +122,41 @@ def title_slide_markdown(deck_title: str, other_slide_titles: list[str]) -> str:
     """The generated body of a brand-new title slide's cell (TODO.md #61):
     the deck's own title as a heading, a one-line summary placeholder the
     author is expected to replace, and a table of contents listing every
-    *other* slide's title. Confirmed with the user: static, generated
-    once at creation time -- not a live-updating computation -- so a
-    slide added/renamed/reordered afterward doesn't retroactively change
-    this text; the author regenerates it by hand (a fresh "+ Add title
+    *other* slide's title, each one a markdown link to that slide
+    (`#slide-N`, TODO.md follow-up request) -- the frontend's own click
+    handler (`App.tsx`) intercepts `a[href^="#slide-"]` clicks inside
+    slide content and jumps `slideIndex` there instead of letting the
+    browser navigate, since there's no real per-slide URL/route to link
+    to. Confirmed with the user: static, generated once at creation time
+    -- not a live-updating computation -- so a slide added/renamed/
+    reordered afterward doesn't retroactively change this text (or its
+    links); the author regenerates it by hand (a fresh "+ Add title
     slide" click, or a manual edit) if they want it to reflect a changed
     deck later.
 
     `other_slide_titles` is deliberately passed in rather than read from
     a `Deck` here, so this stays a pure string-building function callers
-    can unit-test without constructing a full Deck/Slide graph."""
+    can unit-test without constructing a full Deck/Slide graph -- it's
+    always the deck's *pre-insertion* slide order (`append_title_slide`'s
+    own caller), so `other_slide_titles[i]` ends up at slide index `i +
+    1` once the new title slide is inserted and takes index 0 itself;
+    that's the `N` each generated link points at.
+
+    A slide title can contain a literal `]` (nothing in this app
+    restricts slide titles) -- unescaped, that would prematurely close
+    the link's `[...]` label early, e.g. a title of "Weird ] Title"
+    would break `[Weird ] Title](#slide-1)` into plain unlinked text
+    (verified by hand against `marked`, this app's own markdown
+    renderer, before deciding this needed handling at all -- a `)` in
+    the title, by contrast, sits safely inside the `[...]` label and
+    doesn't need escaping). Backslash-escaped here for exactly that
+    character."""
     lines = [f"# {deck_title}", "", "*One-line summary -- edit me.*"]
     if other_slide_titles:
         lines += ["", "## Contents", ""]
-        lines += [f"1. {title}" for title in other_slide_titles]
+        for i, title in enumerate(other_slide_titles, start=1):
+            escaped_title = title.replace("]", "\\]")
+            lines.append(f"{i}. [{escaped_title}](#slide-{i})")
     return "\n".join(lines)
 
 

@@ -2910,6 +2910,53 @@ reshape the plan below and are called out explicitly where they apply:
   (427 passed), ruff/oxlint clean, frontend bundle rebuilt (`tsc -b`,
   the actual build-mode check, not just `tsc --noEmit`) and committed.
 
+  **Follow-up (same task): hyperlink the table-of-contents items so
+  clicking one jumps to that slide.** `title_slide_markdown` now emits
+  each TOC entry as a real markdown link (`[title](#slide-N)`) instead
+  of plain text -- `N` is the target slide's own final 0-based index
+  once the title slide is inserted and takes index 0 itself (so
+  `other_slide_titles[0]` -> `#slide-1`, and so on). Since there's no
+  real per-slide URL/route in this app (slide navigation is just
+  `slideIndex` client React state), `App.tsx` gained a `document`-level
+  delegated click listener (scoped to `viewMode === 'slides'`) that
+  intercepts `a[href^="#slide-"]` clicks and calls `setSlideIndex`
+  instead of letting the browser try to navigate. Delegated rather than
+  threaded through `SlideShow`/`Cell`/`CellOutputView`'s own props,
+  since those render a cell's markdown output generically for *any*
+  cell's `cs.md(...)` content, not just the title slide's -- not worth
+  new prop plumbing through three more components for one generated
+  cell's links.
+
+  Also escaped a literal `]` in a slide title (nothing in this app
+  restricts slide titles): unescaped, it would prematurely close the
+  generated link's own `[...]` label -- verified against `marked` (this
+  app's markdown renderer) by hand before deciding this needed handling,
+  confirming an unescaped `]` silently produces plain unlinked text
+  rather than a visibly broken link, which would have been an easy bug
+  to miss without deliberately testing a title containing one.
+
+  Caught a real off-by-one bug via browser verification, not just unit
+  tests: an early draft of the click handler subtracted 1 from the
+  fragment's number (treating `N` as 1-based and needing conversion to
+  a 0-based index), but `title_slide_markdown`'s own numbering already
+  *is* the final 0-based index -- clicking "Image Preview" (`#slide-2`)
+  landed on "Setup" (index 1) instead. Caught by clicking each of the
+  three generated links in a real browser and checking the resulting
+  slide title matched what was clicked, not just checking that *a*
+  navigation happened.
+
+  Verified end-to-end in a real browser via Playwright against
+  `examples/live_demo.py`: created a title slide, confirmed all three
+  TOC entries render as genuine underlined `<a href="#slide-N">` links
+  (screenshotted), and clicked each one from a fresh page load,
+  confirming every link lands on the exact matching slide (`#slide-1`
+  -> "Setup", `#slide-2` -> "Image Preview", `#slide-3` -> "Live
+  Coding"), with zero page errors. 2 new backend tests (TOC items are
+  links; a `]` in a title is escaped correctly), full suite green (429
+  passed), ruff clean (also caught and fixed a Python-3.11-incompatible
+  backslash-in-f-string ruff flagged, since `pyproject.toml` requires
+  `>=3.11`), oxlint clean, frontend bundle rebuilt and committed.
+
 - [ ] **62. Improve turtle compatibility.**
   Broaden `src/codeslides/turtle.py`'s coverage of the real stdlib
   `turtle` API (see item 11) -- needs a concrete list of which
