@@ -472,3 +472,163 @@ code-still-running animation (`docs/turtle-animation-feasibility.md`'s
 "hard" tier) — both are legitimate future projects, but different in
 kind from "fill in the drawing API," and shouldn't block or be
 conflated with the phases above.
+
+## Remaining work (as of 2026-08-12, after Phase 5)
+
+Everything above this line is the historical record of Phases 1–5,
+all shipped. TODO.md #62 is marked complete on the strength of that
+work — every phase delivered exactly what it scoped. But "the phases
+are done" and "the shim is finished" are different claims. This
+section is a fresh, independent gap analysis done *after* Phase 5,
+specifically to catch anything that either (a) was never in the
+original Gap 1–4 analysis at all, or (b) was introduced or left in
+place *during* Phases 1–5's own work without ever being logged. Two
+real bugs turned up doing this, plus a longer tail of unimplemented
+stdlib surface area the original analysis simply never enumerated.
+
+### Confirmed bugs (not stubs, not scope gaps — silently wrong output)
+
+**1. `circle(radius, extent)` draws to the wrong final position for
+any arc that isn't a full 360° circle.** `src/codeslides/turtle.py`'s
+`circle()` (implemented well before Phase 1, untouched since) does a
+plain `forward(step_length); left(step_angle)` loop with no leading or
+trailing half-step. Real stdlib `turtle.circle()` (verified directly
+against the CPython 3.13 source) rotates the turtle by *half* a
+step-angle before the first chord and unwinds it by the same amount
+after the last chord, so the polygon approximating the arc is centered
+on the true arc rather than uniformly rotated off of it. Verified
+numerically here (not just by reading the two algorithms side by
+side): `circle(100, 180)` — the exact semicircle example from stdlib's
+own docstring, starting at the origin facing east — ends at `(0, 200)`
+in real turtle; this shim's implementation ends at `(10.47, 199.73)`.
+`circle(100, 90)` ends at `(100, 100)` in real turtle vs. `(105.1,
+94.6)` here. The bug is invisible for a *full* circle (`extent=360`,
+the only case this repo's own test,
+`test_circle_returns_to_a_point_close_to_start_after_full_circle`,
+actually exercises) because both endpoints coincide with the start
+point regardless of the rotational offset — which is exactly why nine
+tests and five phases' worth of manual browser verification never
+caught it. Any lesson drawing an arc, a rounded shape, or a pie/fan
+slice (all common, non-exotic teaching content — more common than
+several things Phases 2–5 *did* prioritize) will silently draw a
+visibly wrong picture with no error. The shim's own docstring
+currently claims "same strategy the real turtle module uses
+internally," which this finding shows is not accurate.
+
+**2. `hideturtle()`/`showturtle()`/`visible` have zero effect on
+rendered output — worse than an unimplemented stub, because the
+frontend's own code comment asserts this is fine.**
+`src/codeslides/turtle.py`'s `hideturtle`/`showturtle`/`isvisible`
+(implemented before Phase 1) correctly track state and emit a
+`{"op": "visible", "visible": ...}` command — confirmed by hand,
+`turtle.hideturtle()` really does produce that command. But
+`frontend/src/widgets/TurtleCanvasViewer.tsx`'s replay loop never
+reads it: the string `"visible"` appears exactly once in that entire
+file, inside a comment lumping it in with `pencolor`/`fillcolor`/
+`pensize`/`pen` as "state that's already handled elsewhere" — true for
+those (verified: `goto`/`dot`/`stamp`/`begin_fill` all snapshot the
+relevant color/width value inline at the moment they're emitted), but
+false for `visible`, which has no running state variable anywhere in
+the file and no check anywhere the final "here's where the turtle
+ended up" marker gets drawn (`TurtleCanvasViewer.tsx`'s unconditional
+`drawTurtleMarker(...)` call at the very end of the replay). Net
+effect, confirmed against a real cell: a script that calls
+`turtle.hideturtle()` — a completely ordinary thing to do, e.g. to
+draw a picture with the cursor arrow/marker itself hidden from the
+final result — will still see the marker rendered anyway, silently,
+every time, since nothing in the render path ever branches on
+visibility. No test exists that would catch this (the one visibility
+test, `test_hideturtle_showturtle_toggle_visibility`, only checks
+`isvisible()`'s Python-side return value, never the rendered output).
+
+Both bugs were found by an audit pass specifically constructed to
+independently re-verify the "all done" claim rather than trust it —
+worth remembering next time a phase's own screenshot-based
+verification says something is correct: it only proves the *specific
+scenario screenshotted* was correct, not that the underlying
+implementation is.
+
+### stdlib surface area never entered into the Gap 1–4 analysis at all
+
+These aren't deprioritized or deferred anywhere in this document —
+they were simply never listed, discovered only by this later, more
+exhaustive cross-reference against the full `RawTurtle`/`TPen`/
+`TNavigator`/`TurtleScreen`/`_Screen` method inventory:
+
+- **`pen(pen=None, **pendict)`** — the compound pen-state getter/
+  setter (`t.pen()` returns a dict of `shown`/`pendown`/`pencolor`/
+  `fillcolor`/`pensize`/`speed`/`resizemode`/`stretchfactor`/
+  `shearfactor`/`outline`/`tilt`; `t.pen(pendown=False, pencolor="red")`
+  sets several at once). Not present under any name.
+- **`teleport(x=None, y=None, *, fill_gap=False)`** — moves without
+  drawing regardless of current pen state (distinct from `penup()` +
+  `goto()` + `pendown()`, since it doesn't require the caller to
+  save/restore pen state around the move). Absent.
+- **`mode(mode=None)`** (Screen-side) — the "standard"/"logo"/"world"
+  angle-mode switch. Every angle-returning function's docstring in
+  this shim (`towards()`, `heading()`) states it "only ever supports
+  stdlib turtle's default 'standard' mode," but there is no `mode()`
+  function at all — not implemented, not a no-op, not a raiser. A
+  script that calls `turtle.mode("logo")` (heading 0 = north instead
+  of east, common in some teaching traditions) gets a plain
+  `AttributeError`, with no acknowledgment anywhere that "standard
+  mode only" is an actual, permanent constraint of this shim rather
+  than a temporary gap.
+- **`window_width()` / `window_height()`** (Screen) — absent.
+- **`getcanvas()`, `mainloop()`, `setup(...)`, `title(...)`,
+  `bgpic(...)`, `turtles()`, `delay(delay=None)`** (all Screen-side,
+  Tk-window-management) — absent. `delay()` in particular is real
+  turtle's actual animation-speed-independent frame-delay control,
+  adjacent to (but distinct from) the `speed()`/animation gap already
+  tracked in `docs/turtle-animation-feasibility.md`.
+- **`degrees(fullcircle=360.0)` / `radians()`** (Screen-side
+  angle-unit switch, distinct from the internal `math.radians` calls
+  already used throughout `turtle.py`) — absent.
+- **`shearfactor(shear=None)`, `get_shapepoly()`** — absent
+  individually (only `shapetransform` was named, generically, in the
+  original Gap 2 list, as a group with these two implied but not
+  actually itemized).
+
+None of the above came up in `examples/originalMarchingSquares.py` or
+any other reference deck exercised so far — that's presumably *why*
+the original ast-based diff against stdlib's public API in this
+document's own "Method" section didn't surface them as priorities, but
+they were still never written down anywhere, including in the
+"deprioritized"/"less common" lists that do cover `clone()`/
+`getturtle()`/`resizemode()`/etc. There's a real difference between "we
+looked at this and decided it's low priority" (true for everything in
+Gap 2's "less common" list) and "this was never looked at" (true for
+everything in this section) — worth keeping distinct when picking up
+this work again, since the second category hasn't had anyone make an
+actual priority judgment on it yet.
+
+### Still-open items already tracked elsewhere in this document (not new, listed here for one combined "what's left" view)
+
+- **`speed()` / animated drawing** — still fully inert on the
+  frontend, confirmed unchanged: `speed` is stored on
+  `_TurtleState.speed` and validated, but grep confirms zero
+  references to it anywhere in `TurtleCanvasViewer.tsx`, and the
+  replay loop is still one unconditional synchronous pass with no
+  per-command delay. Full implementation plan already written up in
+  Phase 4's own section above ("speed() discussion") — not repeated
+  here.
+- **`tilt()` / `tiltangle()`** — deferred per the original plan's own
+  "if a real lesson need surfaces" conditional; still no concrete
+  lesson has exercised either.
+- **`clone()` / `getturtle()` / `getscreen()`** — deprioritized
+  pending a design decision on what object identity means in this
+  shim's single-shared-state-per-cell-execution model; `clone()`
+  specifically has no clean mapping onto that model at all.
+- **`clearstamp()` / `clearstamps()`** — blocked on `stamp()` not
+  returning a real id (currently returns `None`).
+- **`setundobuffer()` / `undobufferentries()` / `undo()`** — `undo()`
+  needs real state-history tracking, a meaningfully bigger feature
+  than anything implemented in Phases 1–5; never actually in any
+  phase's named scope despite being flagged "common enough to
+  prioritize" in the very first gap analysis pass.
+- **`onclick()` / `onkey()` / `onkeypress()` / `ontimer()` / `listen()`
+  / `register_shape()` / `getshapes()`** (Screen-side event/callback
+  methods) — architecturally out of scope, not just unimplemented:
+  raise a clear `NotImplementedError` by design (Gap 4), since this
+  app's synchronous, run-once cell execution has no persistent event
+  loop for a callback to fire against later.

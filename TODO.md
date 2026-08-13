@@ -3290,6 +3290,49 @@ reshape the plan below and are called out explicitly where they apply:
   `docs/turtle-compatibility-todo.md` remains the live reference for
   whichever of the deferred/deprioritized items get picked up later.
 
+  **Follow-up (same task): a post-completion audit found two real,
+  previously-unlogged bugs, plus a longer list of stdlib surface area
+  the original gap analysis never enumerated at all.** Requested
+  directly: "document what still needs to be done related to turtle
+  graphics and what is currently insufficiently implemented" -- treated
+  as "verify the 'done' claim, don't just restate it," since every
+  prior phase's own verification was screenshot-based and none of it
+  was designed to catch either of these. Both independently re-verified
+  by hand (not just trusted from the audit) before being written down:
+  (1) `circle(radius, extent)` draws to the geometrically wrong final
+  position for any arc that isn't a full 360° -- real turtle rotates by
+  half a step-angle before and after the chord loop (verified against
+  the CPython source) so the polygon is centered on the true arc; this
+  shim's `circle()` has no such half-step, confirmed numerically
+  (`circle(100, 180)` from the origin ends at `(10.47, 199.73)` here vs.
+  real turtle's own documented `(0, 200)`) -- invisible for a *full*
+  circle (the only case any existing test exercises), which is exactly
+  why 5 phases of work never caught it. (2) `hideturtle()`/
+  `showturtle()`/`visible` are correctly tracked and emitted as a
+  command by the Python side, but `TurtleCanvasViewer.tsx` never reads
+  that command at all -- confirmed by hand, a cell calling
+  `hideturtle()` still shows the final position marker in its rendered
+  output every time, silently, with the frontend's own code comment
+  incorrectly asserting this state is "already handled elsewhere" the
+  same way `pencolor`/`pensize` genuinely are.
+
+  Full details, plus a list of stdlib methods (`pen()`, `teleport()`,
+  `mode()`, `window_width()`/`window_height()`, `getcanvas()`,
+  `mainloop()`, `setup()`, `title()`, `bgpic()`, `turtles()`,
+  `delay()`, `degrees()`/`radians()`, `shearfactor()`,
+  `get_shapepoly()`) never previously entered into the Gap 1-4 analysis
+  at all -- distinct from the methods already explicitly deprioritized
+  with a stated reason -- now live in a new "Remaining work" section
+  appended to `docs/turtle-compatibility-todo.md`, along with a
+  consolidated view of everything already tracked elsewhere in that
+  document (`speed()`, `tilt`/`tiltangle`, `clone`/`getturtle`/
+  `getscreen`, `clearstamp`/`clearstamps`, `undo`, the Screen
+  event/callback methods). No code changes in this pass -- this was
+  the requested documentation/audit, not a fix; item 62 stays marked
+  complete (the phases as scoped are genuinely done), but
+  `docs/turtle-compatibility-todo.md`'s new section is now the
+  authoritative "what's actually left" reference, not this entry.
+
 - [ ] **48. Polish, README, and packaging**
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
