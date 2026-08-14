@@ -37,6 +37,30 @@ export interface EditCellPanelProps {
    * *different* one main instead, same as a radio button -- there's
    * nothing meaningful about "no cell is main" as a state to write. */
   onSetMainCell: () => void
+  /** Every tab this cell currently has -- one per element (in
+   * declaration order) plus the synthetic Output tab -- for the
+   * "Default view item" checkbox list below. Passed down rather than
+   * recomputed here since `Cell.tsx` already builds this exact list
+   * (`allTabs`) and owns the `OUTPUT_TAB` constant; importing it back
+   * from `./Cell` would be circular (`Cell.tsx` already imports this
+   * component). */
+  tabs: string[]
+  /** The synthetic id `tabs` uses for the Output tab (`Cell.tsx`'s
+   * `OUTPUT_TAB`) -- needed only to render "Output" instead of the raw
+   * id for that one entry. */
+  outputTab: string
+  /** Which tab in `tabs` is currently marked as this cell's default
+   * (`deck.Cell.layout.default_tab`) -- shows first on load with no
+   * prior interaction. */
+  defaultTab: string
+  /** Check a tab's "Default view item" box: mark that tab as the
+   * default, staged in this Session until the next Save (same
+   * "layout is staged, not immediate" precedent `onLayoutChange`
+   * already has elsewhere -- see `Cell.tsx`'s `emitLayoutChange`). No
+   * "uncheck" action: same "only checking a different one changes
+   * anything" shape `onSetMainCell` already has, since exactly one tab
+   * is always the default (absent means Output, never "none"). */
+  onSetDefaultTab: (tab: string) => void
   onAddElement: (name: string, kind: string, config: Record<string, unknown>) => void
   onRemoveElement: (elementName: string) => void
   /** TODO.md #23: reorder elements (up/down arrows) and edit an iframe
@@ -64,6 +88,10 @@ export function EditCellPanel({
   onRename,
   isMain,
   onSetMainCell,
+  tabs,
+  outputTab,
+  defaultTab,
+  onSetDefaultTab,
   onAddElement,
   onRemoveElement,
   onReorderElements,
@@ -189,6 +217,31 @@ export function EditCellPanel({
         />
         Main cell
       </label>
+
+      <div className="cs-edit-cell-default-tab">
+        <span className="cs-edit-cell-default-tab-label">Default view item</span>
+        <ul>
+          {tabs.map((tab) => (
+            <li key={tab}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={tab === defaultTab}
+                  // Same "checking sets it, unchecking directly is a
+                  // no-op" shape as the Main cell checkbox above --
+                  // exactly one tab is always the default (never
+                  // "none"), so only the check transition does
+                  // anything.
+                  onChange={(event) => {
+                    if (event.target.checked) onSetDefaultTab(tab)
+                  }}
+                />
+                {tab === outputTab ? 'Output' : tab}
+              </label>
+            </li>
+          ))}
+        </ul>
+      </div>
 
       <div className="cs-edit-cell-elements">
         <span className="cs-edit-cell-elements-label">Elements</span>

@@ -96,7 +96,10 @@ class Cell:
     # 0-1 -- the upper section's share of the view-items column height),
     # "lower_tabs" (list[str] -- element names, plus the literal string
     # "__output__" for the Output tab, currently assigned to the lower
-    # section; everything else defaults to upper).
+    # section; everything else defaults to upper), "default_tab" (str --
+    # an element name, or "__output__", naming which tab shows first on
+    # load with no prior interaction; absent means "__output__", matching
+    # the pre-existing hardcoded default).
     layout: dict[str, Any] | None = None
     # `@app.cell(is_main=True)` -- marks this cell as the deck's single
     # designated entry point (e.g. a cell whose body is an

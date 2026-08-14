@@ -13,11 +13,15 @@ import type { SlideMeta } from './widgets/SlideShow'
 // degrade to remaining browser defaults for whichever keys are missing,
 // not error. `lower_tabs` names element ids (or the synthetic Output
 // tab, OUTPUT_TAB from Cell.tsx) currently assigned to the lower
-// section; everything else defaults to the upper one.
+// section; everything else defaults to the upper one. `default_tab`
+// (also an element id or OUTPUT_TAB) is which tab shows first on load
+// with no prior interaction -- absent means OUTPUT_TAB, matching the
+// pre-existing hardcoded default.
 export interface CellLayout {
   code_fraction?: number
   panel_fraction?: number
   lower_tabs?: string[]
+  default_tab?: string
 }
 
 // -- Client -> server messages ----------------------------------------------
