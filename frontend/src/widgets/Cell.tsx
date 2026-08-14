@@ -241,26 +241,35 @@ export function Cell({
   )
   const panelOf = useCallback((tab: string) => tabPanel[tab] ?? 'upper', [tabPanel])
 
-  // Mirrors codeFraction/panelFraction/tabPanel's *latest* values outside
-  // React state, so the pointerup handlers below (stable `useCallback`s,
-  // registered once per drag via `window.addEventListener` rather than
-  // re-subscribed on every fraction change mid-drag) can read the
-  // just-settled value without depending on state that would otherwise
-  // force resubscribing the listener on every single pointermove of the
-  // drag itself. Updated in lockstep with every corresponding `setX`
-  // call, never read to drive rendering -- only `emitLayoutChange`
-  // (below) ever reads it, at the moment a drag/tab-move actually
-  // settles.
-  const layoutRef = useRef({ codeFraction, panelFraction, tabPanel })
-  layoutRef.current = { codeFraction, panelFraction, tabPanel }
+  // Which tab shows first on load with no prior interaction
+  // (EditCellPanel's "Default view item" checkbox) -- deliberately
+  // separate from `upperActiveTabState` below: browsing to a different
+  // tab while looking at this cell must never silently change what a
+  // fresh page load shows next time, only an explicit checkbox click
+  // does that (`handleSetDefaultTab`). Same lazy-initializer
+  // seed-once-on-mount precedent as `codeFraction`/`tabPanel` above.
+  const [defaultTab, setDefaultTab] = useState(() => meta.layout?.default_tab ?? OUTPUT_TAB)
+
+  // Mirrors codeFraction/panelFraction/tabPanel/defaultTab's *latest*
+  // values outside React state, so the pointerup handlers below (stable
+  // `useCallback`s, registered once per drag via
+  // `window.addEventListener` rather than re-subscribed on every
+  // fraction change mid-drag) can read the just-settled value without
+  // depending on state that would otherwise force resubscribing the
+  // listener on every single pointermove of the drag itself. Updated in
+  // lockstep with every corresponding `setX` call, never read to drive
+  // rendering -- only `emitLayoutChange` (below) ever reads it, at the
+  // moment a drag/tab-move/default-tab-change actually settles.
+  const layoutRef = useRef({ codeFraction, panelFraction, tabPanel, defaultTab })
+  layoutRef.current = { codeFraction, panelFraction, tabPanel, defaultTab }
 
   // Reports this cell's complete current layout up to App.tsx (per the
   // user's request that Save persist it) -- called once a drag settles
-  // (`stopResizing`/`stopPanelResizing`) or a tab is dropped into a
-  // different section (`moveTabToPanel`), never on every intermediate
-  // frame of a drag. A no-op if the caller didn't provide
-  // `onLayoutChange` (e.g. any future use of Cell that doesn't care
-  // about persistence).
+  // (`stopResizing`/`stopPanelResizing`), a tab is dropped into a
+  // different section (`moveTabToPanel`), or the default tab checkbox is
+  // clicked (`handleSetDefaultTab`), never on every intermediate frame
+  // of a drag. A no-op if the caller didn't provide `onLayoutChange`
+  // (e.g. any future use of Cell that doesn't care about persistence).
   const emitLayoutChange = useCallback(() => {
     if (!onLayoutChange) return
     const current = layoutRef.current
@@ -271,8 +280,18 @@ export function Cell({
       code_fraction: current.codeFraction,
       panel_fraction: current.panelFraction,
       lower_tabs: lowerTabs,
+      default_tab: current.defaultTab,
     })
   }, [onLayoutChange])
+
+  const handleSetDefaultTab = useCallback(
+    (tab: string) => {
+      setDefaultTab(tab)
+      layoutRef.current = { ...layoutRef.current, defaultTab: tab }
+      emitLayoutChange()
+    },
+    [emitLayoutChange],
+  )
 
   const allTabs = [...meta.elements.map((e) => e.name), OUTPUT_TAB]
   const upperTabs = allTabs.filter((t) => panelOf(t) === 'upper')
@@ -286,7 +305,7 @@ export function Cell({
   // the edit panel) rather than rendering a dead selection; `undefined`
   // when the section has no tabs at all (collapses to an empty strip,
   // per the user's own scoping decision).
-  const [upperActiveTabState, setUpperActiveTab] = useState<string>(OUTPUT_TAB)
+  const [upperActiveTabState, setUpperActiveTab] = useState<string>(() => meta.layout?.default_tab ?? OUTPUT_TAB)
   const [lowerActiveTabState, setLowerActiveTab] = useState<string | undefined>(undefined)
   const upperActiveTab = upperTabs.includes(upperActiveTabState) ? upperActiveTabState : upperTabs[0]
   const lowerActiveTab = lowerTabs.includes(lowerActiveTabState ?? '') ? lowerActiveTabState : lowerTabs[0]
@@ -592,6 +611,10 @@ export function Cell({
           onRename={onRenameCell}
           isMain={meta.is_main ?? false}
           onSetMainCell={onSetMainCell}
+          tabs={allTabs}
+          outputTab={OUTPUT_TAB}
+          defaultTab={defaultTab}
+          onSetDefaultTab={handleSetDefaultTab}
           onAddElement={onAddElement}
           onRemoveElement={onRemoveElement}
           onReorderElements={onReorderElements}
