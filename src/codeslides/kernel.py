@@ -243,6 +243,7 @@ def execute_cell(
     session: Session,
     elements: list[Element] | None = None,
     deck_imports: dict[str, object] | None = None,
+    is_main: bool = False,
 ) -> ExecutionResult:
     """Call the cell named `cell_name`'s function (compiled fresh from
     `source`, which the caller has already resolved to this Session's
@@ -281,9 +282,31 @@ def execute_cell(
     `import`/`from ... import` bound in the deck's own source file
     (`loader.py`'s `load_deck`), so a cell body can use e.g. `numpy`
     without its own repeated `import numpy` in every cell that needs it.
+
+    `is_main` (true only when `cell_name` is the Deck's one
+    `Cell.is_main` cell -- callers pass `self.deck.cells[cell_name]
+    .is_main`) makes `__name__` resolve to `"__main__"` for the
+    duration of this one call, so a cell whose body is a real `if
+    __name__ == "__main__":` block (matching how a student would run
+    the whole deck as a standalone script) actually executes that
+    block here too, instead of it being permanently dead code. Real
+    Python resolves `__name__` from the running module's own
+    `__globals__`, and since `session.namespace` *is* every cell's
+    `__globals__` here (`_compile_cell_function`'s docstring), setting
+    it there makes ordinary Python name resolution do the rest with no
+    special-casing inside the cell body itself. Set only immediately
+    before this call and restored (to whatever it was before, or
+    removed entirely if it wasn't set) immediately after, in a
+    `finally` -- `__name__ == "__main__"` must be true only while the
+    main cell itself is actually running, never left lingering in the
+    shared namespace afterward where an unrelated cell's own `if
+    __name__ == "__main__":` (unlikely, but not impossible) would
+    otherwise spuriously see it as still true.
     """
     stdout, stderr = io.StringIO(), io.StringIO()
     turtle_element = _find_turtle_canvas(elements or [])
+    _NO_PRIOR_NAME = object()
+    prior_name = session.namespace.get("__name__", _NO_PRIOR_NAME)
     try:
         # `cs`/`turtle` are framework-provided names every cell body can
         # call without its own import -- the compiled function's globals
@@ -301,6 +324,8 @@ def execute_cell(
         # copy on top of it.
         for name, value in {"cs": cs, "turtle": turtle, **(deck_imports or {})}.items():
             session.namespace.setdefault(name, value)
+        if is_main:
+            session.namespace["__name__"] = "__main__"
         fn, return_names = _compile_cell_function(source, session.namespace)
 
         # Only bind element values for elements that are also declared
@@ -331,6 +356,12 @@ def execute_cell(
             stderr=stderr.getvalue(),
             error=traceback.format_exc(),
         )
+    finally:
+        if is_main:
+            if prior_name is _NO_PRIOR_NAME:
+                session.namespace.pop("__name__", None)
+            else:
+                session.namespace["__name__"] = prior_name
 
     if turtle_commands and turtle_element is not None:
         writes.append(cs.ElementWrite(element_name=turtle_element, kind="turtle", content=turtle_commands))
@@ -481,6 +512,52 @@ def _has_unbound_required_param(source: str, elements: list[Element]) -> bool:
     kwonly_required = [a for a, default in zip(func.args.kwonlyargs, func.args.kw_defaults) if default is None]
 
     return any(a.arg not in element_names for a in (*positional_required, *kwonly_required))
+
+
+def _source_has_main_guard(source: str) -> bool:
+    """True if the cell's function body contains a top-level `if
+    __name__ == "__main__":` (or its reflected form, `if "__main__" ==
+    __name__:`) statement -- the deck author's own way of saying "this
+    is an entry point," matching a real standalone script's own
+    convention, without necessarily having checked the `is_main`
+    checkbox (`deck.Cell.is_main`) too. `execute_cell` treats either
+    signal identically (`is_main or _source_has_main_guard(source)`):
+    a cell written this way is presumably meant to behave like a real
+    `__main__` guard, or it would just be permanently-dead code inside
+    the reactive kernel (`__name__` otherwise never resolves to
+    `"__main__"` there -- see `execute_cell`'s own docstring).
+
+    Deliberately narrow (a top-level `if` in the function body, not
+    anywhere nested inside a loop/other `if`/etc.) -- same "top-level
+    only" precedent `_own_returns` (graph.py) already sets for finding
+    a cell's own `return` statement, so a cell that merely *mentions*
+    the pattern somewhere deep inside unrelated control flow doesn't
+    false-positive. Parses `source` directly via `ast`, never executes
+    it; returns `False` if `source` doesn't even parse (same
+    fail-safe precedent as `_has_unbound_required_param`)."""
+
+    def is_dunder_name_compare(node: ast.expr) -> bool:
+        if not isinstance(node, ast.Compare) or len(node.ops) != 1 or not isinstance(node.ops[0], ast.Eq):
+            return False
+        left, right = node.left, node.comparators[0]
+        pair = (left, right)
+        name_side = next((n for n in pair if isinstance(n, ast.Name) and n.id == "__name__"), None)
+        main_side = next(
+            (n for n in pair if isinstance(n, ast.Constant) and n.value == "__main__"), None
+        )
+        return name_side is not None and main_side is not None and name_side is not main_side
+
+    try:
+        tree = ast.parse(textwrap.dedent(source))
+    except SyntaxError:
+        return False
+    func_defs = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    if len(func_defs) != 1:
+        return False
+
+    return any(
+        isinstance(stmt, ast.If) and is_dunder_name_compare(stmt.test) for stmt in func_defs[0].body
+    )
 
 
 def run_tests(
@@ -1436,7 +1513,14 @@ class Kernel:
             if tests_element is not None or _has_unbound_required_param(source, elements):
                 result = define_cell(name, source, session, deck_imports=self.deck.imports)
             else:
-                result = execute_cell(name, source, session, elements=elements, deck_imports=self.deck.imports)
+                result = execute_cell(
+                    name,
+                    source,
+                    session,
+                    elements=elements,
+                    deck_imports=self.deck.imports,
+                    is_main=self.deck.cells[name].is_main or _source_has_main_guard(source),
+                )
             instance.status = result.status
             resolved = resolve_output(result.value) if result.status == "idle" else None
             instance.output = {

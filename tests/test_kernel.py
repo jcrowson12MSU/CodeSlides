@@ -253,6 +253,73 @@ def test_a_cells_own_function_is_never_bound_under_its_literal_def_name_on_a_fai
     assert "cell_a" not in session.namespace  # only bound after a successful call
 
 
+def test_is_main_cell_gets_a_real_dunder_main_guard():
+    """A cell tagged is_main whose body has `if __name__ == "__main__":`
+    must see that guard actually fire -- otherwise the block is
+    permanently dead code (real Python: __name__ is never "__main__"
+    for a plain function's own namespace unless something sets it)."""
+    from codeslides.deck import Cell, Deck
+
+    deck = Deck()
+    deck.add_cell(
+        Cell(
+            name="entry",
+            source='def entry():\n    if __name__ == "__main__":\n        print("ran")\n',
+            is_main=True,
+        )
+    )
+
+    kernel = Kernel(deck)
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    assert session.instances["entry"].status == "idle"
+    assert session.instances["entry"].output["stdout"] == "ran\n"
+
+
+def test_a_cell_with_a_main_guard_in_its_own_source_gets_treated_as_main_too():
+    """Even without the is_main checkbox, a cell whose own source
+    contains `if __name__ == "__main__":` should have that block fire
+    -- the pattern itself is a strong enough signal of intent (per the
+    user's own explicit request), not just the is_main tag."""
+    from codeslides.deck import Cell, Deck
+
+    deck = Deck()
+    deck.add_cell(
+        Cell(
+            name="untagged",
+            source='def untagged():\n    if __name__ == "__main__":\n        print("fired")\n',
+            is_main=False,
+        )
+    )
+
+    kernel = Kernel(deck)
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    assert session.instances["untagged"].output["stdout"] == "fired\n"
+
+
+def test_dunder_name_never_leaks_into_the_shared_namespace():
+    """__name__ == "__main__" must be true only while the main cell
+    itself is running -- never left behind in session.namespace
+    afterward, where an unrelated cell's own (hypothetical) `if
+    __name__ == "__main__":` would otherwise spuriously fire."""
+    from codeslides.deck import Cell, Deck
+
+    deck = Deck()
+    deck.add_cell(
+        Cell(name="entry", source='def entry():\n    pass\n', is_main=True)
+    )
+    deck.add_cell(Cell(name="other", source="def other():\n    pass\n"))
+
+    kernel = Kernel(deck)
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    assert "__name__" not in session.namespace
+
+
 def test_two_cells_with_unrelated_same_named_locals_both_load_and_run():
     """Regression guard for the exact examples/marchingSquares.py bug
     report: a cell with a `for x in range(...)` loop and an unrelated
