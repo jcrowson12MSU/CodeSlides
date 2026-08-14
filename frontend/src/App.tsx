@@ -374,6 +374,15 @@ function App() {
             source: msg.source,
             elements: msg.elements,
             layout: msg.layout,
+            // These four message types never touch is_main (the backend
+            // preserves it -- serialization.py's _detect_is_main, same
+            // precedent as hide_def/layout) -- carry the existing local
+            // value forward rather than dropping to `undefined`/false,
+            // which would make the UI show the main-cell checkbox as
+            // unchecked the moment an unrelated element edit landed.
+            // cell_added is the one case with no existing cell to carry
+            // forward from -- a brand-new cell is never main.
+            is_main: cells[msg.cell_id]?.is_main ?? false,
           }
         } else if (msg.type === 'cell_renamed') {
           if (!changed) cells = { ...cells }
@@ -384,6 +393,14 @@ function App() {
             source: msg.source,
             elements: msg.elements,
             layout: msg.layout,
+            is_main: msg.is_main,
+          }
+        } else if (msg.type === 'main_cell_set') {
+          if (!changed) cells = { ...cells }
+          changed = true
+          if (cells[msg.cell_id]) cells[msg.cell_id] = { ...cells[msg.cell_id], is_main: true }
+          if (msg.previous_main_cell_id && cells[msg.previous_main_cell_id]) {
+            cells[msg.previous_main_cell_id] = { ...cells[msg.previous_main_cell_id], is_main: false }
           }
         } else if (msg.type === 'cell_removed') {
           if (!changed) cells = { ...cells }
@@ -577,6 +594,12 @@ function App() {
     if (!sessionId) return
     clearEditError(cellId)
     send({ type: 'rename_cell', session_id: sessionId, cell_id: cellId, new_name: newName })
+  }
+
+  function handleSetMainCell(cellId: string) {
+    if (!sessionId) return
+    clearEditError(cellId)
+    send({ type: 'set_main_cell', session_id: sessionId, cell_id: cellId })
   }
 
   function handleAddElement(cellId: string, name: string, kind: string, config: Record<string, unknown>) {
@@ -884,6 +907,7 @@ function App() {
               onChangeTestSource={(elementId, source) => handleChangeTestSource(cellId, elementId, source)}
               onToggleCollapse={() => handleToggleCollapse(cellId)}
               onRenameCell={(newName) => handleRenameCell(cellId, newName)}
+              onSetMainCell={() => handleSetMainCell(cellId)}
               onAddElement={(name, kind, config) => handleAddElement(cellId, name, kind, config)}
               onRemoveElement={(elementName) => handleRemoveElement(cellId, elementName)}
               onReorderElements={(elementOrder) => handleReorderElements(cellId, elementOrder)}
@@ -927,6 +951,7 @@ function App() {
           onChangeTestSource={handleChangeTestSource}
           onToggleCollapse={handleToggleCollapse}
           onRenameCell={handleRenameCell}
+          onSetMainCell={handleSetMainCell}
           onAddElement={handleAddElement}
           onRemoveElement={handleRemoveElement}
           onReorderElements={handleReorderElements}

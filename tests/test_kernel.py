@@ -959,6 +959,66 @@ def test_rename_cell_updates_the_kernel_baseline_and_disk(tmp_path):
     assert kernel.deck.slides[0].cell_names == ["coding_demo"]
 
 
+def test_set_main_cell_updates_the_kernel_baseline_and_disk(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    cell = kernel.set_main_cell(session, "live_demo")
+
+    assert cell.is_main is True
+    assert kernel.deck.cells["live_demo"].is_main is True
+    assert "is_main=True" in path.read_text()
+
+
+_TWO_CELL_DECK_SOURCE = (
+    "from codeslides import App, ui\n\n"
+    "app = App()\n\n"
+    "@app.cell\n"
+    "def setup():\n"
+    "    base = 5\n"
+    "    return base\n\n"
+    '@app.cell(instance="editable", elements=[ui.slider("speed", min=1, max=10, default=3)])\n'
+    "def live_demo(speed):\n"
+    "    result = base * speed\n"
+    "    return result\n"
+)
+
+
+def test_set_main_cell_moves_the_designation_between_cells(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _TWO_CELL_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    kernel.set_main_cell(session, "setup")
+    kernel.set_main_cell(session, "live_demo")
+
+    assert kernel.deck.cells["live_demo"].is_main is True
+    assert kernel.deck.cells["setup"].is_main is False
+
+
+def test_set_main_cell_without_a_deck_path_raises():
+    app = App()
+
+    @app.cell
+    def one():
+        pass
+
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+
+    with pytest.raises(ValueError, match="not started from a deck file"):
+        kernel.set_main_cell(session, "one")
+
+
 def test_rename_cell_remaps_the_requesting_sessions_state(tmp_path):
     from codeslides.loader import load_deck
 

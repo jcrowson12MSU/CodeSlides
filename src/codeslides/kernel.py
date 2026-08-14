@@ -1019,7 +1019,12 @@ class Kernel:
             stale = session.source_overrides.pop(old_name)
             new_cell = self.deck.cells[new_name]
             session.source_overrides[new_name] = rebuild_cell_source(
-                new_name, new_cell.instance, new_cell.elements, stale, hide_def=new_cell.hide_def
+                new_name,
+                new_cell.instance,
+                new_cell.elements,
+                stale,
+                hide_def=new_cell.hide_def,
+                is_main=new_cell.is_main,
             )
         if old_name in session.namespace:
             del session.namespace[old_name]
@@ -1027,6 +1032,38 @@ class Kernel:
         cell = self.deck.cells[new_name]
         session.seed_cell_instance(new_name, cell)
         return cell
+
+    def set_main_cell(self, session: Session, cell_name: str) -> Cell:
+        """Mark `cell_name` as the deck's one designated main cell
+        (TODO.md's `is_main` toggle -- "how do I denote the cell
+        containing the main code"), on disk, immediately, same
+        write-immediately precedent as `rename_cell`/`add_cell`: there's
+        no staged/unsaved version of this. `serialization.set_main_cell`
+        also strips `is_main=True` from whichever *other* cell had it
+        (a deck can only have one -- `deck.Deck.add_cell` enforces this
+        at the model layer too), so this single call can flip the
+        designation from one cell to another in one disk write.
+
+        Reloads this Kernel's baseline synchronously afterward (same
+        pattern as `rename_cell`/`remove_cell`) so `self.deck.cells[...]
+        .is_main` is correct for every Session immediately, not just
+        this one -- unlike a cell's own code/elements, `is_main` isn't
+        something a Session can locally override, so there's no
+        `session.source_overrides` bookkeeping needed here the way
+        `rename_cell` has for a renamed cell's pending edit."""
+        if self.deck_path is None:
+            raise ValueError("cannot set a main cell: this Kernel was not started from a deck file")
+        if cell_name not in self.deck.cells:
+            raise ValueError(f"cannot set cell {cell_name!r} as main: it no longer exists")
+
+        from codeslides.serialization import set_main_cell as _set_main_cell_on_disk
+
+        _set_main_cell_on_disk(self.deck_path, cell_name)
+
+        from codeslides.loader import load_deck
+
+        self.reload_deck(load_deck(self.deck_path))
+        return self.deck.cells[cell_name]
 
     def remove_cell(self, session: Session, name: str) -> None:
         """Delete a cell entirely (TODO.md #54's "cells can be deleted

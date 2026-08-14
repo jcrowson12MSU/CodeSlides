@@ -1389,6 +1389,15 @@ body.cs-slides-locked {
   padding: 0.15rem 0.4rem;
 }
 
+.cs-edit-cell-main {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #666;
+  margin-bottom: 0.75rem;
+  cursor: pointer;
+}
+
 .cs-edit-cell-elements-label {
   color: #666;
   display: block;

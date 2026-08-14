@@ -114,6 +114,12 @@ export interface RenameCell {
   new_name: string
 }
 
+export interface SetMainCell {
+  type: 'set_main_cell'
+  session_id: string
+  cell_id: string
+}
+
 export interface RemoveCell {
   type: 'remove_cell'
   session_id: string
@@ -172,6 +178,7 @@ export type ClientMessage =
   | SetSlideOrder
   | SetCellLayout
   | RenameCell
+  | SetMainCell
   | RemoveCell
   | ReorderCells
   | AddElement
@@ -290,6 +297,14 @@ export interface CellRenamed {
   source: string
   elements: ElementMeta[]
   layout: CellLayout | null
+  is_main: boolean
+}
+
+export interface MainCellSet {
+  type: 'main_cell_set'
+  session_id: string
+  cell_id: string
+  previous_main_cell_id: string | null
 }
 
 export interface CellRemoved {
@@ -363,6 +378,7 @@ export type ServerMessage =
   | SlideAdded
   | TitleSlideAdded
   | CellRenamed
+  | MainCellSet
   | CellRemoved
   | CellsReordered
   | ElementAdded

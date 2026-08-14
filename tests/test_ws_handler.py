@@ -21,6 +21,7 @@ from codeslides.protocol import (
     ElementRemoved,
     ElementsReordered,
     ErrorMessage,
+    MainCellSet,
     NavigateSlide,
     RemoveCell,
     RemoveElement,
@@ -33,6 +34,7 @@ from codeslides.protocol import (
     SetCellLayout,
     SetElementConfig,
     SetElementValue,
+    SetMainCell,
     SetSlideOrder,
     SetTestSource,
     SetUiState,
@@ -1161,6 +1163,44 @@ def test_rename_cell_emits_cell_renamed_and_writes_to_disk(tmp_path):
     # undisplayed Cell.source (decorator included) instead.
     assert "@app.cell" not in renamed.source
     assert "def coding_demo(speed):" in renamed.source
+
+
+def test_set_main_cell_emits_main_cell_set_and_writes_to_disk(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(registry, SetMainCell(session_id=session.session_id, cell_id="live_demo"))
+
+    assert isinstance(messages[0], MainCellSet)
+    result = messages[0]
+    assert result.cell_id == "live_demo"
+    assert result.previous_main_cell_id is None
+    assert "is_main=True" in path.read_text()
+    assert registry.kernel.deck.cells["live_demo"].is_main is True
+
+
+def test_set_main_cell_reports_the_previous_main_cell(tmp_path):
+    registry, _path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    handle_message(registry, SetMainCell(session_id=session.session_id, cell_id="setup"))
+    messages = handle_message(registry, SetMainCell(session_id=session.session_id, cell_id="live_demo"))
+
+    result = messages[0]
+    assert result.cell_id == "live_demo"
+    assert result.previous_main_cell_id == "setup"
+    assert registry.kernel.deck.cells["live_demo"].is_main is True
+    assert registry.kernel.deck.cells["setup"].is_main is False
+
+
+def test_set_main_cell_unknown_session_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+
+    messages = handle_message(
+        registry, SetMainCell(session_id="does-not-exist", cell_id="live_demo")
+    )
+
+    assert isinstance(messages[0], ErrorMessage)
 
 
 def test_rename_cell_after_an_unsaved_edit_reflects_the_edit_and_saves_correctly(tmp_path):

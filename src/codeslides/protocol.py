@@ -218,6 +218,23 @@ class RenameCell:
 
 
 @dataclass
+class SetMainCell:
+    """Mark `cell_id` as the deck's one designated main cell
+    (`deck.Cell.is_main` -- "how do I denote the cell containing the
+    main code"). Same write-immediately-to-disk precedent as
+    `RenameCell`/`add_cell`: there's no staged/unsaved version of this.
+    A deck can only have one main cell (`deck.Deck.add_cell` enforces
+    this at the model layer, `serialization.set_main_cell` on disk) --
+    setting a new one automatically un-sets whichever cell had it
+    before, in the same write, so the client never needs to separately
+    clear a previous cell's own toggle state."""
+
+    type: ClassVar[str] = "set_main_cell"
+    session_id: str
+    cell_id: str
+
+
+@dataclass
 class RemoveCell:
     """Delete a cell entirely (TODO.md #54 -- "cells can be deleted and
     rearranged"), on disk, immediately -- same write-immediately
@@ -446,7 +463,9 @@ class CellRenamed:
     (`serialization.rename_cell`'s own `_detect_layout` call), and this
     must carry that forward or the client's local state would silently
     lose track of a previously-saved layout the moment its owning cell
-    gets renamed."""
+    gets renamed. `is_main` for the same reason -- a rename must not
+    silently drop the deck's main-cell designation from the client's
+    local state."""
 
     type: ClassVar[str] = "cell_renamed"
     session_id: str
@@ -456,6 +475,21 @@ class CellRenamed:
     source: str
     elements: list[dict[str, Any]]
     layout: dict[str, Any] | None = None
+    is_main: bool = False
+
+
+@dataclass
+class MainCellSet:
+    """Acknowledges a successful `set_main_cell`. `previous_main_cell_id`
+    is the cell that lost `is_main=True` in the same write (`None` if no
+    cell was previously main) -- letting the client update both cells'
+    toggle state locally instead of needing a full deck refetch to learn
+    which other cell just got un-set."""
+
+    type: ClassVar[str] = "main_cell_set"
+    session_id: str
+    cell_id: str
+    previous_main_cell_id: str | None = None
 
 
 @dataclass
@@ -581,6 +615,7 @@ ClientMessage = (
     | SetSlideOrder
     | SetCellLayout
     | RenameCell
+    | SetMainCell
     | RemoveCell
     | ReorderCells
     | AddElement
@@ -600,6 +635,7 @@ ServerMessage = (
     | SlideAdded
     | TitleSlideAdded
     | CellRenamed
+    | MainCellSet
     | CellRemoved
     | CellsReordered
     | ElementAdded
@@ -626,6 +662,7 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
         SetSlideOrder,
         SetCellLayout,
         RenameCell,
+        SetMainCell,
         RemoveCell,
         ReorderCells,
         AddElement,

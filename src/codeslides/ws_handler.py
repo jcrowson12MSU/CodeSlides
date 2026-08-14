@@ -35,6 +35,7 @@ from codeslides.protocol import (
     ElementRemoved,
     ElementsReordered,
     ErrorMessage,
+    MainCellSet,
     NavigateSlide,
     RemoveCell,
     RemoveElement,
@@ -48,6 +49,7 @@ from codeslides.protocol import (
     SetCellLayout,
     SetElementConfig,
     SetElementValue,
+    SetMainCell,
     SetSlideOrder,
     SetTestSource,
     SetUiState,
@@ -664,6 +666,31 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
                 layout=cell.layout,
+                is_main=cell.is_main,
+            )
+        ]
+
+    if isinstance(message, SetMainCell):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        # Captured before the call -- kernel.set_main_cell replaces
+        # self.deck wholesale (reload_deck), so the previous main cell
+        # (if any) is only ever visible in the deck as it stood before
+        # this call.
+        previous_main = next(
+            (name for name, c in registry.kernel.deck.cells.items() if c.is_main and name != message.cell_id),
+            None,
+        )
+        try:
+            cell = registry.kernel.set_main_cell(session, message.cell_id)
+        except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
+            return [ErrorMessage(message=str(exc), session_id=message.session_id, cell_id=message.cell_id)]
+        return [
+            MainCellSet(
+                session_id=message.session_id,
+                cell_id=cell.name,
+                previous_main_cell_id=previous_main,
             )
         ]
 

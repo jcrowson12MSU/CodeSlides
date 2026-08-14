@@ -98,6 +98,16 @@ class Cell:
     # "__output__" for the Output tab, currently assigned to the lower
     # section; everything else defaults to upper).
     layout: dict[str, Any] | None = None
+    # `@app.cell(is_main=True)` -- marks this cell as the deck's single
+    # designated entry point (e.g. a cell whose body is an
+    # `if __name__ == "__main__":` block, or any cell an author wants to
+    # call out as "the whole program, start to finish"). Purely a marker:
+    # it doesn't change execution, the dependency graph, or what's shown
+    # on any slide by itself -- an author who wants it on the title slide
+    # still lists it explicitly in that slide's own `cells=[...]`, same
+    # as any other cell. At most one cell in a Deck may have this set;
+    # `Deck.__post_init__`/`add_cell` enforce that (see their docstrings).
+    is_main: bool = False
 
     def __post_init__(self) -> None:
         names = [e.name for e in self.elements]
@@ -113,6 +123,7 @@ class Cell:
         elements: list[Element] | None = None,
         hide_def: bool = False,
         layout: dict[str, Any] | None = None,
+        is_main: bool = False,
     ) -> Cell:
         return cls(
             name=fn.__name__,
@@ -122,6 +133,7 @@ class Cell:
             docstring=fn.__doc__ or "",
             hide_def=hide_def,
             layout=layout,
+            is_main=is_main,
         )
 
 
@@ -154,6 +166,13 @@ class Deck:
     def add_cell(self, cell: Cell) -> None:
         if cell.name in self.cells:
             raise ValueError(f"duplicate cell name: {cell.name!r}")
+        if cell.is_main:
+            existing_main = next((c.name for c in self.cells.values() if c.is_main), None)
+            if existing_main is not None:
+                raise ValueError(
+                    f"cannot add cell {cell.name!r} as main: cell {existing_main!r} is already "
+                    "the deck's main cell -- a deck can only have one"
+                )
         self.cells[cell.name] = cell
 
     def add_slide(self, slide: Slide) -> None:

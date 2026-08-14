@@ -40,6 +40,7 @@ class App:
         elements: list[Element] | None = None,
         hide_def: bool = False,
         layout: dict[str, Any] | None = None,
+        is_main: bool = False,
     ):
         """Register a function as a Cell. See ARCHITECTURE.md sections 2-3.
 
@@ -61,12 +62,22 @@ class App:
         `deck.Cell.layout`'s own docstring for its shape) -- written by
         Save, never meant to be hand-authored, but accepted here like any
         other `@app.cell(...)` keyword since that's what a saved file
-        round-trips through on the next load."""
+        round-trips through on the next load.
+
+        `is_main=True` marks this as the deck's one designated entry-
+        point cell (see `deck.Cell.is_main`'s own docstring) -- purely a
+        marker, raises `ValueError` at registration time if another cell
+        already has it set (`Deck.add_cell`)."""
 
         def register(fn):
             self.deck.add_cell(
                 Cell.from_function(
-                    fn, instance=instance, elements=elements, hide_def=hide_def, layout=layout
+                    fn,
+                    instance=instance,
+                    elements=elements,
+                    hide_def=hide_def,
+                    layout=layout,
+                    is_main=is_main,
                 )
             )
             return fn

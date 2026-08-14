@@ -27,6 +27,16 @@ export interface EditCellPanelProps {
   cellId: string
   elements: ElementMeta[]
   onRename: (newName: string) => void
+  /** Whether this cell is currently the deck's one designated main cell
+   * (`deck.Cell.is_main`). */
+  isMain: boolean
+  /** Check the "Main cell" box: mark this cell as main, on disk,
+   * immediately -- a deck can only have one, so the server also un-sets
+   * whichever other cell had it (kernel.Kernel.set_main_cell). No
+   * "uncheck" action: the only way to un-set a main cell is to make a
+   * *different* one main instead, same as a radio button -- there's
+   * nothing meaningful about "no cell is main" as a state to write. */
+  onSetMainCell: () => void
   onAddElement: (name: string, kind: string, config: Record<string, unknown>) => void
   onRemoveElement: (elementName: string) => void
   /** TODO.md #23: reorder elements (up/down arrows) and edit an iframe
@@ -52,6 +62,8 @@ export function EditCellPanel({
   cellId,
   elements,
   onRename,
+  isMain,
+  onSetMainCell,
   onAddElement,
   onRemoveElement,
   onReorderElements,
@@ -161,6 +173,22 @@ export function EditCellPanel({
           Rename
         </button>
       </form>
+
+      <label className="cs-edit-cell-main">
+        <input
+          type="checkbox"
+          checked={isMain}
+          // Checking marks this cell as main; unchecking directly is a
+          // no-op (see onSetMainCell's own docstring for why) -- the
+          // input stays interactive either way so its checked state
+          // always reflects reality, but only the check transition does
+          // anything.
+          onChange={(event) => {
+            if (event.target.checked) onSetMainCell()
+          }}
+        />
+        Main cell
+      </label>
 
       <div className="cs-edit-cell-elements">
         <span className="cs-edit-cell-elements-label">Elements</span>

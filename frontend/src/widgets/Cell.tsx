@@ -36,6 +36,13 @@ export interface CellMeta {
   // saved again, same "local state, not re-derived from props on every
   // render" precedent `codeFraction` already had before this existed.
   layout?: CellLayout | null
+  // Whether this is the deck's one designated main cell (`is_main` in
+  // the .py file). Purely a marker rendered as a badge/checkbox state
+  // (EditCellPanel) -- doesn't change what this Cell renders otherwise.
+  // Defaults to `false` for a brand-new cell (server.py/CellAdded never
+  // set it), so `?? false` at every read site rather than a required
+  // field, matching `layout`'s own "not always present" precedent.
+  is_main?: boolean
 }
 
 export interface CellProps {
@@ -82,6 +89,13 @@ export interface CellProps {
    * immediately -- see EditCellPanel's own docstring for why there's no
    * separate Save step, matching the add-cell button's precedent. */
   onRenameCell: (newName: string) => void
+  /** EditCellPanel's "Main cell" checkbox: mark this cell as the deck's
+   * one designated main cell. Writes to the deck's .py file immediately
+   * (same precedent as onRenameCell) and, server-side, un-sets whichever
+   * other cell had it -- App.tsx's main_cell_set handler updates that
+   * cell's local `is_main` too, so this Cell doesn't need to know or
+   * care which cell that was. */
+  onSetMainCell: () => void
   onAddElement: (name: string, kind: string, config: Record<string, unknown>) => void
   onRemoveElement: (elementName: string) => void
   /** TODO.md #23: reorder this cell's elements (up/down arrows in the
@@ -155,6 +169,7 @@ export function Cell({
   onChangeTestSource,
   onToggleCollapse,
   onRenameCell,
+  onSetMainCell,
   onAddElement,
   onRemoveElement,
   onReorderElements,
@@ -575,6 +590,8 @@ export function Cell({
           cellId={cellId}
           elements={meta.elements}
           onRename={onRenameCell}
+          isMain={meta.is_main ?? false}
+          onSetMainCell={onSetMainCell}
           onAddElement={onAddElement}
           onRemoveElement={onRemoveElement}
           onReorderElements={onReorderElements}

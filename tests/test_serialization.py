@@ -30,6 +30,7 @@ from codeslides.serialization import (
     save_edits,
     set_cell_layout,
     set_element_config,
+    set_main_cell,
     set_notes_docstring,
     set_tests_default,
     title_slide_markdown,
@@ -897,6 +898,69 @@ def test_set_cell_layout_writes_the_layout_on_disk(deck_file):
     # untouched: the cell's own body and its existing elements
     assert "result = base * speed" in deck.cells["live_demo"].source
     assert [e.name for e in deck.cells["live_demo"].elements] == ["speed"]
+
+
+def test_set_main_cell_marks_the_named_cell(deck_file):
+    set_main_cell(str(deck_file), "live_demo")
+
+    deck = load_deck(str(deck_file))
+    assert deck.cells["live_demo"].is_main is True
+    assert deck.cells["setup"].is_main is False
+
+
+def test_set_main_cell_unsets_the_previous_main_cell(deck_file):
+    set_main_cell(str(deck_file), "setup")
+    set_main_cell(str(deck_file), "live_demo")
+
+    deck = load_deck(str(deck_file))
+    assert deck.cells["live_demo"].is_main is True
+    assert deck.cells["setup"].is_main is False
+    # exactly one main cell -- loading itself would already raise if not
+    # (Deck.add_cell's own enforcement), but assert the positive too
+    assert sum(c.is_main for c in deck.cells.values()) == 1
+
+
+def test_set_main_cell_on_the_same_cell_twice_is_a_noop(deck_file):
+    set_main_cell(str(deck_file), "live_demo")
+    before = deck_file.read_text()
+    set_main_cell(str(deck_file), "live_demo")
+    assert deck_file.read_text() == before
+
+
+def test_set_main_cell_raises_on_unknown_cell(deck_file):
+    with pytest.raises(SaveConflictError):
+        set_main_cell(str(deck_file), "does_not_exist")
+
+
+def test_rename_cell_preserves_is_main_on_disk(tmp_path):
+    path = tmp_path / "deck.py"
+    path.write_text(
+        "from codeslides import App\n\napp = App()\n\n"
+        "@app.cell(is_main=True)\ndef setup():\n    base = 5\n    return base\n"
+    )
+
+    rename_cell(str(path), "setup", "entry_point")
+
+    assert "is_main=True" in path.read_text()
+    deck = load_deck(str(path))
+    assert deck.cells["entry_point"].is_main is True
+
+
+def test_add_element_preserves_is_main_on_disk(tmp_path):
+    """Same regression shape as test_add_element_preserves_hide_def_on_disk
+    -- an unrelated element edit must never silently drop the deck's
+    main-cell designation from the cell it touches."""
+    path = tmp_path / "deck.py"
+    path.write_text(
+        "from codeslides import App, ui\n\napp = App()\n\n"
+        '@app.cell(instance="editable", is_main=True)\ndef setup():\n    base = 5\n    return base\n'
+    )
+
+    add_element(str(path), "setup", ui.slider("multiplier", min=1, max=5, default=2))
+
+    assert "is_main=True" in path.read_text()
+    deck = load_deck(str(path))
+    assert deck.cells["setup"].is_main is True
 
 
 def test_set_cell_layout_overwrites_a_previous_layout(deck_file):
