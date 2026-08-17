@@ -36,9 +36,13 @@ export interface CodeEditorProps {
   // 1-indexed line numbers to highlight, and a toggle callback fired when
   // the user clicks a line's gutter -- both optional so callers that don't
   // care about highlighting (there are none yet, but this keeps the prop
-  // additive) can omit them entirely.
+  // additive) can omit them entirely. `shiftKey` lets the caller fill the
+  // range from its own last-toggled line instead of toggling just this
+  // one (standard file-explorer/spreadsheet shift-click range-select
+  // convention), without CodeEditor needing to know what "the range"
+  // means -- it just reports the raw click.
   highlightedLines?: ReadonlySet<number>
-  onToggleLineHighlight?: (line: number) => void
+  onToggleLineHighlight?: (line: number, shiftKey: boolean) => void
 }
 
 // Ephemeral, presenter-driven line highlighting (not persisted, not
@@ -210,9 +214,9 @@ export function CodeEditor({
           return isHighlighted ? highlightGutterMarker : null
         },
         domEventHandlers: {
-          click: (view, line) => {
+          click: (view, line, event) => {
             const lineNumber = view.state.doc.lineAt(line.from).number
-            onToggleLineHighlightRef.current?.(lineNumber)
+            onToggleLineHighlightRef.current?.(lineNumber, (event as MouseEvent).shiftKey)
             return true
           },
         },

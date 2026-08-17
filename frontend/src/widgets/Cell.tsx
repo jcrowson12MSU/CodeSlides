@@ -221,8 +221,54 @@ export function Cell({
   // rather than seeded from `meta`, since there's no server-side
   // "highlighted_lines" concept to seed from.
   const [highlightedLines, setHighlightedLines] = useState<ReadonlySet<number>>(() => new Set())
-  const toggleLineHighlight = useCallback((line: number) => {
+  // Shift-click range-select, file-explorer/spreadsheet convention: the
+  // anchor is the last line clicked *without* shift, and a shift-click
+  // fills anchor..clicked. A *repeated* shift-click (before the next
+  // plain click resets the anchor) must replace the previous range
+  // rather than union with it -- e.g. shift-click(8) then shift-click(4)
+  // should shrink the highlighted range back down, not leave 5-8 lit
+  // from the first shift-click. `lastRangeRef` remembers exactly which
+  // lines the *previous* shift-click in the current sequence added, so
+  // they can be un-added before the new range is filled in -- without
+  // touching lines that were already individually highlighted before
+  // this shift sequence started (`baseBeforeRangeRef`).
+  const highlightAnchorRef = useRef<number | null>(null)
+  const lastRangeRef = useRef<ReadonlySet<number>>(new Set())
+  const baseBeforeRangeRef = useRef<ReadonlySet<number>>(new Set())
+  const toggleLineHighlight = useCallback((line: number, shiftKey: boolean) => {
+    if (shiftKey && highlightAnchorRef.current !== null) {
+      const anchor = highlightAnchorRef.current
+      const [start, end] = anchor <= line ? [anchor, line] : [line, anchor]
+      const range = new Set<number>()
+      for (let l = start; l <= end; l++) range.add(l)
+      // Captured before the updater below runs -- React may defer that
+      // callback, so reassigning lastRangeRef.current synchronously
+      // right after this (as opposed to inside the updater itself) would
+      // let a same-tick re-render race ahead and hand the updater the
+      // *new* range instead of the previous one it needs to undo.
+      const previousRange = lastRangeRef.current
+      const baseBeforeRange = baseBeforeRangeRef.current
+      setHighlightedLines((prev) => {
+        // Roll back exactly what the previous shift-click in this same
+        // sequence added, so a shrinking drag doesn't leave a trailing
+        // tail of still-highlighted lines from the wider range.
+        const withoutLastRange = new Set(prev)
+        for (const l of previousRange) {
+          if (!baseBeforeRange.has(l)) withoutLastRange.delete(l)
+        }
+        for (const l of range) withoutLastRange.add(l)
+        return withoutLastRange
+      })
+      lastRangeRef.current = range
+      // Shift-click extends the existing range but doesn't itself become
+      // the new anchor -- repeated shift-clicks keep growing/shrinking
+      // from the original anchor, matching the same convention.
+      return
+    }
+    highlightAnchorRef.current = line
+    lastRangeRef.current = new Set()
     setHighlightedLines((prev) => {
+      baseBeforeRangeRef.current = prev
       const next = new Set(prev)
       if (next.has(line)) {
         next.delete(line)
