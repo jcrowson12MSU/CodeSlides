@@ -37,18 +37,16 @@ export interface EditCellPanelProps {
    * *different* one main instead, same as a radio button -- there's
    * nothing meaningful about "no cell is main" as a state to write. */
   onSetMainCell: () => void
-  /** Every tab this cell currently has -- one per element (in
-   * declaration order) plus the synthetic Output tab -- for the
-   * "Default view item" checkbox list below. Passed down rather than
-   * recomputed here since `Cell.tsx` already builds this exact list
-   * (`allTabs`) and owns the `OUTPUT_TAB` constant; importing it back
-   * from `./Cell` would be circular (`Cell.tsx` already imports this
-   * component). */
+  /** Every tab this cell currently has that can be picked as the
+   * default -- one per element, in declaration order. Deliberately
+   * excludes the synthetic Output tab (per the user's own request:
+   * it's often empty, and a `tests` element already has its own
+   * always-visible result box) -- `Cell.tsx` filters it out before
+   * passing this down. Passed down rather than recomputed here since
+   * `Cell.tsx` already builds the full tab list (`allTabs`) and owns
+   * the `OUTPUT_TAB` constant; importing it back from `./Cell` would
+   * be circular (`Cell.tsx` already imports this component). */
   tabs: string[]
-  /** The synthetic id `tabs` uses for the Output tab (`Cell.tsx`'s
-   * `OUTPUT_TAB`) -- needed only to render "Output" instead of the raw
-   * id for that one entry. */
-  outputTab: string
   /** Which tab in `tabs` is currently marked as this cell's default
    * (`deck.Cell.layout.default_tab`) -- shows first on load with no
    * prior interaction. */
@@ -89,7 +87,6 @@ export function EditCellPanel({
   isMain,
   onSetMainCell,
   tabs,
-  outputTab,
   defaultTab,
   onSetDefaultTab,
   onAddElement,
@@ -236,7 +233,7 @@ export function EditCellPanel({
                     if (event.target.checked) onSetDefaultTab(tab)
                   }}
                 />
-                {tab === outputTab ? 'Output' : tab}
+                {tab}
               </label>
             </li>
           ))}

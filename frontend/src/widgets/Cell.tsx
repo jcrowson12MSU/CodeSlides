@@ -611,8 +611,15 @@ export function Cell({
           onRename={onRenameCell}
           isMain={meta.is_main ?? false}
           onSetMainCell={onSetMainCell}
-          tabs={allTabs}
-          outputTab={OUTPUT_TAB}
+          // Output is deliberately excluded from the default-view-item
+          // choices -- it's often empty (nothing to show until the
+          // cell actually runs and returns/prints something), and a
+          // cell with a `tests` element already has that test's own
+          // always-visible result box, per the user's own explicit
+          // request. The Output tab itself still exists and is still
+          // reachable by clicking it -- this only narrows what can be
+          // *set as the default*.
+          tabs={allTabs.filter((tab) => tab !== OUTPUT_TAB)}
           defaultTab={defaultTab}
           onSetDefaultTab={handleSetDefaultTab}
           onAddElement={onAddElement}
