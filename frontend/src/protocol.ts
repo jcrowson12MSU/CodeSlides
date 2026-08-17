@@ -11,12 +11,14 @@ import type { SlideMeta } from './widgets/SlideShow'
 // own docstring for the exact shape) -- all keys optional, since a
 // partial dict from an older save format or one written by hand should
 // degrade to remaining browser defaults for whichever keys are missing,
-// not error. `lower_tabs` names element ids (or the synthetic Output
-// tab, OUTPUT_TAB from Cell.tsx) currently assigned to the lower
-// section; everything else defaults to the upper one. `default_tab`
-// (also an element id or OUTPUT_TAB) is which tab shows first on load
-// with no prior interaction -- absent means OUTPUT_TAB, matching the
-// pre-existing hardcoded default.
+// not error. `lower_tabs` names element ids currently assigned to the
+// lower section; everything else defaults to the upper one. `default_tab`
+// (also an element id) is which tab shows first on load with no prior
+// interaction -- absent means the first upper-panel tab (`Cell.tsx`'s
+// `upperActiveTab` fallback). Cells no longer have a synthetic Output
+// tab (removed entirely, per the user's own explicit request) -- a
+// pre-existing saved `"__output__"` in either field just degrades to
+// that same "no tab of that name, fall back" behavior.
 export interface CellLayout {
   code_fraction?: number
   panel_fraction?: number

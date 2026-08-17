@@ -38,26 +38,24 @@ export interface EditCellPanelProps {
    * nothing meaningful about "no cell is main" as a state to write. */
   onSetMainCell: () => void
   /** Every tab this cell currently has that can be picked as the
-   * default -- one per element, in declaration order. Deliberately
-   * excludes the synthetic Output tab (per the user's own request:
-   * it's often empty, and a `tests` element already has its own
-   * always-visible result box) -- `Cell.tsx` filters it out before
-   * passing this down. Passed down rather than recomputed here since
-   * `Cell.tsx` already builds the full tab list (`allTabs`) and owns
-   * the `OUTPUT_TAB` constant; importing it back from `./Cell` would
-   * be circular (`Cell.tsx` already imports this component). */
+   * default -- one per element, in declaration order (cells no longer
+   * have a synthetic Output tab at all, per the user's own explicit
+   * request). Passed down rather than recomputed here since `Cell.tsx`
+   * already builds this exact list (`allTabs`). */
   tabs: string[]
   /** Which tab in `tabs` is currently marked as this cell's default
    * (`deck.Cell.layout.default_tab`) -- shows first on load with no
-   * prior interaction. */
-  defaultTab: string
+   * prior interaction. `undefined` means no explicit default is saved
+   * (falls back to the first upper-panel tab, `Cell.tsx`'s
+   * `upperActiveTab`), so no checkbox is checked in that state. */
+  defaultTab: string | undefined
   /** Check a tab's "Default view item" box: mark that tab as the
    * default, staged in this Session until the next Save (same
    * "layout is staged, not immediate" precedent `onLayoutChange`
    * already has elsewhere -- see `Cell.tsx`'s `emitLayoutChange`). No
-   * "uncheck" action: same "only checking a different one changes
-   * anything" shape `onSetMainCell` already has, since exactly one tab
-   * is always the default (absent means Output, never "none"). */
+   * "uncheck" action: the only way to go back to "no explicit
+   * default" is checking a *different* tab instead, same shape
+   * `onSetMainCell` already has. */
   onSetDefaultTab: (tab: string) => void
   onAddElement: (name: string, kind: string, config: Record<string, unknown>) => void
   onRemoveElement: (elementName: string) => void

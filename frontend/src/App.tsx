@@ -191,41 +191,6 @@ function App() {
     }
   }, [viewMode])
 
-  // Makes the title slide's generated table-of-contents links (TODO.md
-  // #61 follow-up: `title_slide_markdown`'s `[title](#slide-N)` output,
-  // rendered as real `<a>` tags by CellOutputView's markdown path)
-  // actually jump to that slide, since there's no real per-slide URL/
-  // route to let the browser navigate to on its own -- `slideIndex` is
-  // just client-side React state. Delegated on `document` rather than
-  // wired through SlideShow/Cell/CellOutputView's own props: those
-  // components render a cell's markdown output generically for every
-  // cell (dangerouslySetInnerHTML, arbitrary author content), not just
-  // the title slide's, so threading a slide-jump callback all the way
-  // down through three more prop signatures for one specific generated
-  // cell's content isn't worth it next to one delegated listener.
-  //
-  // `N` in `#slide-N` is already the target slide's own 0-based index
-  // in `deck.slides` -- title_slide_markdown's own generator numbers
-  // links starting at 1 specifically because the title slide itself
-  // always takes index 0 (`other_slide_titles[0]` -> final index 1, and
-  // so on), not because the fragment is 1-based and needs converting.
-  // Verified against a real generated deck by hand after an off-by-one
-  // first draft (`- 1` here) landed one slide short of the one actually
-  // clicked.
-  useEffect(() => {
-    if (viewMode !== 'slides' || !deck) return
-    function handleClick(event: MouseEvent) {
-      const target = (event.target as HTMLElement).closest('a[href^="#slide-"]')
-      if (!target) return
-      event.preventDefault()
-      const targetIndex = Number(target.getAttribute('href')!.slice('#slide-'.length))
-      if (!deck || !Number.isInteger(targetIndex)) return
-      setSlideIndex(Math.min(Math.max(targetIndex, 0), deck.slides.length - 1))
-    }
-    document.addEventListener('click', handleClick)
-    return () => document.removeEventListener('click', handleClick)
-  }, [viewMode, deck])
-
   // Shrinks the sticky header's title to 2/3 size once the page has
   // scrolled away from the top -- the title's landing-page-scale default
   // is meant to be seen once, at the top of the page; once you've

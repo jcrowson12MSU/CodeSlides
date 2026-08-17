@@ -1,7 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import type { CellState } from '../deckState'
 import type { CellLayout } from '../protocol'
-import { CellOutputView } from './CellOutputView'
 import { CodeEditor } from './CodeEditor'
 import { EditCellPanel } from './EditCellPanel'
 import { ElementWidget } from './ElementWidget'
@@ -15,13 +14,6 @@ import { isInputElement, isTestElement, isTestResult, isViewerElement, type Elem
 const MIN_CODE_FRACTION = 0.15
 const MAX_CODE_FRACTION = 0.85
 const DEFAULT_CODE_FRACTION = 0.5
-
-// The synthetic tab id for a cell's own output, alongside one tab per
-// element (TODO.md #56). Exported so callers that need to reason about
-// which tab is which (rather than just rendering whatever Cell hands
-// back) can compare against the exact same id rather than re-deriving a
-// matching literal by hand.
-export const OUTPUT_TAB = '__output__'
 
 export interface CellMeta {
   instance: 'static' | 'editable'
@@ -248,7 +240,11 @@ export function Cell({
   // fresh page load shows next time, only an explicit checkbox click
   // does that (`handleSetDefaultTab`). Same lazy-initializer
   // seed-once-on-mount precedent as `codeFraction`/`tabPanel` above.
-  const [defaultTab, setDefaultTab] = useState(() => meta.layout?.default_tab ?? OUTPUT_TAB)
+  // `undefined` means "no explicit default saved" -- falls through to
+  // `upperTabs[0]` (below), same as a saved `default_tab` naming a tab
+  // that no longer exists on this cell (e.g. a pre-existing
+  // `"__output__"` from before the Output tab was removed entirely).
+  const [defaultTab, setDefaultTab] = useState(meta.layout?.default_tab)
 
   // Mirrors codeFraction/panelFraction/tabPanel/defaultTab's *latest*
   // values outside React state, so the pointerup handlers below (stable
@@ -280,7 +276,7 @@ export function Cell({
       code_fraction: current.codeFraction,
       panel_fraction: current.panelFraction,
       lower_tabs: lowerTabs,
-      default_tab: current.defaultTab,
+      ...(current.defaultTab !== undefined ? { default_tab: current.defaultTab } : {}),
     })
   }, [onLayoutChange])
 
@@ -293,7 +289,7 @@ export function Cell({
     [emitLayoutChange],
   )
 
-  const allTabs = [...meta.elements.map((e) => e.name), OUTPUT_TAB]
+  const allTabs = meta.elements.map((e) => e.name)
   const upperTabs = allTabs.filter((t) => panelOf(t) === 'upper')
   const lowerTabs = allTabs.filter((t) => panelOf(t) === 'lower')
 
@@ -305,9 +301,9 @@ export function Cell({
   // the edit panel) rather than rendering a dead selection; `undefined`
   // when the section has no tabs at all (collapses to an empty strip,
   // per the user's own scoping decision).
-  const [upperActiveTabState, setUpperActiveTab] = useState<string>(() => meta.layout?.default_tab ?? OUTPUT_TAB)
+  const [upperActiveTabState, setUpperActiveTab] = useState<string | undefined>(meta.layout?.default_tab)
   const [lowerActiveTabState, setLowerActiveTab] = useState<string | undefined>(undefined)
-  const upperActiveTab = upperTabs.includes(upperActiveTabState) ? upperActiveTabState : upperTabs[0]
+  const upperActiveTab = upperTabs.includes(upperActiveTabState ?? '') ? upperActiveTabState : upperTabs[0]
   const lowerActiveTab = lowerTabs.includes(lowerActiveTabState ?? '') ? lowerActiveTabState : lowerTabs[0]
 
   // Native HTML5 drag-and-drop (no new dependency) -- `draggedTab` tracks
@@ -429,16 +425,12 @@ export function Cell({
   // directly under one shared `.cs-cell-tab-content`.
   function renderTabContent(tab: string) {
     const element = meta.elements.find((e) => e.name === tab)
-    if (!element) {
-      return (
-        <CellOutputView
-          error={state?.error ?? null}
-          kind={state?.kind ?? null}
-          data={state?.data}
-          value={state?.value}
-        />
-      )
-    }
+    // Every tab in `allTabs` (below) comes directly from `meta.elements`
+    // now that the Output tab no longer exists -- this should be
+    // unreachable, but returning null rather than throwing keeps a
+    // stray/legacy tab id (e.g. a saved layout naming a since-removed
+    // element) a silent no-render instead of a crash.
+    if (!element) return null
     if (isInputElement(element.kind)) {
       return <ElementWidget element={element} value={elementValues[element.name]} onSetValue={onSetElementValue} />
     }
@@ -463,10 +455,6 @@ export function Cell({
       )
     }
     return null
-  }
-
-  function tabLabel(tab: string) {
-    return tab === OUTPUT_TAB ? 'Output' : tab
   }
 
   // One section (upper or lower): its own tab strip (a drag source for
@@ -532,7 +520,7 @@ export function Cell({
               }}
               onDragEnd={() => setDraggedTab(null)}
             >
-              {tabLabel(tab)}
+              {tab}
             </button>
           ))}
         </div>
@@ -604,6 +592,16 @@ export function Cell({
         </div>
       )}
 
+      {/* The cell's own Python execution error (a real crash --
+          NameError, SyntaxError, etc. -- distinct from a `tests`
+          element's own pass/fail result, which has its own separate
+          box under its editor). Previously only visible via the now-
+          removed Output tab (CellOutputView); always shown here
+          instead, same "no tab, always there" shape a test's own
+          result box already has -- otherwise the "error" status badge
+          above would be the only signal, with no way to see why. */}
+      {!collapsed && state?.error && <pre className="cs-cell-error">{state.error}</pre>}
+
       {!hideHeader && !collapsed && editing && (
         <EditCellPanel
           cellId={cellId}
@@ -611,15 +609,7 @@ export function Cell({
           onRename={onRenameCell}
           isMain={meta.is_main ?? false}
           onSetMainCell={onSetMainCell}
-          // Output is deliberately excluded from the default-view-item
-          // choices -- it's often empty (nothing to show until the
-          // cell actually runs and returns/prints something), and a
-          // cell with a `tests` element already has that test's own
-          // always-visible result box, per the user's own explicit
-          // request. The Output tab itself still exists and is still
-          // reachable by clicking it -- this only narrows what can be
-          // *set as the default*.
-          tabs={allTabs.filter((tab) => tab !== OUTPUT_TAB)}
+          tabs={allTabs}
           defaultTab={defaultTab}
           onSetDefaultTab={handleSetDefaultTab}
           onAddElement={onAddElement}
@@ -643,12 +633,12 @@ export function Cell({
               here previously left the basis at its CSS default of
               `auto`, which sizes a 0-grow flex item to its *content's*
               intrinsic width -- normally harmless, but a cs.image()
-              data URI or any other long unbroken string in
-              CellOutputView has no wrap points, so the container
-              expanded to fit it and blew the whole page out to
-              thousands of pixels wide (reported bug: slide 2 "Image
-              Preview" with code hidden). `100%` here means "the only
-              column, fill the row." */}
+              data URI or any other long unbroken string in a tab's
+              content has no wrap points, so the container expanded to
+              fit it and blew the whole page out to thousands of pixels
+              wide (reported bug: slide 2 "Image Preview" with code
+              hidden). `100%` here means "the only column, fill the
+              row." */}
           <div
             className="cs-cell-side"
             style={{ flexBasis: hideCode ? '100%' : `${(1 - codeFraction) * 100}%` }}

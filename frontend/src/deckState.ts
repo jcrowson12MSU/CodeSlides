@@ -18,9 +18,14 @@ import type { ServerMessage } from './protocol'
 // authored default -- ARCHITECTURE.md section 3a), so it belongs here.
 export interface CellState {
   status: 'idle' | 'queued' | 'running' | 'error'
-  value: unknown
-  kind: 'text' | 'markdown' | 'image' | 'dataframe' | null
-  data: unknown
+  // The cell's own Python execution error (a real crash -- NameError,
+  // SyntaxError, etc. -- not a `tests` element's pass/fail, which has
+  // its own separate always-visible result box). This is the only
+  // place a crash's actual traceback is ever surfaced to the user, so
+  // it's kept even though the Output tab it used to render through
+  // (value/kind/data, CellOutputView) was removed entirely -- Cell.tsx
+  // renders this directly, always visible, same "no tab, always
+  // there" shape a test's own result box already has.
   error: string | null
   elementContent: Record<string, unknown>
 }
@@ -29,9 +34,6 @@ export type DeckState = Record<string, CellState>
 
 const EMPTY_CELL: CellState = {
   status: 'idle',
-  value: undefined,
-  kind: null,
-  data: undefined,
   error: null,
   elementContent: {},
 }
@@ -54,9 +56,6 @@ export function reduceDeckState(messages: ServerMessage[]): DeckState {
       case 'cell_output':
         state[message.cell_id] = {
           ...cellFor(message.cell_id),
-          value: message.output.value,
-          kind: message.output.kind,
-          data: message.output.data,
           error: message.error,
         }
         break
