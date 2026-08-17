@@ -30,6 +30,7 @@ from codeslides.serialization import (
     save_edits,
     set_cell_layout,
     set_element_config,
+    set_hide_code,
     set_main_cell,
     set_notes_docstring,
     set_tests_default,
@@ -961,6 +962,69 @@ def test_add_element_preserves_is_main_on_disk(tmp_path):
     assert "is_main=True" in path.read_text()
     deck = load_deck(str(path))
     assert deck.cells["setup"].is_main is True
+
+
+def test_set_hide_code_marks_the_named_cell(deck_file):
+    set_hide_code(str(deck_file), "live_demo", True)
+
+    deck = load_deck(str(deck_file))
+    assert deck.cells["live_demo"].hide_code is True
+    assert deck.cells["setup"].hide_code is False
+
+
+def test_set_hide_code_can_clear_it_again(deck_file):
+    set_hide_code(str(deck_file), "live_demo", True)
+    set_hide_code(str(deck_file), "live_demo", False)
+
+    deck = load_deck(str(deck_file))
+    assert deck.cells["live_demo"].hide_code is False
+
+
+def test_set_hide_code_does_not_affect_other_cells(deck_file):
+    # Unlike set_main_cell, there's no uniqueness constraint -- setting
+    # one cell's hide_code must never touch another cell's.
+    set_hide_code(str(deck_file), "setup", True)
+    set_hide_code(str(deck_file), "live_demo", True)
+
+    deck = load_deck(str(deck_file))
+    assert deck.cells["setup"].hide_code is True
+    assert deck.cells["live_demo"].hide_code is True
+
+
+def test_set_hide_code_raises_on_unknown_cell(deck_file):
+    with pytest.raises(SaveConflictError):
+        set_hide_code(str(deck_file), "does_not_exist", True)
+
+
+def test_rename_cell_preserves_hide_code_on_disk(tmp_path):
+    path = tmp_path / "deck.py"
+    path.write_text(
+        "from codeslides import App\n\napp = App()\n\n"
+        "@app.cell(hide_code=True)\ndef setup():\n    base = 5\n    return base\n"
+    )
+
+    rename_cell(str(path), "setup", "entry_point")
+
+    assert "hide_code=True" in path.read_text()
+    deck = load_deck(str(path))
+    assert deck.cells["entry_point"].hide_code is True
+
+
+def test_add_element_preserves_hide_code_on_disk(tmp_path):
+    """Same regression shape as test_add_element_preserves_is_main_on_disk
+    -- an unrelated element edit must never silently drop a cell's
+    hide_code declaration."""
+    path = tmp_path / "deck.py"
+    path.write_text(
+        "from codeslides import App, ui\n\napp = App()\n\n"
+        '@app.cell(instance="editable", hide_code=True)\ndef setup():\n    base = 5\n    return base\n'
+    )
+
+    add_element(str(path), "setup", ui.slider("multiplier", min=1, max=5, default=2))
+
+    assert "hide_code=True" in path.read_text()
+    deck = load_deck(str(path))
+    assert deck.cells["setup"].hide_code is True
 
 
 def test_set_cell_layout_overwrites_a_previous_layout(deck_file):

@@ -296,6 +296,7 @@ def parse_cell(cell: Cell) -> Cell:
         hide_def=cell.hide_def,
         layout=cell.layout,
         is_main=cell.is_main,
+        hide_code=cell.hide_code,
     )
 
 

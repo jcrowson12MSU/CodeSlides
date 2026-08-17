@@ -36,6 +36,7 @@ export interface SlideShowProps {
   onToggleCollapse: (cellId: string) => void
   onRenameCell: (cellId: string, newName: string) => void
   onSetMainCell: (cellId: string) => void
+  onSetHideCode: (cellId: string, hideCode: boolean) => void
   onAddElement: (cellId: string, name: string, kind: string, config: Record<string, unknown>) => void
   onRemoveElement: (cellId: string, elementName: string) => void
   onReorderElements: (cellId: string, elementOrder: string[]) => void
@@ -50,11 +51,13 @@ export interface SlideShowProps {
 // is a live, embedded, runnable part of the presentation (R1) -- not a
 // static snippet -- so navigating slides never touches the kernel;
 // prev/next is pure client-side view state, same isolation-respecting
-// shape as collapse (ARCHITECTURE.md section 8). Code is always shown
-// here (per the user's request) -- `SlideMeta.reveal_code` and each
-// `Cell`'s own `hideCode` toggle are no longer wired to anything in this
-// view, kept only so an existing deck's `@app.slide(reveal_code=...)`
-// doesn't need to be edited/stripped out to keep loading.
+// shape as collapse (ARCHITECTURE.md section 8). Code is shown here by
+// default, same as Cells view -- `SlideMeta.reveal_code` is no longer
+// wired to anything in this view, kept only so an existing deck's
+// `@app.slide(reveal_code=...)` doesn't need to be edited/stripped out
+// to keep loading. A cell's own author-set `hide_code` (Cell.tsx's own
+// `meta.hide_code` combination) still applies here same as Cells view --
+// there's genuinely nothing to reveal for a cell declared code-free.
 export function SlideShow({
   slides,
   headerCollapsed,
@@ -73,6 +76,7 @@ export function SlideShow({
   onToggleCollapse,
   onRenameCell,
   onSetMainCell,
+  onSetHideCode,
   onAddElement,
   onRemoveElement,
   onReorderElements,
@@ -215,6 +219,7 @@ export function SlideShow({
               onToggleCollapse={() => onToggleCollapse(cellId)}
               onRenameCell={(newName) => onRenameCell(cellId, newName)}
               onSetMainCell={() => onSetMainCell(cellId)}
+              onSetHideCode={(hideCode) => onSetHideCode(cellId, hideCode)}
               onAddElement={(name, kind, config) => onAddElement(cellId, name, kind, config)}
               onRemoveElement={(elementName) => onRemoveElement(cellId, elementName)}
               onReorderElements={(elementOrder) => onReorderElements(cellId, elementOrder)}

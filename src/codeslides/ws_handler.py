@@ -35,6 +35,7 @@ from codeslides.protocol import (
     ElementRemoved,
     ElementsReordered,
     ErrorMessage,
+    HideCodeSet,
     MainCellSet,
     NavigateSlide,
     RemoveCell,
@@ -49,6 +50,7 @@ from codeslides.protocol import (
     SetCellLayout,
     SetElementConfig,
     SetElementValue,
+    SetHideCode,
     SetMainCell,
     SetSlideOrder,
     SetTestSource,
@@ -667,6 +669,7 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 ],
                 layout=cell.layout,
                 is_main=cell.is_main,
+                hide_code=cell.hide_code,
             )
         ]
 
@@ -691,6 +694,22 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 session_id=message.session_id,
                 cell_id=cell.name,
                 previous_main_cell_id=previous_main,
+            )
+        ]
+
+    if isinstance(message, SetHideCode):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        try:
+            cell = registry.kernel.set_hide_code(session, message.cell_id, message.hide_code)
+        except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
+            return [ErrorMessage(message=str(exc), session_id=message.session_id, cell_id=message.cell_id)]
+        return [
+            HideCodeSet(
+                session_id=message.session_id,
+                cell_id=cell.name,
+                hide_code=cell.hide_code,
             )
         ]
 

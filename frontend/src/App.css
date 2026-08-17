@@ -1471,7 +1471,8 @@ body.cs-slides-locked {
   padding: 0.15rem 0.4rem;
 }
 
-.cs-edit-cell-main {
+.cs-edit-cell-main,
+.cs-edit-cell-hide-code {
   display: flex;
   align-items: center;
   gap: 0.4rem;
@@ -1542,7 +1543,8 @@ body.cs-slides-locked {
   font-style: normal;
 }
 
-.cs-edit-cell-element-row > button {
+.cs-edit-cell-element-row > button,
+.cs-edit-cell-image-list-item > button {
   border: none;
   background: none;
   color: #c0392b;
@@ -1594,6 +1596,7 @@ body.cs-slides-locked {
 
 .cs-edit-cell-image-upload {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
   margin: 0.25rem 0 0.4rem 1.6rem;
@@ -1602,6 +1605,39 @@ body.cs-slides-locked {
 }
 
 .cs-edit-cell-image-upload label {
+  color: #666;
+}
+
+.cs-edit-cell-image-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  width: 100%;
+  margin: 0.3rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cs-edit-cell-image-list-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.cs-edit-cell-image-list-item img {
+  width: 2rem;
+  height: 2rem;
+  object-fit: cover;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.cs-edit-cell-image-filename {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: #666;
 }
 

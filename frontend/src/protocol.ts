@@ -126,6 +126,13 @@ export interface SetMainCell {
   cell_id: string
 }
 
+export interface SetHideCode {
+  type: 'set_hide_code'
+  session_id: string
+  cell_id: string
+  hide_code: boolean
+}
+
 export interface RemoveCell {
   type: 'remove_cell'
   session_id: string
@@ -185,6 +192,7 @@ export type ClientMessage =
   | SetCellLayout
   | RenameCell
   | SetMainCell
+  | SetHideCode
   | RemoveCell
   | ReorderCells
   | AddElement
@@ -304,6 +312,7 @@ export interface CellRenamed {
   elements: ElementMeta[]
   layout: CellLayout | null
   is_main: boolean
+  hide_code: boolean
 }
 
 export interface MainCellSet {
@@ -311,6 +320,13 @@ export interface MainCellSet {
   session_id: string
   cell_id: string
   previous_main_cell_id: string | null
+}
+
+export interface HideCodeSet {
+  type: 'hide_code_set'
+  session_id: string
+  cell_id: string
+  hide_code: boolean
 }
 
 export interface CellRemoved {
@@ -385,6 +401,7 @@ export type ServerMessage =
   | TitleSlideAdded
   | CellRenamed
   | MainCellSet
+  | HideCodeSet
   | CellRemoved
   | CellsReordered
   | ElementAdded

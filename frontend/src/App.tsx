@@ -339,15 +339,17 @@ function App() {
             source: msg.source,
             elements: msg.elements,
             layout: msg.layout,
-            // These four message types never touch is_main (the backend
-            // preserves it -- serialization.py's _detect_is_main, same
-            // precedent as hide_def/layout) -- carry the existing local
-            // value forward rather than dropping to `undefined`/false,
-            // which would make the UI show the main-cell checkbox as
+            // These four message types never touch is_main/hide_code
+            // (the backend preserves both -- serialization.py's
+            // _detect_is_main/_detect_hide_code, same precedent as
+            // hide_def/layout) -- carry the existing local value forward
+            // rather than dropping to `undefined`/false, which would
+            // make the UI show the main-cell/hide-code checkboxes as
             // unchecked the moment an unrelated element edit landed.
             // cell_added is the one case with no existing cell to carry
-            // forward from -- a brand-new cell is never main.
+            // forward from -- a brand-new cell is never main or hidden.
             is_main: cells[msg.cell_id]?.is_main ?? false,
+            hide_code: cells[msg.cell_id]?.hide_code ?? false,
           }
         } else if (msg.type === 'cell_renamed') {
           if (!changed) cells = { ...cells }
@@ -359,6 +361,7 @@ function App() {
             elements: msg.elements,
             layout: msg.layout,
             is_main: msg.is_main,
+            hide_code: msg.hide_code,
           }
         } else if (msg.type === 'main_cell_set') {
           if (!changed) cells = { ...cells }
@@ -366,6 +369,12 @@ function App() {
           if (cells[msg.cell_id]) cells[msg.cell_id] = { ...cells[msg.cell_id], is_main: true }
           if (msg.previous_main_cell_id && cells[msg.previous_main_cell_id]) {
             cells[msg.previous_main_cell_id] = { ...cells[msg.previous_main_cell_id], is_main: false }
+          }
+        } else if (msg.type === 'hide_code_set') {
+          if (!changed) cells = { ...cells }
+          changed = true
+          if (cells[msg.cell_id]) {
+            cells[msg.cell_id] = { ...cells[msg.cell_id], hide_code: msg.hide_code }
           }
         } else if (msg.type === 'cell_removed') {
           if (!changed) cells = { ...cells }
@@ -565,6 +574,12 @@ function App() {
     if (!sessionId) return
     clearEditError(cellId)
     send({ type: 'set_main_cell', session_id: sessionId, cell_id: cellId })
+  }
+
+  function handleSetHideCode(cellId: string, hideCode: boolean) {
+    if (!sessionId) return
+    clearEditError(cellId)
+    send({ type: 'set_hide_code', session_id: sessionId, cell_id: cellId, hide_code: hideCode })
   }
 
   function handleAddElement(cellId: string, name: string, kind: string, config: Record<string, unknown>) {
@@ -873,6 +888,7 @@ function App() {
               onToggleCollapse={() => handleToggleCollapse(cellId)}
               onRenameCell={(newName) => handleRenameCell(cellId, newName)}
               onSetMainCell={() => handleSetMainCell(cellId)}
+              onSetHideCode={(hideCode) => handleSetHideCode(cellId, hideCode)}
               onAddElement={(name, kind, config) => handleAddElement(cellId, name, kind, config)}
               onRemoveElement={(elementName) => handleRemoveElement(cellId, elementName)}
               onReorderElements={(elementOrder) => handleReorderElements(cellId, elementOrder)}
@@ -917,6 +933,7 @@ function App() {
           onToggleCollapse={handleToggleCollapse}
           onRenameCell={handleRenameCell}
           onSetMainCell={handleSetMainCell}
+          onSetHideCode={handleSetHideCode}
           onAddElement={handleAddElement}
           onRemoveElement={handleRemoveElement}
           onReorderElements={handleReorderElements}

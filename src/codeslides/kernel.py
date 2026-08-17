@@ -1102,6 +1102,7 @@ class Kernel:
                 stale,
                 hide_def=new_cell.hide_def,
                 is_main=new_cell.is_main,
+                hide_code=new_cell.hide_code,
             )
         if old_name in session.namespace:
             del session.namespace[old_name]
@@ -1136,6 +1137,26 @@ class Kernel:
         from codeslides.serialization import set_main_cell as _set_main_cell_on_disk
 
         _set_main_cell_on_disk(self.deck_path, cell_name)
+
+        from codeslides.loader import load_deck
+
+        self.reload_deck(load_deck(self.deck_path))
+        return self.deck.cells[cell_name]
+
+    def set_hide_code(self, session: Session, cell_name: str, hide_code: bool) -> Cell:
+        """Set/clear `cell_name`'s `hide_code` (`deck.Cell.hide_code`),
+        on disk, immediately -- same write-immediately, reload-baseline-
+        synchronously precedent as `set_main_cell`. Unlike `is_main`,
+        there's no uniqueness constraint to enforce, so this only ever
+        touches `cell_name`'s own decorator."""
+        if self.deck_path is None:
+            raise ValueError("cannot set hide_code: this Kernel was not started from a deck file")
+        if cell_name not in self.deck.cells:
+            raise ValueError(f"cannot set hide_code for cell {cell_name!r}: it no longer exists")
+
+        from codeslides.serialization import set_hide_code as _set_hide_code_on_disk
+
+        _set_hide_code_on_disk(self.deck_path, cell_name, hide_code)
 
         from codeslides.loader import load_deck
 
@@ -1453,7 +1474,12 @@ class Kernel:
 
         cell = self.deck.cells[cell_name]
         session.source_overrides[cell_name] = rebuild_cell_source(
-            cell_name, cell.instance, cell.elements, session.source_overrides[cell_name], hide_def=cell.hide_def
+            cell_name,
+            cell.instance,
+            cell.elements,
+            session.source_overrides[cell_name],
+            hide_def=cell.hide_def,
+            hide_code=cell.hide_code,
         )
 
     def _effective_graph(self, session: Session) -> DependencyGraph:
