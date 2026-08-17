@@ -1,6 +1,8 @@
 import { useCallback, useRef, useState } from 'react'
 import type { CellState } from '../deckState'
 import type { CellLayout } from '../protocol'
+import { CellOutputView } from './CellOutputView'
+import { hasCellOutput } from './cellOutput'
 import { CodeEditor } from './CodeEditor'
 import { EditCellPanel } from './EditCellPanel'
 import { ElementWidget } from './ElementWidget'
@@ -595,12 +597,25 @@ export function Cell({
       {/* The cell's own Python execution error (a real crash --
           NameError, SyntaxError, etc. -- distinct from a `tests`
           element's own pass/fail result, which has its own separate
-          box under its editor). Previously only visible via the now-
-          removed Output tab (CellOutputView); always shown here
-          instead, same "no tab, always there" shape a test's own
-          result box already has -- otherwise the "error" status badge
-          above would be the only signal, with no way to see why. */}
+          box under its editor). Always shown here, directly under the
+          header -- no tab, same "no tab, always there" shape a test's
+          own result box already has -- otherwise the "error" status
+          badge above would be the only signal, with no way to see why. */}
       {!collapsed && state?.error && <pre className="cs-cell-error">{state.error}</pre>}
+
+      {/* The cell's own returned value (ARCHITECTURE.md section 6,
+          codeslides.output.resolve_output) -- text, cs.md() markdown,
+          an image, or a DataFrame. Same always-visible-block shape as
+          the error above (there's no Output tab anymore, per the
+          user's own explicit request), gated on hasCellOutput so a
+          side-effect-only cell with nothing to show renders no block
+          at all rather than an empty one. Never shown alongside an
+          error -- a crashed cell's last-successful value is stale and
+          would be confusing next to the traceback explaining why it's
+          no longer current. */}
+      {!collapsed && !state?.error && hasCellOutput(state?.kind ?? null, state?.data, state?.value) && (
+        <CellOutputView kind={state?.kind ?? null} data={state?.data} value={state?.value} />
+      )}
 
       {!hideHeader && !collapsed && editing && (
         <EditCellPanel
