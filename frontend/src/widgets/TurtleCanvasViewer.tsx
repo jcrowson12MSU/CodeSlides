@@ -282,7 +282,27 @@ export function TurtleCanvasViewer({ elementId, content, width, height }: Turtle
   return (
     <div className="cs-element cs-turtle-viewer">
       <span className="cs-element-label">{elementId}</span>
-      <canvas ref={canvasRef} width={width} height={height} className="cs-turtle-canvas" />
+      {/* `aspectRatio` (not settable from a plain CSS class, since it
+          depends on this cell's own author-declared width/height) is
+          what actually keeps the canvas's own on-screen *box* square/
+          rectangular in the same proportions as its drawing buffer --
+          per the user's own explicit request, scaled to fill its
+          container without changing that ratio, fit to whichever of
+          width/height is the tighter constraint. `object-fit: contain`
+          (App.css's .cs-turtle-canvas) alone isn't enough for this: it
+          only fits the drawing buffer *inside* whatever box the canvas
+          already has, it doesn't make the box itself preserve aspect
+          ratio -- confirmed by hand: without `aspectRatio` here, a
+          canvas squeezed into a short-but-wide panel became a thin
+          horizontal strip (letterboxed inside, but visibly non-square
+          as an element) rather than shrinking to a smaller square. */}
+      <canvas
+        ref={canvasRef}
+        width={width}
+        height={height}
+        className="cs-turtle-canvas"
+        style={{ aspectRatio: `${width} / ${height}` }}
+      />
     </div>
   )
 }

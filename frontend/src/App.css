@@ -797,10 +797,73 @@ body.cs-resizing-vertical {
 .cs-turtle-viewer {
   flex-direction: column;
   align-items: flex-start;
+  /* Fills whatever height .cs-cell-tab-content (the scrollable tab
+     panel) gives it, rather than only ever being as tall as its own
+     content -- needed so the canvas below has a real box, not just its
+     own native pixel size, to scale into. `min-height: 0` is required
+     alongside `flex: 1 1 auto` for the same reason it's needed on
+     .cs-cell-tab-content itself (App.css's own comment above): without
+     it, a flex item refuses to shrink below its content's intrinsic
+     size, which would defeat the whole point of letting the canvas
+     scale down to fit a small panel.
+
+     `align-self: stretch` overrides just this one child's cross-axis
+     alignment within .cs-element-wrapper's *row* flex layout (its own
+     `align-items: flex-start`, left alone -- other viewer kinds sharing
+     that wrapper, e.g. notes/image, rely on their content staying
+     top-aligned rather than stretched). Without this, `flex: 1 1 auto`
+     above only ever controlled this element's *width* (the wrapper's
+     main axis, since it's a row, not a column) -- its height stayed
+     purely intrinsic (the canvas's own native size) regardless of how
+     much vertical room .cs-cell-tab-content actually had, which is the
+     one gap that let the canvas ignore a shrunk panel entirely.
+     Verified by hand: without `align-self: stretch` here, forcing the
+     canvas's own panel down to a few px of flex share had zero visual
+     effect -- the canvas stayed at its full native size regardless. */
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-height: 0;
+  width: 100%;
 }
 
 .cs-turtle-canvas {
+  /* Per the user's own explicit request: the canvas's on-screen box
+     scales to fill its container without changing aspect ratio, fit
+     to whichever of width/height is the tighter constraint -- while
+     its drawing buffer (the `width`/`height` HTML attributes
+     TurtleCanvasViewer.tsx sets from the author's own
+     ui.turtle_canvas(width=, height=) config, left completely
+     untouched here -- every coordinate the turtle replay logic
+     computes is still relative to that native size, not this display
+     size) keeps that same ratio via the inline `aspectRatio` style
+     TurtleCanvasViewer.tsx itself sets (computed from those same
+     width/height props, so it can't drift out of sync with them the
+     way a fixed CSS ratio would).
+
+     The actual "fit the smaller dimension" mechanism is `max-width:
+     100%; max-height: 100%` together with `aspect-ratio`: the browser
+     picks the largest box satisfying the ratio that doesn't exceed
+     *either* cap, which is precisely "shrink to whichever axis is
+     tighter" -- confirmed by hand this differs from `width: 100%;
+     height: 100%` (which was tried first): that forces the box to
+     fill both axes independently, producing a non-square box out of
+     proportion with the drawing buffer whenever the container itself
+     isn't already that same ratio, with `object-fit: contain` then
+     only fitting the *content* inside that wrong-shaped box rather
+     than the box itself staying correctly proportioned.
+
+     `flex: 0 1 auto` (shrink-only, no grow) lets it shrink below its
+     own intrinsic size within .cs-turtle-viewer's column layout when
+     the panel is small (`min-height: 0` needed for the same reason
+     every other flex ancestor here needs it -- a flex item's default
+     min-height is its content's own intrinsic size) without also
+     fighting `aspect-ratio`'s own sizing by trying to *grow* along
+     the flex axis the way `flex: 1 1 auto` would. */
+  flex: 0 1 auto;
+  min-height: 0;
   max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
   border: 1px solid #ddd;
   border-radius: 4px;
   background: white;
@@ -975,11 +1038,24 @@ body.cs-resizing-vertical {
   display: flex;
   align-items: flex-start;
   gap: 0.35rem;
+  /* Lets this wrapper actually fill (and shrink within) whatever
+     vertical space .cs-cell-tab-content allocates it, rather than
+     only ever being as tall as its own content -- without this, a
+     turtle_canvas element inside can never shrink below its own
+     native pixel height no matter how small its panel is dragged,
+     breaking the canvas's own fit-to-container scaling (App.css's
+     .cs-turtle-canvas comment) partway up the ancestor chain. Same
+     `min-height: 0` fix .cs-cell-tab-content/.cs-turtle-viewer already
+     need for the identical reason (a flex item's default min-height
+     is its content's own intrinsic size, which defeats shrinking). */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .cs-element-wrapper > *:first-child {
   flex: 1;
   min-width: 0;
+  min-height: 0;
 }
 
 .cs-minimize-toggle {
