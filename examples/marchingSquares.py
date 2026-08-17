@@ -127,7 +127,7 @@ return (6, 7)"""
     ],
     hide_def=True,
     is_main=True,
-    layout={'code_fraction': 0.5, 'panel_fraction': 0.5, 'lower_tabs': ['canvas']},
+    layout={'code_fraction': 0.5, 'panel_fraction': 0.5, 'lower_tabs': ['canvas'], 'default_tab': 'Contents'},
 )
 def cell_4():
     """# Marching Squares
