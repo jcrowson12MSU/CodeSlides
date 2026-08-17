@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 // Mirrors the command shapes codeslides.turtle emits (see turtle.py's
 // `_TurtleState.emit`). Kept loose (`Record<string, unknown>` fallback per
@@ -73,6 +73,75 @@ export interface TurtleCanvasViewerProps {
 // build on this same command list later without changing the wire format.
 export function TurtleCanvasViewer({ elementId, content, width, height }: TurtleCanvasViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  // The flex-sized slot beneath .cs-element-label -- NOT the whole
+  // .cs-turtle-viewer -- that ResizeObserver measures below, to decide
+  // whether to grow the canvas past its native pixel size. A dedicated
+  // element rather than the viewer itself so the label's own height is
+  // excluded from what "available space" means for this measurement.
+  const slotRef = useRef<HTMLDivElement | null>(null)
+  // Only set once the slot has room to grow the canvas past its native
+  // `width`/`height` attributes -- `null` (the far more common case)
+  // means "render at native size, let App.css's own `max-width`/
+  // `max-height` + `aspect-ratio` handle shrinking it if the panel is
+  // small," same as this component always worked before. `null` is
+  // also the deliberate steady state while a panel is *shrunk*: the
+  // canvas stays in normal document flow (App.css's own comment on why)
+  // so its own box is what gives `.cs-turtle-canvas-slot`/the row their
+  // natural height in the first place -- if this state also tried to
+  // cap the canvas down for the shrink direction, it would create a
+  // circular dependency (the slot's measured size depends on the
+  // canvas's current box, which this effect would then try to shrink
+  // based on that same measurement) confirmed by hand to read back a
+  // stale, wrong size. Growing doesn't have this problem: growth only
+  // ever *adds* to the canvas's own contribution to the row's height,
+  // so measuring "is there more room than the canvas already claims"
+  // is safe to compute from the slot's current box.
+  const [grownSize, setGrownSize] = useState<{ w: number; h: number } | null>(null)
+
+  useEffect(() => {
+    const slotEl = slotRef.current
+    if (!slotEl) return
+    const ratio = width / (height || 1)
+    function fit(containerWidth: number, containerHeight: number) {
+      // `<= 0` falls back to `null` (native/CSS-driven sizing), not an
+      // early return -- a real bug caught by hand: this used to return
+      // without touching `grownSize` at all, so a container that
+      // shrank to 0 while a previous measurement had already grown the
+      // canvas left the stale grown size in place forever (the in-flow
+      // canvas's own now-oversized box then propped this same slot's
+      // height back open, so no further ResizeObserver callback ever
+      // reported a container tall enough to re-trigger this function
+      // and correct it -- the shrink direction got stuck permanently).
+      if (containerWidth <= 0 || containerHeight <= 0) {
+        setGrownSize(null)
+        return
+      }
+      // Fit to whichever axis is tighter, same "shrink to whichever
+      // dimension is the binding constraint" intent App.css's own
+      // `max-width`/`max-height` + `aspect-ratio` combination already
+      // has for the *shrink* direction -- this only ever applies the
+      // result when it's larger than the canvas's own native size (the
+      // one direction that combination can't reach on its own).
+      let w = containerWidth
+      let h = w / ratio
+      if (h > containerHeight) {
+        h = containerHeight
+        w = h * ratio
+      }
+      if (w > width && h > height) setGrownSize({ w, h })
+      else setGrownSize(null)
+    }
+    fit(slotEl.clientWidth, slotEl.clientHeight)
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (!entry) return
+      const box = entry.contentBoxSize?.[0]
+      if (box) fit(box.inlineSize, box.blockSize)
+      else fit(slotEl.clientWidth, slotEl.clientHeight)
+    })
+    observer.observe(slotEl)
+    return () => observer.disconnect()
+  }, [width, height])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -282,27 +351,34 @@ export function TurtleCanvasViewer({ elementId, content, width, height }: Turtle
   return (
     <div className="cs-element cs-turtle-viewer">
       <span className="cs-element-label">{elementId}</span>
-      {/* `aspectRatio` (not settable from a plain CSS class, since it
-          depends on this cell's own author-declared width/height) is
-          what actually keeps the canvas's own on-screen *box* square/
-          rectangular in the same proportions as its drawing buffer --
-          per the user's own explicit request, scaled to fill its
-          container without changing that ratio, fit to whichever of
-          width/height is the tighter constraint. `object-fit: contain`
-          (App.css's .cs-turtle-canvas) alone isn't enough for this: it
-          only fits the drawing buffer *inside* whatever box the canvas
-          already has, it doesn't make the box itself preserve aspect
-          ratio -- confirmed by hand: without `aspectRatio` here, a
-          canvas squeezed into a short-but-wide panel became a thin
-          horizontal strip (letterboxed inside, but visibly non-square
-          as an element) rather than shrinking to a smaller square. */}
-      <canvas
-        ref={canvasRef}
-        width={width}
-        height={height}
-        className="cs-turtle-canvas"
-        style={{ aspectRatio: `${width} / ${height}` }}
-      />
+      {/* The flex-sized slot `slotRef` measures -- excludes the label's
+          own height from what "is there room to grow" is computed
+          against. */}
+      <div className="cs-turtle-canvas-slot" ref={slotRef}>
+        {/* `aspectRatio` (not settable from a plain CSS class, since it
+            depends on this cell's own author-declared width/height) is
+            what keeps the canvas's own on-screen box square/rectangular
+            in the same proportions as its drawing buffer when shrinking
+            (App.css's `max-width`/`max-height: 100%` picks the largest
+            box satisfying this ratio that doesn't exceed either cap).
+            `grownSize`'s explicit pixel width/height (set only once
+            ResizeObserver measures more room than the canvas's own
+            native size -- ordinarily `null`) overrides both for the one
+            direction pure CSS couldn't reach; see `grownSize`'s own
+            docstring above for why growing and shrinking need different
+            mechanisms here. */}
+        <canvas
+          ref={canvasRef}
+          width={width}
+          height={height}
+          className="cs-turtle-canvas"
+          style={
+            grownSize
+              ? { width: `${grownSize.w}px`, height: `${grownSize.h}px` }
+              : { aspectRatio: `${width} / ${height}` }
+          }
+        />
+      </div>
     </div>
   )
 }
