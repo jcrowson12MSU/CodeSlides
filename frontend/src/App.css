@@ -672,25 +672,15 @@ body.cs-resizing-vertical {
   color: #555;
 }
 
-.cs-cell-output {
-  background: #f6f6f6;
+.cs-cell-error {
+  background: #fdecea;
+  color: #c0392b;
   border-radius: 4px;
   padding: 0.5rem;
-  margin: 0;
+  margin: 0.35rem 0.75rem 0;
   font-size: var(--cs-font-base);
   overflow-x: auto;
   white-space: pre-wrap;
-}
-
-.cs-cell-output-error {
-  background: #fdecea;
-  color: #c0392b;
-}
-
-.cs-cell-output-markdown,
-.cs-cell-output-image,
-.cs-cell-output-dataframe {
-  white-space: normal;
 }
 
 .cs-cell-output-markdown :first-child {
