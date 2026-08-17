@@ -420,6 +420,25 @@ body.cs-resizing {
   overflow: auto;
 }
 
+/* Presenter-only line highlighting (click a line's gutter to toggle) --
+   CodeEditor.tsx's highlightField/gutter(). Semi-transparent background
+   so it composes with syntax highlighting and CodeMirror's own
+   .cm-activeLine underneath, rather than one hiding the other. */
+.cs-code-editor .cs-line-highlight {
+  background-color: rgba(255, 212, 59, 0.35);
+}
+
+.cs-code-editor .cs-line-highlight-gutter {
+  width: 0.6rem;
+  cursor: pointer;
+}
+
+.cs-code-editor .cs-line-highlight-gutter .cs-line-highlight-marker {
+  width: 100%;
+  height: 100%;
+  background-color: rgba(255, 212, 59, 0.7);
+}
+
 /* TODO.md #56: one tab per element plus a trailing Output tab, replacing
    the old always-stacked `.cs-cell-elements` column -- only the selected
    tab's content renders below (Cell.tsx). `flex-wrap` rather than a

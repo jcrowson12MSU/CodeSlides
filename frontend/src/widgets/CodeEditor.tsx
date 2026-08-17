@@ -10,12 +10,16 @@ import {
   indentUnit,
   syntaxHighlighting,
 } from '@codemirror/language'
-import { Prec, EditorState, type Extension } from '@codemirror/state'
+import { Prec, EditorState, StateEffect, StateField, type Extension } from '@codemirror/state'
 import {
   crosshairCursor,
+  Decoration,
+  type DecorationSet,
   drawSelection,
   dropCursor,
   EditorView,
+  gutter,
+  GutterMarker,
   highlightActiveLine,
   highlightActiveLineGutter,
   keymap,
@@ -29,7 +33,64 @@ export interface CodeEditorProps {
   onRunCell: (source: string) => void
   onRunAll: (source: string) => void
   readOnly?: boolean
+  // 1-indexed line numbers to highlight, and a toggle callback fired when
+  // the user clicks a line's gutter -- both optional so callers that don't
+  // care about highlighting (there are none yet, but this keeps the prop
+  // additive) can omit them entirely.
+  highlightedLines?: ReadonlySet<number>
+  onToggleLineHighlight?: (line: number) => void
 }
+
+// Ephemeral, presenter-driven line highlighting (not persisted, not
+// author-scriptable from Python -- see the feature's own scoping notes).
+// Modeled as a StateField over a DecorationSet, the standard CodeMirror 6
+// way to paint state-driven marks: the field's value is recomputed from a
+// dispatched StateEffect rather than mutated in place, matching how
+// CodeMirror expects extensions to interact with the rest of its
+// transaction/undo machinery.
+const setHighlightedLines = StateEffect.define<ReadonlySet<number>>()
+
+const lineHighlightMark = Decoration.line({ attributes: { class: 'cs-line-highlight' } })
+
+function buildHighlightDecorations(state: EditorState, lines: ReadonlySet<number>): DecorationSet {
+  if (lines.size === 0) return Decoration.none
+  const builder = []
+  for (const lineNumber of lines) {
+    if (lineNumber < 1 || lineNumber > state.doc.lines) continue
+    builder.push(lineHighlightMark.range(state.doc.line(lineNumber).from))
+  }
+  // Decoration.set requires ascending `from` order -- line numbers arrive
+  // from a Set in insertion order, not document order.
+  builder.sort((a, b) => a.from - b.from)
+  return Decoration.set(builder)
+}
+
+const highlightField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(decorations, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setHighlightedLines)) return buildHighlightDecorations(tr.state, effect.value)
+    }
+    // Re-map through document edits so a highlight on a line that shifts
+    // (e.g. a line inserted above it) follows the same source line's
+    // content rather than the highlight silently freezing on a line
+    // *number* that now points at different text.
+    return decorations.map(tr.changes)
+  },
+  provide: (field) => EditorView.decorations.from(field),
+})
+
+// One gutter marker instance is enough -- GutterMarker equality/toDOM is
+// per-line via `lineMarker` below, this class only supplies the
+// clickable width or a marker DOM node when a line is highlighted.
+class HighlightGutterMarker extends GutterMarker {
+  toDOM() {
+    const el = document.createElement('div')
+    el.className = 'cs-line-highlight-marker'
+    return el
+  }
+}
+const highlightGutterMarker = new HighlightGutterMarker()
 
 // A single cell's source editor (ARCHITECTURE.md section 2/3): CodeMirror
 // 6 with Python highlighting plus a hand-assembled bundle of its standard
@@ -49,15 +110,24 @@ export interface CodeEditorProps {
 //   bind (Mod-Z/Mod-Shift-Z undo/redo, Mod-D select-next-occurrence,
 //   Mod-[/Mod-] indent/dedent, etc.) -- see @codemirror/commands' own
 //   docs for the full list.
-export function CodeEditor({ source, onRunCell, onRunAll, readOnly = false }: CodeEditorProps) {
+export function CodeEditor({
+  source,
+  onRunCell,
+  onRunAll,
+  readOnly = false,
+  highlightedLines,
+  onToggleLineHighlight,
+}: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
   // Callbacks/readOnly captured in refs so the keymap (bound once at
   // mount) always calls the latest version without re-creating the view.
   const onRunCellRef = useRef(onRunCell)
   const onRunAllRef = useRef(onRunAll)
+  const onToggleLineHighlightRef = useRef(onToggleLineHighlight)
   onRunCellRef.current = onRunCell
   onRunAllRef.current = onRunAll
+  onToggleLineHighlightRef.current = onToggleLineHighlight
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -124,6 +194,29 @@ export function CodeEditor({ source, onRunCell, onRunAll, readOnly = false }: Co
       foldGutter(),
       highlightActiveLine(),
       highlightActiveLineGutter(),
+      highlightField,
+      // A dedicated gutter (separate from lineNumbers()/foldGutter()) for
+      // the highlight-toggle click target -- keeps click handling scoped
+      // to this one gutter's DOM rather than intercepting clicks meant
+      // for the line-number or fold gutters.
+      gutter({
+        class: 'cs-line-highlight-gutter',
+        lineMarker: (view, line) => {
+          const active = view.state.field(highlightField, false)
+          let isHighlighted = false
+          active?.between(line.from, line.from, () => {
+            isHighlighted = true
+          })
+          return isHighlighted ? highlightGutterMarker : null
+        },
+        domEventHandlers: {
+          click: (view, line) => {
+            const lineNumber = view.state.doc.lineAt(line.from).number
+            onToggleLineHighlightRef.current?.(lineNumber)
+            return true
+          },
+        },
+      }),
       drawSelection(),
       dropCursor(),
       rectangularSelection(),
@@ -172,6 +265,18 @@ export function CodeEditor({ source, onRunCell, onRunAll, readOnly = false }: Co
       view.dispatch({ changes: { from: 0, to: current.length, insert: source } })
     }
   }, [source])
+
+  // Dispatched (rather than folded into the mount effect's initial state)
+  // so toggling a highlight -- which changes this prop via the owning
+  // Cell's own state -- updates the live view without re-mounting it.
+  // Also covers the initial value: this effect runs after the first
+  // render too, so a cell that mounts with highlights already set doesn't
+  // need special-casing in the mount effect above.
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({ effects: setHighlightedLines.of(highlightedLines ?? new Set()) })
+  }, [highlightedLines])
 
   return <div className="cs-code-editor" ref={containerRef} />
 }

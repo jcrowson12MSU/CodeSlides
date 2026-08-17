@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CellState } from '../deckState'
 import type { CellLayout } from '../protocol'
 import { CellOutputView } from './CellOutputView'
@@ -215,6 +215,35 @@ export function Cell({
   // those would silently snap an in-progress or already-adjusted layout
   // back to whatever was last saved.
   const [codeFraction, setCodeFraction] = useState(() => meta.layout?.code_fraction ?? DEFAULT_CODE_FRACTION)
+  // Presenter-only line highlighting: purely local, ephemeral state (not
+  // sent over the websocket, not persisted to the deck's .py source) --
+  // same rationale as `codeFraction` above, but reset on every mount
+  // rather than seeded from `meta`, since there's no server-side
+  // "highlighted_lines" concept to seed from.
+  const [highlightedLines, setHighlightedLines] = useState<ReadonlySet<number>>(() => new Set())
+  const toggleLineHighlight = useCallback((line: number) => {
+    setHighlightedLines((prev) => {
+      const next = new Set(prev)
+      if (next.has(line)) {
+        next.delete(line)
+      } else {
+        next.add(line)
+      }
+      return next
+    })
+  }, [])
+  // Drop highlights past the end of the source once it shrinks (e.g. the
+  // author deletes lines) -- CodeEditor's own StateField already re-maps
+  // highlight positions through edits within the doc, but a line number
+  // that no longer exists at all needs pruning here, at the source of
+  // truth for *which* lines are highlighted.
+  useEffect(() => {
+    const lineCount = meta.source.split('\n').length
+    setHighlightedLines((prev) => {
+      if (![...prev].some((line) => line > lineCount)) return prev
+      return new Set([...prev].filter((line) => line <= lineCount))
+    })
+  }, [meta.source])
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const draggingRef = useRef(false)
 
@@ -725,6 +754,8 @@ export function Cell({
                 onRunCell={onRunCell}
                 onRunAll={onRunAll}
                 readOnly={meta.instance === 'static'}
+                highlightedLines={highlightedLines}
+                onToggleLineHighlight={toggleLineHighlight}
               />
             </div>
           )}
