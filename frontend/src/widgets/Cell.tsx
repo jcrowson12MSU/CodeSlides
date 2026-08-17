@@ -269,12 +269,14 @@ export function Cell({
     lastRangeRef.current = new Set()
     setHighlightedLines((prev) => {
       baseBeforeRangeRef.current = prev
+      // Clicking (without shift) a line that's already highlighted clears
+      // the whole set, rather than toggling just that one line off --
+      // a quick "start over" escape hatch so a presenter doesn't have to
+      // click every highlighted line individually to reset before
+      // building a new selection.
+      if (prev.has(line)) return new Set()
       const next = new Set(prev)
-      if (next.has(line)) {
-        next.delete(line)
-      } else {
-        next.add(line)
-      }
+      next.add(line)
       return next
     })
   }, [])
