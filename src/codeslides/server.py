@@ -98,6 +98,7 @@ def create_app(deck: Deck | None = None, deck_path: str | None = None) -> FastAP
                     ],
                     "layout": cell.layout,
                     "is_main": cell.is_main,
+                    "hide_code": cell.hide_code,
                 }
                 for name, cell in d.cells.items()
             },

@@ -21,6 +21,7 @@ from codeslides.protocol import (
     ElementRemoved,
     ElementsReordered,
     ErrorMessage,
+    HideCodeSet,
     MainCellSet,
     NavigateSlide,
     RemoveCell,
@@ -34,6 +35,7 @@ from codeslides.protocol import (
     SetCellLayout,
     SetElementConfig,
     SetElementValue,
+    SetHideCode,
     SetMainCell,
     SetSlideOrder,
     SetTestSource,
@@ -1198,6 +1200,45 @@ def test_set_main_cell_unknown_session_produces_error_not_crash(tmp_path):
 
     messages = handle_message(
         registry, SetMainCell(session_id="does-not-exist", cell_id="live_demo")
+    )
+
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_set_hide_code_emits_hide_code_set_and_writes_to_disk(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(
+        registry, SetHideCode(session_id=session.session_id, cell_id="live_demo", hide_code=True)
+    )
+
+    assert isinstance(messages[0], HideCodeSet)
+    result = messages[0]
+    assert result.cell_id == "live_demo"
+    assert result.hide_code is True
+    assert "hide_code=True" in path.read_text()
+    assert registry.kernel.deck.cells["live_demo"].hide_code is True
+
+
+def test_set_hide_code_does_not_affect_other_cells(tmp_path):
+    registry, _path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    handle_message(registry, SetHideCode(session_id=session.session_id, cell_id="setup", hide_code=True))
+    handle_message(
+        registry, SetHideCode(session_id=session.session_id, cell_id="live_demo", hide_code=True)
+    )
+
+    assert registry.kernel.deck.cells["setup"].hide_code is True
+    assert registry.kernel.deck.cells["live_demo"].hide_code is True
+
+
+def test_set_hide_code_unknown_session_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+
+    messages = handle_message(
+        registry, SetHideCode(session_id="does-not-exist", cell_id="live_demo", hide_code=True)
     )
 
     assert isinstance(messages[0], ErrorMessage)

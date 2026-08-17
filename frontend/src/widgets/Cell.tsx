@@ -37,6 +37,13 @@ export interface CellMeta {
   // set it), so `?? false` at every read site rather than a required
   // field, matching `layout`'s own "not always present" precedent.
   is_main?: boolean
+  // Author-time declaration that this cell has no code editor at all
+  // (`hide_code` in the .py file) -- e.g. a title slide's own cell, or
+  // one that exists purely to attach view items. Combined into the
+  // `hideCode` prop below (see its own docstring) rather than read
+  // directly by the render, same "?? false, not a required field"
+  // precedent as `is_main`.
+  hide_code?: boolean
 }
 
 export interface CellProps {
@@ -54,11 +61,11 @@ export interface CellProps {
   testSourceValues: Record<string, string>
   collapsed: boolean
   /** Hide just the code editor while still showing elements/output --
-   * distinct from `collapsed` (which hides everything). Used by slideshow
-   * mode's "reveal code" toggle (TODO.md #10): a slide's output/widgets
-   * are visible by default, with the underlying code hidden until the
-   * instructor chooses to reveal it. Defaults to false for the flat
-   * "Cells" edit view, which always shows code. */
+   * distinct from `collapsed` (which hides everything). Neither current
+   * caller (App.tsx's Cells view, SlideShow.tsx) passes this explicitly
+   * any more (slideshow's own former "reveal code" toggle was removed);
+   * it's ORed with `meta.hide_code` below so an author's `hide_code=True`
+   * always wins regardless of what a caller passes. */
   hideCode?: boolean
   /** Hide the entire `.cs-cell-header` row (collapse toggle, cell name,
    * status/read-only badges, Edit button) -- Slides-view-only, per the
@@ -90,6 +97,12 @@ export interface CellProps {
    * cell's local `is_main` too, so this Cell doesn't need to know or
    * care which cell that was. */
   onSetMainCell: () => void
+  /** EditCellPanel's "Hide code editor" checkbox: set/clear this cell's
+   * `hide_code`. Writes to the deck's .py file immediately (same
+   * precedent as onRenameCell/onSetMainCell). Unlike onSetMainCell, this
+   * is a genuine two-way toggle (no uniqueness constraint), so it takes
+   * the value to set rather than always meaning "turn on". */
+  onSetHideCode: (hideCode: boolean) => void
   onAddElement: (name: string, kind: string, config: Record<string, unknown>) => void
   onRemoveElement: (elementName: string) => void
   /** TODO.md #23: reorder this cell's elements (up/down arrows in the
@@ -154,7 +167,7 @@ export function Cell({
   elementValues,
   testSourceValues,
   collapsed,
-  hideCode = false,
+  hideCode: hideCodeProp = false,
   hideHeader = false,
   onRunCell,
   onRunAll,
@@ -164,6 +177,7 @@ export function Cell({
   onToggleCollapse,
   onRenameCell,
   onSetMainCell,
+  onSetHideCode,
   onAddElement,
   onRemoveElement,
   onReorderElements,
@@ -176,6 +190,10 @@ export function Cell({
   isLastCell = false,
   onLayoutChange,
 }: CellProps) {
+  // Author's `hide_code=True` always wins, regardless of what a caller
+  // passes for `hideCode` -- there's genuinely nothing to reveal for a
+  // cell the author declared has no code editor.
+  const hideCode = hideCodeProp || (meta.hide_code ?? false)
   const [editing, setEditing] = useState(false)
   // The code/elements split is per-cell, kept as local component state
   // (not lifted to App.tsx) -- it's pure display layout with no server
@@ -624,6 +642,8 @@ export function Cell({
           onRename={onRenameCell}
           isMain={meta.is_main ?? false}
           onSetMainCell={onSetMainCell}
+          isHideCode={meta.hide_code ?? false}
+          onSetHideCode={onSetHideCode}
           tabs={allTabs}
           defaultTab={defaultTab}
           onSetDefaultTab={handleSetDefaultTab}

@@ -37,6 +37,15 @@ export interface EditCellPanelProps {
    * *different* one main instead, same as a radio button -- there's
    * nothing meaningful about "no cell is main" as a state to write. */
   onSetMainCell: () => void
+  /** Whether this cell currently has its code editor hidden
+   * (`deck.Cell.hide_code`) -- an author-time declaration for a cell
+   * that's informational only. */
+  isHideCode: boolean
+  /** Toggle the "Hide code editor" box: set/clear this cell's
+   * `hide_code`, on disk, immediately. Unlike `onSetMainCell`, this is a
+   * genuine two-way toggle -- no uniqueness constraint, so unchecking is
+   * a real action, not a no-op. */
+  onSetHideCode: (hideCode: boolean) => void
   /** Every tab this cell currently has that can be picked as the
    * default -- one per element, in declaration order (cells no longer
    * have a synthetic Output tab at all, per the user's own explicit
@@ -84,6 +93,8 @@ export function EditCellPanel({
   onRename,
   isMain,
   onSetMainCell,
+  isHideCode,
+  onSetHideCode,
   tabs,
   defaultTab,
   onSetDefaultTab,
@@ -181,6 +192,30 @@ export function EditCellPanel({
     onSetElementConfig(element.name, { ...element.config, height })
   }
 
+  // Delete one uploaded image out of a multi-image `image` element's
+  // `src` list, by position -- distinct from onRemoveElement (which
+  // drops the whole element). By index rather than by value: two
+  // uploads of the same file produce identical data-URI/asset-path
+  // entries, so a value-based removal could silently delete the wrong
+  // (duplicate) one.
+  function handleRemoveImage(element: ElementMeta, indexToRemove: number) {
+    const existing = Array.isArray(element.config.src) ? element.config.src : []
+    onSetElementConfig(element.name, {
+      ...element.config,
+      src: existing.filter((_, i) => i !== indexToRemove),
+    })
+  }
+
+  // Last path segment of an uploaded image's src (an `assets/<hash>.ext`
+  // path or `/deck-assets/<hash>.ext` URL, kernel.py's
+  // `_save_data_uri_as_asset`/`_deck_asset_url`) -- shown in place of
+  // the full path/URL, which is meaningless to an author at a glance.
+  function imageFilename(src: string): string {
+    const withoutQuery = src.split('?')[0]
+    const segments = withoutQuery.split('/')
+    return segments[segments.length - 1] || src
+  }
+
   return (
     <div className="cs-edit-cell-panel">
       {error && <div className="cs-edit-cell-error">{error}</div>}
@@ -211,6 +246,15 @@ export function EditCellPanel({
           }}
         />
         Main cell
+      </label>
+
+      <label className="cs-edit-cell-hide-code">
+        <input
+          type="checkbox"
+          checked={isHideCode}
+          onChange={(event) => onSetHideCode(event.target.checked)}
+        />
+        Hide code editor
       </label>
 
       <div className="cs-edit-cell-default-tab">
@@ -302,6 +346,26 @@ export function EditCellPanel({
                     multiple
                     onChange={(event) => handleImageFileChange(event, element)}
                   />
+                  {Array.isArray(element.config.src) && element.config.src.length > 0 && (
+                    <ul className="cs-edit-cell-image-list">
+                      {element.config.src.map((src, srcIndex) => (
+                        // Position, not src value, as the key -- two
+                        // uploads of the same file are legitimately
+                        // distinct list entries with identical src.
+                        <li key={srcIndex} className="cs-edit-cell-image-list-item">
+                          <img src={String(src)} alt="" />
+                          <span className="cs-edit-cell-image-filename">{imageFilename(String(src))}</span>
+                          <button
+                            type="button"
+                            aria-label={`Remove image ${imageFilename(String(src))}`}
+                            onClick={() => handleRemoveImage(element, srcIndex)}
+                          >
+                            ×
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               )}
               {element.kind === 'iframe' && (

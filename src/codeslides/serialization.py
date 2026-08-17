@@ -446,6 +446,7 @@ def rebuild_cell_source(
     hide_def: bool = False,
     layout: dict[str, Any] | None = None,
     is_main: bool = False,
+    hide_code: bool = False,
 ) -> str:
     """Regenerate a cell's full source text with a new `name` and/or
     `elements` list, keeping its function body (everything after the
@@ -455,14 +456,14 @@ def rebuild_cell_source(
     The `def` line's own parameter list is preserved as-is (renaming only
     changes the function's *name*, never its signature).
 
-    `hide_def`/`layout`/`is_main` must be threaded through from the
-    cell's *current* values (`_replace_elements`/`rename_cell` detect
-    them from the decorator's own AST, same as they already do for
+    `hide_def`/`layout`/`is_main`/`hide_code` must be threaded through
+    from the cell's *current* values (`_replace_elements`/`rename_cell`
+    detect them from the decorator's own AST, same as they already do for
     `instance="editable"`) and included in the regenerated decorator --
     otherwise any of these operations would silently drop `hide_def=True`/
-    a previously-saved `layout`/`is_main=True` from the file the moment
-    they touch this cell, even though none of them were ever meant to
-    change just because, say, an element got renamed."""
+    a previously-saved `layout`/`is_main=True`/`hide_code=True` from the
+    file the moment they touch this cell, even though none of them were
+    ever meant to change just because, say, an element got renamed."""
     def_line, body_lines = _split_cell_source(source)
     # def_line looks like "def old_name(params):" -- replace only the name.
     paren = def_line.index("(")
@@ -479,10 +480,11 @@ def rebuild_cell_source(
         element_lines = "\n".join(f"        {_element_call_source(e)}," for e in elements)
         hide_def_line = "\n    hide_def=True," if hide_def else ""
         is_main_line = "\n    is_main=True," if is_main else ""
+        hide_code_line = "\n    hide_code=True," if hide_code else ""
         layout_line = f"\n    {layout_kwarg}," if layout_kwarg else ""
         decorator = (
             f"@app.cell(\n    instance={instance!r},\n    elements=[\n{element_lines}\n    ],"
-            f"{hide_def_line}{is_main_line}{layout_line}\n)"
+            f"{hide_def_line}{is_main_line}{hide_code_line}{layout_line}\n)"
         )
     else:
         kwargs = [
@@ -491,6 +493,7 @@ def rebuild_cell_source(
                 f"instance={instance!r}" if instance != "static" else "",
                 "hide_def=True" if hide_def else "",
                 "is_main=True" if is_main else "",
+                "hide_code=True" if hide_code else "",
                 layout_kwarg,
             )
             if kw
@@ -854,6 +857,7 @@ def rename_cell(deck_path: str, old_name: str, new_name: str) -> None:
     )
     layout = _detect_layout(func)
     is_main = _detect_is_main(func)
+    hide_code = _detect_hide_code(func)
 
     start, end = spans[old_name]
     lines = original.splitlines(keepends=True)
@@ -864,7 +868,14 @@ def rename_cell(deck_path: str, old_name: str, new_name: str) -> None:
     elements = _existing_elements(func)
 
     new_cell_source = rebuild_cell_source(
-        new_name, instance, elements, old_cell_source, hide_def=hide_def, layout=layout, is_main=is_main
+        new_name,
+        instance,
+        elements,
+        old_cell_source,
+        hide_def=hide_def,
+        layout=layout,
+        is_main=is_main,
+        hide_code=hide_code,
     )
     updated_lines = list(lines)
     updated_lines[start - 1 : end] = [new_cell_source]
@@ -1167,6 +1178,7 @@ def _replace_elements(
     )
     layout = _detect_layout(func)
     is_main = _detect_is_main(func)
+    hide_code = _detect_hide_code(func)
 
     new_elements = build_new_elements(existing)
 
@@ -1178,6 +1190,7 @@ def _replace_elements(
         hide_def=hide_def,
         layout=layout,
         is_main=is_main,
+        hide_code=hide_code,
     )
     updated_lines = list(lines)
     updated_lines[start - 1 : end] = [new_cell_source]
@@ -1201,6 +1214,7 @@ def _replace_elements(
         hide_def=hide_def,
         layout=layout,
         is_main=is_main,
+        hide_code=hide_code,
     )
 
 
@@ -1246,6 +1260,7 @@ def set_cell_layout(deck_path: str, cell_name: str, layout: dict[str, Any]) -> N
         for dec in func.decorator_list
     )
     is_main = _detect_is_main(func)
+    hide_code = _detect_hide_code(func)
 
     new_cell_source = rebuild_cell_source(
         cell_name,
@@ -1255,6 +1270,7 @@ def set_cell_layout(deck_path: str, cell_name: str, layout: dict[str, Any]) -> N
         hide_def=hide_def,
         layout=layout,
         is_main=is_main,
+        hide_code=hide_code,
     )
     updated_lines = list(lines)
     updated_lines[start - 1 : end] = [new_cell_source]
@@ -1325,6 +1341,7 @@ def set_main_cell(deck_path: str, cell_name: str) -> None:
         )
         layout = _detect_layout(func)
         elements = _existing_elements(func)
+        hide_code = _detect_hide_code(func)
         new_cell_source = rebuild_cell_source(
             name,
             "editable" if is_editable else "static",
@@ -1333,6 +1350,7 @@ def set_main_cell(deck_path: str, cell_name: str) -> None:
             hide_def=hide_def,
             layout=layout,
             is_main=(name == cell_name),
+            hide_code=hide_code,
         )
         lines[start - 1 : end] = [new_cell_source]
 
@@ -1342,6 +1360,70 @@ def set_main_cell(deck_path: str, cell_name: str) -> None:
     except SyntaxError as exc:
         raise InvalidSourceError(
             f"setting cell {cell_name!r} as main would leave {deck_path!r} with invalid "
+            f"Python syntax, not saved: {exc}"
+        ) from exc
+
+    path.write_text(updated)
+
+
+def set_hide_code(deck_path: str, cell_name: str, hide_code: bool) -> None:
+    """Set/clear `cell_name`'s `hide_code=True` (`deck.Cell.hide_code`),
+    on disk, immediately -- same write-immediately precedent as
+    `set_main_cell`/`add_element`. Unlike `is_main`, there's no
+    uniqueness constraint: any number of cells may have `hide_code=True`
+    independently, so (unlike `set_main_cell`) this only ever touches
+    `cell_name`'s own decorator, never a second cell's.
+
+    Raises `SaveConflictError` if `cell_name` no longer exists, or
+    `InvalidSourceError` if the result doesn't parse."""
+    path = Path(deck_path)
+    original = path.read_text()
+    spans = _cell_line_spans(original)
+    if cell_name not in spans:
+        raise SaveConflictError(f"cannot set hide_code for cell {cell_name!r}: it no longer exists")
+
+    tree = ast.parse(original)
+    func = next(
+        n
+        for n in ast.iter_child_nodes(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == cell_name
+    )
+    is_editable = any(
+        isinstance(dec, ast.Call)
+        and any(kw.arg == "instance" and ast.literal_eval(kw.value) == "editable" for kw in dec.keywords)
+        for dec in func.decorator_list
+    )
+    hide_def = any(
+        isinstance(dec, ast.Call)
+        and any(kw.arg == "hide_def" and ast.literal_eval(kw.value) is True for kw in dec.keywords)
+        for dec in func.decorator_list
+    )
+    layout = _detect_layout(func)
+    is_main = _detect_is_main(func)
+    elements = _existing_elements(func)
+
+    start, end = spans[cell_name]
+    lines = original.splitlines(keepends=True)
+    cell_source = "".join(lines[start - 1 : end])
+
+    new_cell_source = rebuild_cell_source(
+        cell_name,
+        "editable" if is_editable else "static",
+        elements,
+        cell_source,
+        hide_def=hide_def,
+        layout=layout,
+        is_main=is_main,
+        hide_code=hide_code,
+    )
+    lines[start - 1 : end] = [new_cell_source]
+    updated = "".join(lines)
+
+    try:
+        ast.parse(updated)
+    except SyntaxError as exc:
+        raise InvalidSourceError(
+            f"setting hide_code for cell {cell_name!r} would leave {deck_path!r} with invalid "
             f"Python syntax, not saved: {exc}"
         ) from exc
 
@@ -1520,6 +1602,19 @@ def _detect_is_main(func: ast.FunctionDef) -> bool:
     )
 
 
+def _detect_hide_code(func: ast.FunctionDef) -> bool:
+    """Same detection precedent as `_detect_is_main`/`_detect_layout`:
+    read `hide_code=True` fresh off this cell's own on-disk decorator, so
+    an unrelated edit (rename, add/remove/reorder an element, set an
+    element's config) never silently drops the cell's hide-code
+    declaration just because it wasn't the thing being changed."""
+    return any(
+        isinstance(dec, ast.Call)
+        and any(kw.arg == "hide_code" and ast.literal_eval(kw.value) is True for kw in dec.keywords)
+        for dec in func.decorator_list
+    )
+
+
 def set_tests_default(current_full_source: str, element_name: str, default_text: str) -> str:
     """Regenerate a cell's full source with a `tests` element's own
     `default=` updated to `default_text` -- a test box's edited source,
@@ -1566,6 +1661,7 @@ def set_tests_default(current_full_source: str, element_name: str, default_text:
         for dec in func.decorator_list
     )
     is_main = _detect_is_main(func)
+    hide_code = _detect_hide_code(func)
 
     return rebuild_cell_source(
         func.name,
@@ -1574,6 +1670,7 @@ def set_tests_default(current_full_source: str, element_name: str, default_text:
         current_full_source,
         hide_def=hide_def,
         is_main=is_main,
+        hide_code=hide_code,
     )
 
 

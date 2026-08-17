@@ -111,6 +111,21 @@ class Cell:
     # as any other cell. At most one cell in a Deck may have this set;
     # `Deck.__post_init__`/`add_cell` enforce that (see their docstrings).
     is_main: bool = False
+    # `@app.cell(hide_code=True)` -- some cells are informational only
+    # (e.g. a title slide's own cell, or one that exists purely to
+    # attach view items like notes/images) and have no code an author
+    # ever wants shown at all, not even hidden-by-default-and-
+    # revealable the way Slides view's own per-slide "reveal code"
+    # toggle works. Unlike `reveal_code` (Slide.reveal_code, a
+    # presenter-facing per-slide default that can always be toggled
+    # back on), this is an author-time declaration that this cell has
+    # no code editor, period -- Cell.tsx's `hideCode` prop is `True`
+    # for a cell with this set regardless of `reveal_code`/the
+    # instructor's own toggle, since there's genuinely nothing to
+    # reveal. Distinct from `hide_def` (which still shows the body,
+    # just not the `def name(...):` line) -- this hides the entire
+    # code column, body included.
+    hide_code: bool = False
 
     def __post_init__(self) -> None:
         names = [e.name for e in self.elements]
@@ -127,6 +142,7 @@ class Cell:
         hide_def: bool = False,
         layout: dict[str, Any] | None = None,
         is_main: bool = False,
+        hide_code: bool = False,
     ) -> Cell:
         return cls(
             name=fn.__name__,
@@ -137,6 +153,7 @@ class Cell:
             hide_def=hide_def,
             layout=layout,
             is_main=is_main,
+            hide_code=hide_code,
         )
 
 

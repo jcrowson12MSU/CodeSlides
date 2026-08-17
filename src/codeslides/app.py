@@ -41,6 +41,7 @@ class App:
         hide_def: bool = False,
         layout: dict[str, Any] | None = None,
         is_main: bool = False,
+        hide_code: bool = False,
     ):
         """Register a function as a Cell. See ARCHITECTURE.md sections 2-3.
 
@@ -67,7 +68,13 @@ class App:
         `is_main=True` marks this as the deck's one designated entry-
         point cell (see `deck.Cell.is_main`'s own docstring) -- purely a
         marker, raises `ValueError` at registration time if another cell
-        already has it set (`Deck.add_cell`)."""
+        already has it set (`Deck.add_cell`).
+
+        `hide_code=True` (see `deck.Cell.hide_code`'s own docstring)
+        removes the entire code-editor column for this cell -- a
+        stronger, author-time declaration than `hide_def` (which still
+        shows the body), for a cell that's informational only (e.g. a
+        title slide, or one that exists purely to attach view items)."""
 
         def register(fn):
             self.deck.add_cell(
@@ -78,6 +85,7 @@ class App:
                     hide_def=hide_def,
                     layout=layout,
                     is_main=is_main,
+                    hide_code=hide_code,
                 )
             )
             return fn
