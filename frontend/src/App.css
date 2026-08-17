@@ -683,6 +683,22 @@ body.cs-resizing-vertical {
   white-space: pre-wrap;
 }
 
+.cs-cell-output {
+  background: #f6f6f6;
+  border-radius: 4px;
+  padding: 0.5rem;
+  margin: 0.35rem 0.75rem 0;
+  font-size: var(--cs-font-base);
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+.cs-cell-output-markdown,
+.cs-cell-output-image,
+.cs-cell-output-dataframe {
+  white-space: normal;
+}
+
 .cs-cell-output-markdown :first-child {
   margin-top: 0;
 }
