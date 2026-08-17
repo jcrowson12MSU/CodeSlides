@@ -67,8 +67,9 @@ Example:
     elements=[
         ui.notes('markCorners'),
         ui.turtle_canvas('Canvas', width=400, height=400),
-        ui.tests('Run Code', default='cells1 = createMatrix(30, 30)\nt = turtle.Turtle()\n# t.shape("circle")\nmarkCorners(cells1, t)'),
+        ui.tests('Run Code', default='cells1 = createMatrix(30, 30)\nwn = turtle.Screen()\nwn.setworldcoordinates(0,0, 30,30)\nt = turtle.Turtle()\nt.up()\nt.shape("circle")\nmarkCorners(cells1, t)'),
     ],
+    layout={'code_fraction': 0.5, 'panel_fraction': 0.5, 'lower_tabs': ['Canvas']},
 )
 def markCorners(cells2= None, t = None):
     """
@@ -193,7 +194,7 @@ p1 and p2 and ending at the midpoint of p3 and p4.
         ui.notes('Notes'),
         ui.turtle_canvas('Canvas', width=400, height=400),
         ui.tests('Test', default='\nscale = 3\nrows, cols = 4 * scale, 6 * scale\nwn = turtle.Screen()\nwn.setworldcoordinates(0, 0, cols, rows)\nwn.tracer(0)\n\nt = turtle.Turtle()\n# t.up()\nt.hideturtle()\nt.shape("circle")\n\ncells = createMatrix(rows, cols)\nmarchingSquares(cells, t)'),
-        ui.image('Images', src=[]),
+        ui.image('Images', src=['assets/59d86210779d1dc2.png', 'assets/848646879097546d.png']),
     ],
 )
 def marchingSquares(cells, t):
