@@ -15,12 +15,32 @@ straight-line code with different literal values, exactly like a
 student re-typing the lines themselves would.
 
 Slides that showed `input()` keep `input()` in the cell's own source
-for realism (that's genuinely how a student would type it), but the
-runnable version underneath uses `ui.tests(...)` with hardcoded stand-in
-values instead -- this UI has no interactive stdin, and `ui.tests`
-already exists exactly for "run this with concrete inputs and assert
-on the result" (see ARCHITECTURE.md section 3b), the same pattern
-`marchingSquares.py`/`live_demo.py` use elsewhere in this repo.
+sample for realism (that's genuinely how a student would type it),
+but the runnable version underneath uses `ui.text_input(...)` boxes as
+a real stand-in instead -- this UI has no interactive stdin, so a cell
+can't actually call `input()` itself (there's nothing to shim it with;
+calling it here would just fail). A `ui.text_input` element's value
+binds into the cell's own same-named parameter and reruns the cell
+automatically on every edit (ARCHITECTURE.md section 3a), which is
+close enough to typing at an `input()` prompt to teach the same
+concept with a real, live textbox rather than a canned re-run of a
+`ui.tests` snippet -- `runtime_errors` in particular relies on this:
+typing `twelve` into its box raises a genuine `ValueError` live, not a
+pre-written test case demonstrating one.
+
+Every one of these `text_input`-driven cells returns `cs.md(...)`
+instead of calling `print()` -- this app only ever surfaces a cell's
+own stdout inside a `ui.tests` element's own output box (see
+`TestsElementWidget.tsx`), never for a plain cell body just running on
+its own, so a `text_input`-driven cell that only `print()`ed its
+result would rerun silently on every keystroke with nothing visible
+changing. `cs.md()` renders a cell's *returned* value as formatted
+output right where a viewer element would normally show one
+(ARCHITECTURE.md section 6), which does update live. `ui.tests` is
+still used elsewhere in this deck (`variables`, `print_function`,
+etc.) for topics that aren't about `input()` at all, where a
+re-runnable code sample -- and its own dedicated output box -- is the
+more natural fit.
 
 The one slide whose *broken* code is a real, permanent Python
 `SyntaxError` (Slide 18) can't be a cell's own body -- the whole deck
@@ -56,10 +76,10 @@ Use **Slides** to step through the lecture in order, or switch to
     instance="editable",
     elements=[
         ui.notes("notes"),
-        ui.tests("Run it with a different name", default='name = "Sam"\nmessage = "Hello, " + name\nprint(message)'),
+        ui.text_input("name", default="Ada"),
     ],
 )
-def how_programs_work():
+def how_programs_work(name):
     """## How Programs Work: Input → Process → Output
 
 A program is a list of instructions that run one at a time.
@@ -68,11 +88,10 @@ A program is a list of instructions that run one at a time.
 - **Process:** do something with that information
 - **Output:** show or store the result
 
-Run the test below with a different name typed in -- change `"Sam"`
-to your own name."""
-    name = "Ada"
+Type your own name in the box below -- the cell reruns automatically
+and greets whoever you typed."""
     message = "Hello, " + name
-    print(message)
+    return cs.md(f"**Output:** `{message}`")
 
 
 @app.cell(
@@ -134,13 +153,11 @@ variable_name = value
     instance="editable",
     elements=[
         ui.notes("notes"),
-        ui.tests(
-            "Run it with different numbers",
-            default='first = int("20")\nsecond = int("22")\n\ntotal = first + second\n\nprint("Total:", total)',
-        ),
+        ui.text_input("first_text", default="4"),
+        ui.text_input("second_text", default="9"),
     ],
 )
-def simple_program():
+def simple_program(first_text, second_text):
     """## A Simple Python Program
 
 ```python
@@ -156,15 +173,15 @@ print("Total:", total)
 - **Process:** add them
 - **Output:** print the total
 
-The runnable version below stands in for `input()` with a fixed
-string, converted the same way `int(input(...))` would be. Run the
-test to try it with different numbers."""
-    first = int("4")
-    second = int("9")
+The two boxes below stand in for `input()` -- type numbers into them
+and the cell reruns automatically, converting each with `int(...)`
+exactly the way `int(input(...))` would."""
+    first = int(first_text)
+    second = int(second_text)
 
     total = first + second
 
-    print("Total:", total)
+    return cs.md(f"**Total:** `{total}`")
 
 
 @app.cell(hide_def=True, elements=[ui.notes("notes")])
@@ -185,10 +202,11 @@ Ask:
     instance="editable",
     elements=[
         ui.notes("notes"),
-        ui.tests("Run it with different numbers", default="first_n = 12\nsecond_n = 30\ntotal = first_n + second_n\nprint(total)"),
+        ui.text_input("first_n_text", default="4"),
+        ui.text_input("second_n_text", default="9"),
     ],
 )
-def algorithm():
+def algorithm(first_n_text, second_n_text):
     """## Algorithm
 
 An **algorithm** is a step-by-step plan for solving a problem.
@@ -204,11 +222,12 @@ Example algorithm:
 
 Then translate the algorithm into Python, one step at a time -- the
 code below *is* that translation, the same shape as `simple_program`
-from a few slides back."""
-    first_n = 4
-    second_n = 9
+from a few slides back. Type numbers into the two boxes below to try
+it."""
+    first_n = int(first_n_text)
+    second_n = int(second_n_text)
     total = first_n + second_n
-    print(total)
+    return cs.md(f"**Answer:** `{total}`")
 
 
 @app.cell(
@@ -401,10 +420,10 @@ Output:
     instance="editable",
     elements=[
         ui.notes("notes"),
-        ui.tests("Run it with a different name", default='name = "Sam"\nprint("Hello,", name)'),
+        ui.text_input("name", default="Sam"),
     ],
 )
-def input_and_prompts():
+def input_and_prompts(name):
     """## Input and Prompts
 
 `input()` reads what the user types.
@@ -418,9 +437,11 @@ Important: `input()` always gives back a string.
 
 ```python
 age = int(input("Age: "))
-```"""
-    name = "Ada"
-    print("Hello,", name)
+```
+
+Type your own name into the box below -- it stands in for `input()`,
+and the cell reruns automatically as you type."""
+    return cs.md(f"**Output:** `Hello, {name}`")
 
 
 @app.cell(hide_def=True, elements=[ui.notes("notes")])
@@ -485,17 +506,10 @@ print("Hello")
     instance="editable",
     elements=[
         ui.notes("notes"),
-        ui.tests(
-            "Type a number",
-            default='age_text = "15"\nage = int(age_text)\nprint(age)',
-        ),
-        ui.tests(
-            "Type something that is not a number",
-            default='age_text = "twelve"\nage = int(age_text)\nprint(age)',
-        ),
+        ui.text_input("age_text", default="15"),
     ],
 )
-def runtime_errors():
+def runtime_errors(age_text):
     """## Runtime Errors
 
 A runtime error happens *while the program is running* -- Python
@@ -508,12 +522,10 @@ age = int(input("Age: "))
 If the user types `twelve`, the program crashes because `"twelve"`
 cannot become an integer.
 
-Try both tests below: `"15"` succeeds, `"twelve"` raises a real
-`ValueError` you can see in the output -- click **Run** on the
-second test to watch it happen."""
-    age_text = "15"
+Type into the box below -- `15` works fine, but try typing `twelve`
+instead and watch a real `ValueError` appear as soon as you do."""
     age = int(age_text)
-    print(age)
+    return cs.md(f"**Age:** `{age}`")
 
 
 @app.cell(
@@ -659,27 +671,12 @@ question* about it and prints `True`/`False`."""
     is_main=True,
     elements=[
         ui.notes("notes"),
-        ui.tests(
-            "Run it with your own name, hours, and rate",
-            default=(
-                'name = "Sam"\n'
-                "hours = 20\n"
-                "rate = 12.5\n"
-                "\n"
-                "pay = hours * rate\n"
-                "\n"
-                "print()\n"
-                'print("Pay Summary")\n'
-                'print("-----------")\n'
-                'print("Employee:", name)\n'
-                'print("Hours:", hours)\n'
-                'print("Rate: $", rate, sep="")\n'
-                'print("Pay: $", pay, sep="")'
-            ),
-        ),
+        ui.text_input("name", default="Ava"),
+        ui.text_input("hours_text", default="32"),
+        ui.text_input("rate_text", default="18.5"),
     ],
 )
-def pay_calculator():
+def pay_calculator(name, hours_text, rate_text):
     """# Medium Example: Pay Calculator
 
 ```python
@@ -707,20 +704,22 @@ This program uses:
 - processing
 - formatted output
 
-Run the test below with your own name, hours, and rate typed in."""
-    name = "Ava"
-    hours = 32
-    rate = 18.5
+Type your own name, hours, and rate into the boxes below -- the
+summary updates automatically."""
+    hours = float(hours_text)
+    rate = float(rate_text)
 
     pay = hours * rate
 
-    print()
-    print("Pay Summary")
-    print("-----------")
-    print("Employee:", name)
-    print("Hours:", hours)
-    print("Rate: $", rate, sep="")
-    print("Pay: $", pay, sep="")
+    summary = (
+        "Pay Summary\n"
+        "-----------\n"
+        f"Employee: {name}\n"
+        f"Hours: {hours}\n"
+        f"Rate: ${rate}\n"
+        f"Pay: ${pay}"
+    )
+    return cs.md(f"```text\n{summary}\n```")
 
 
 @app.slide("Title", cells=[])
