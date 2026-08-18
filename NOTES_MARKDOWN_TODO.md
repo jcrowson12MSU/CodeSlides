@@ -31,16 +31,17 @@ Confirmed handled in `NotesEditor.tsx`'s `buildDecorations`:
   replaced with a real `<br>`.
 - Horizontal rules (`---`, `***`, `___` on their own line) -- replaced
   with a real `<hr>`.
-- Fenced code blocks (` ```lang ... ``` `) -- monospace, shaded
-  background, matching `.cs-notes-inline-code`'s own styling but
-  block-level. Fence lines (` ``` `) and the language tag are hidden
-  when rendered, same as inline code hides its backticks -- only the
-  code's own body text shows, with no blank line left behind where the
-  opening/closing fence used to be (collapses the whole line, marker
-  text and its own trailing newline together, not just the marker
-  text in place -- see `FencedCode`'s own comment in `NotesEditor.tsx`
-  for why that distinction needed a `StateField`, same underlying
-  constraint as the table fix below).
+- Fenced code blocks (` ```lang ... ``` `) -- rendered as a real `<pre>`
+  widget (`CodeBlockWidget`), same "replace with a real DOM element"
+  approach `TableWidget` uses and for the same underlying reason: a
+  per-line mark-based approach (the original implementation) couldn't
+  correctly style a code block containing an interior blank line -- an
+  empty line has no `CodeText` node of its own for a mark to attach to,
+  so it rendered as a plain unstyled line, visibly splitting one code
+  block into two disconnected boxes. The `<pre>` widget sidesteps this
+  entirely: the whole block's text (fence lines and language tag
+  stripped, blank lines included as-is) is one string, not separate
+  `.cm-line`s CodeMirror could fail to style individually.
 - Blockquote content -- the whole quoted block (not just the `> `
   marker) gets a left border and dimmed text color.
 - **Tables** (`| a | b |` / `|---|---|`) -- `@lezer/markdown`'s `Table`

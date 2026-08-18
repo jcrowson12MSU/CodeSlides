@@ -243,6 +243,54 @@ class TableWidget extends WidgetType {
   }
 }
 
+// A fenced code block (` ```lang ... ``` `), rendered as a real <pre>.
+// Same reason as TableWidget: the block's own text spans multiple lines
+// (both the fence lines being hidden AND, unlike every other construct
+// in this file, the code's own body can contain blank lines in the
+// middle of it -- `def f():\n\n    pass`). Marking each line separately
+// (the original approach, still how Blockquote works) breaks down for
+// exactly that blank-line case: an interior blank line has no text of
+// its own for a Decoration.mark to attach to, so it renders as a plain
+// unstyled `<div class="cm-line"><br></div>` with no shaded background,
+// visibly splitting one code block into two disconnected boxes -- a
+// real bug a user hit and reported. A single <pre> widget replacing the
+// whole thing sidesteps the problem entirely: blank lines are just `\n`
+// characters in the widget's own text content, not separate .cm-lines
+// CodeMirror could fail to style.
+class CodeBlockWidget extends WidgetType {
+  code: string
+  from: number
+  constructor(code: string, from: number) {
+    super()
+    this.code = code
+    this.from = from
+  }
+  eq(other: CodeBlockWidget) {
+    return other.code === this.code && other.from === this.from
+  }
+  toDOM() {
+    const pre = document.createElement('pre')
+    pre.className = 'cs-notes-live-codeblock'
+    pre.textContent = this.code
+    // Same "clicking a rendered widget should reveal raw markdown for
+    // editing" convention TableWidget's own mousedown handler
+    // establishes -- a <pre> intercepts clicks same as a <table> does,
+    // so without this, clicking into a rendered code block would do
+    // nothing instead of letting the author edit it.
+    pre.addEventListener('mousedown', (event) => {
+      const view = EditorView.findFromDOM(pre)
+      if (!view) return
+      event.preventDefault()
+      view.dispatch({ selection: { anchor: this.from }, scrollIntoView: false })
+      view.focus()
+    })
+    return pre
+  }
+  ignoreEvent() {
+    return true
+  }
+}
+
 // Lines the cursor's selection currently touches -- markdown constructs
 // overlapping any of these lines stay in raw form instead of being
 // decorated, so the author can see/edit the syntax they're actively
@@ -336,12 +384,12 @@ function buildDecorations(state: EditorState, hasFocus: boolean): DecorationSet 
 
       if (node.name === 'CodeMark' && !revealed) {
         // Only InlineCode's own backticks here -- a FencedCode block's
-        // own ``` fence lines are handled entirely within the FencedCode
-        // branch below (hiding just the CodeMark/CodeInfo text, as this
-        // branch used to for both, left the fence lines' own newlines
-        // behind as blank lines; collapsing a whole line -- marker text
-        // AND its trailing newline -- needs one combined decoration, not
-        // two separate ones).
+        // own ``` fence lines are consumed whole by the CodeBlockWidget
+        // the FencedCode branch below builds (which replaces the entire
+        // block, fence lines included, with a single <pre>), so this
+        // node is never reached for a fenced block's own CodeMark once
+        // that widget's replace decoration is in place; the parent check
+        // here is just defense against being reached some other way.
         if (node.node.parent?.name === 'InlineCode') {
           builder.push({ from: node.from, to: node.to, deco: Decoration.replace({}) })
         }
@@ -419,43 +467,36 @@ function buildDecorations(state: EditorState, hasFocus: boolean): DecorationSet 
       }
 
       if (node.name === 'FencedCode' && !revealed) {
-        builder.push({ from: node.from, to: node.to, deco: Decoration.mark({ class: 'cs-notes-live-codeblock' }) })
-
-        // Collapse the opening ```lang line and the closing ``` line
-        // entirely -- marker text AND the line's own trailing newline --
-        // rather than just hiding the CodeMark/CodeInfo text in place
-        // (which used to leave each fence line behind as a blank line,
-        // since a decoration that empties a line's content doesn't
-        // remove the line itself). Only safe now that decorations come
-        // from notesDecorationsField (a StateField), not the old
-        // ViewPlugin -- collapsing a line's own newline is exactly the
-        // "replace across a line break" CodeMirror forbids a
-        // ViewPlugin-supplied decoration from doing (see HardBreak's own
-        // comment above, and notesDecorationsField's).
+        // A single <pre> widget replacing the whole block (fence lines,
+        // language tag, and code body together) -- not per-line marks,
+        // which broke down for a code block containing a blank line in
+        // the middle (see CodeBlockWidget's own comment for why: an
+        // interior blank line has no CodeText node of its own for a mark
+        // to attach to, so it rendered unstyled, visibly splitting one
+        // code block into two disconnected boxes). Only possible now
+        // that decorations come from notesDecorationsField (a
+        // StateField) -- same reason TableWidget needed that migration,
+        // a FencedCode's own range spans every line it covers.
         const children: SyntaxNode[] = []
         for (let c = node.node.firstChild; c; c = c.nextSibling) children.push(c)
         const openMark = children.find((c) => c.name === 'CodeMark')
         const closeMark = [...children].reverse().find((c) => c.name === 'CodeMark' && c !== openMark)
-        // Stop at the first CodeText (the code's own first line) or, for
-        // an empty fenced block, the closing mark -- NOT CodeInfo, which
-        // must be swallowed by this same replace (it's part of the
-        // opening line being collapsed, not content to preserve).
+        // The code's own body text: from just after the opening line's
+        // own newline through just before the closing fence's line --
+        // plain document text (not the individual CodeText nodes pieced
+        // back together), so interior blank lines come along for free as
+        // ordinary '\n' characters in the slice, instead of needing
+        // special-casing.
         const firstBodyNode = children.find((c) => c.name === 'CodeText' || c === closeMark)
-        if (openMark && firstBodyNode) {
-          // From the opening ``` through the very start of the code's
-          // own first line (or the closing ``` for an empty block) --
-          // covers CodeInfo too without a separate decoration for it,
-          // and its `to` lands exactly at that next node's `from`, which
-          // is the position right after the opening line's own newline.
-          builder.push({ from: openMark.from, to: firstBodyNode.from, deco: Decoration.replace({}) })
-        }
-        if (closeMark) {
-          // The closing ``` line -- from the start of its own line
-          // (not just the mark itself, so a leading newline gets
-          // absorbed into this replace instead of surviving as a blank
-          // line before it) through the mark's own end.
-          const lineStart = state.doc.lineAt(closeMark.from).from
-          builder.push({ from: lineStart, to: closeMark.to, deco: Decoration.replace({}) })
+        if (openMark && firstBodyNode && closeMark) {
+          const bodyFrom = firstBodyNode.from
+          const bodyTo = state.doc.lineAt(closeMark.from).from - 1 // exclude the closing line's own leading '\n'
+          const code = bodyTo > bodyFrom ? state.doc.sliceString(bodyFrom, bodyTo) : ''
+          builder.push({
+            from: node.from,
+            to: node.to,
+            deco: Decoration.replace({ widget: new CodeBlockWidget(code, node.from), block: true }),
+          })
         }
         return
       }
