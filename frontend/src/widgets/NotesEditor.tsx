@@ -56,6 +56,72 @@ class LinkWidget extends WidgetType {
   }
 }
 
+// `![alt](url)` -- same replace-with-a-real-element approach as LinkWidget,
+// not innerHTML, for the same XSS-surface reason (see this file's
+// top-of-file comment). Sized like .cs-notes-rendered's own <img> rules
+// used to (viewerElements.tsx, now retired) so an image doesn't blow out
+// the notes column width.
+class ImageWidget extends WidgetType {
+  alt: string
+  url: string
+  constructor(alt: string, url: string) {
+    super()
+    this.alt = alt
+    this.url = url
+  }
+  eq(other: ImageWidget) {
+    return other.alt === this.alt && other.url === this.url
+  }
+  toDOM() {
+    const img = document.createElement('img')
+    img.src = this.url
+    img.alt = this.alt
+    img.className = 'cs-notes-live-image'
+    return img
+  }
+}
+
+// `<https://example.com>` -- CommonMark autolinks carry no separate link
+// text, the URL itself is what's displayed, so this is a much smaller
+// widget than LinkWidget rather than a shared one.
+class AutolinkWidget extends WidgetType {
+  url: string
+  constructor(url: string) {
+    super()
+    this.url = url
+  }
+  eq(other: AutolinkWidget) {
+    return other.url === this.url
+  }
+  toDOM() {
+    const a = document.createElement('a')
+    a.href = this.url
+    a.textContent = this.url
+    a.target = '_blank'
+    a.rel = 'noopener noreferrer'
+    return a
+  }
+}
+
+// Two trailing spaces or a trailing `\` (HardBreak's own [from, to) range,
+// per the Lezer grammar) becomes an actual <br>, matching how the raw
+// whitespace would otherwise be invisible in a live-preview line.
+class HardBreakWidget extends WidgetType {
+  toDOM() {
+    return document.createElement('br')
+  }
+}
+
+// `---`/`***`/`___` on their own line becomes an actual <hr> -- replaced,
+// not just styled, since the literal dash/asterisk/underscore characters
+// have no meaning once rendered (unlike a heading's text, there's nothing
+// under an hr worth keeping visible).
+class HorizontalRuleWidget extends WidgetType {
+  toDOM() {
+    return document.createElement('hr')
+  }
+}
+
 // Lines the cursor's selection currently touches -- markdown constructs
 // overlapping any of these lines stay in raw form instead of being
 // decorated, so the author can see/edit the syntax they're actively
@@ -148,16 +214,23 @@ function buildDecorations(state: EditorState, hasFocus: boolean): DecorationSet 
       }
 
       if (node.name === 'CodeMark' && !revealed) {
-        builder.push({ from: node.from, to: node.to, deco: Decoration.replace({}) })
+        // Only hides InlineCode's own backticks -- a FencedCode block's
+        // ``` fence lines are also CodeMark nodes, but those stay visible
+        // (see the FencedCode/CodeInfo/CodeText branch below), so check
+        // the immediate parent rather than hiding every CodeMark on sight.
+        if (node.node.parent?.name === 'InlineCode') {
+          builder.push({ from: node.from, to: node.to, deco: Decoration.replace({}) })
+        }
         return
       }
 
-      if (node.name === 'Link' && !revealed) {
-        // Pull the link text and URL out of the Link node's own
-        // children rather than assuming fixed offsets -- `[text](url)`
-        // vs `[text][ref]` reference-style links have different shapes,
-        // and walking children keeps this correct for both instead of
-        // only the inline form.
+      if ((node.name === 'Link' || node.name === 'Image') && !revealed) {
+        // Pull the link text and URL out of the node's own children
+        // rather than assuming fixed offsets -- `[text](url)` vs
+        // `[text][ref]` reference-style links have different shapes, and
+        // an Image node is identical to Link but for a leading '!'
+        // folded into its first LinkMark -- walking children keeps this
+        // correct for all three instead of only the inline Link form.
         let linkText = ''
         let url = ''
         const child = node.node.firstChild
@@ -177,12 +250,60 @@ function buildDecorations(state: EditorState, hasFocus: boolean): DecorationSet 
         }
         if (marks.length >= 2) linkText = state.doc.sliceString(marks[0].to, marks[1].from)
         if (linkText) {
-          builder.push({
-            from: node.from,
-            to: node.to,
-            deco: Decoration.replace({ widget: new LinkWidget(linkText, url || '#') }),
-          })
+          const widget =
+            node.name === 'Image' ? new ImageWidget(linkText, url || '') : new LinkWidget(linkText, url || '#')
+          builder.push({ from: node.from, to: node.to, deco: Decoration.replace({ widget }) })
         }
+        return
+      }
+
+      if (node.name === 'Autolink' && !revealed) {
+        // Strip the surrounding '<'/'>' -- Autolink's own [from, to)
+        // includes them, and the URL is the entire content in between
+        // (no separate URL child node the way Link/Image have).
+        const url = state.doc.sliceString(node.from + 1, node.to - 1)
+        builder.push({ from: node.from, to: node.to, deco: Decoration.replace({ widget: new AutolinkWidget(url) }) })
+        return
+      }
+
+      if (node.name === 'HardBreak' && !revealed) {
+        // HardBreak's own [from, to) range includes the trailing '\n'
+        // (either '\\\n' or '  \n') -- CodeMirror forbids a replace
+        // decoration from a ViewPlugin (as opposed to a StateField) from
+        // spanning a line break, so trim the range to exclude it; the
+        // newline itself still ends the line normally, only the marker
+        // characters before it are replaced with the <br>.
+        builder.push({
+          from: node.from,
+          to: node.to - 1,
+          deco: Decoration.replace({ widget: new HardBreakWidget() }),
+        })
+        return
+      }
+
+      if (node.name === 'HorizontalRule' && !revealed) {
+        builder.push({ from: node.from, to: node.to, deco: Decoration.replace({ widget: new HorizontalRuleWidget() }) })
+        return
+      }
+
+      if (node.name === 'Blockquote' && !revealed) {
+        // Marks the whole quoted block (marker + content) so CSS can set
+        // off the content visually (left border, etc.) -- QuoteMark's own
+        // dimming below still applies on top, per-line, unchanged.
+        builder.push({ from: node.from, to: node.to, deco: Decoration.mark({ class: 'cs-notes-live-blockquote' }) })
+        return
+      }
+
+      if (node.name === 'FencedCode' && !revealed) {
+        builder.push({ from: node.from, to: node.to, deco: Decoration.mark({ class: 'cs-notes-live-codeblock' }) })
+        return
+      }
+
+      if ((node.name === 'CodeInfo' || node.name === 'CodeText') && !revealed) {
+        // No hiding here (unlike inline CodeMark) -- a fenced block's
+        // ``` fence lines and language tag stay visible even when
+        // rendered, matching Obsidian's own live-preview treatment of
+        // code blocks (only inline `code` hides its backticks).
         return
       }
 

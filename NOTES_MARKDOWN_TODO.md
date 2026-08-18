@@ -22,6 +22,23 @@ Confirmed handled in `NotesEditor.tsx`'s `buildDecorations`:
 - `Inline code` -- backticks hidden, monospace span shown.
 - `[Links](url)` -- bracket/paren syntax replaced with a real
   clickable `<a>` widget.
+- `![Images](url)` -- replaced with a real `<img>` widget, same
+  child-walking logic as `Link` (an `Image` node is identical to
+  `Link` but for a leading `!` folded into its first `LinkMark`).
+- Autolinks (`<https://example.com>`) -- replaced with a real
+  clickable `<a>` widget showing the URL itself as its text.
+- Hard line breaks (two trailing spaces, or `\` at end of line) --
+  replaced with a real `<br>`.
+- Horizontal rules (`---`, `***`, `___` on their own line) -- replaced
+  with a real `<hr>`.
+- Fenced code blocks (` ```lang ... ``` `) -- monospace, shaded
+  background, matching `.cs-notes-inline-code`'s own styling but
+  block-level. Unlike inline code, the fence lines and language tag
+  stay visible even when rendered (matches Obsidian's own live-preview
+  treatment of code blocks -- only inline `` `code` `` hides its
+  backticks).
+- Blockquote content -- the whole quoted block (not just the `> `
+  marker) gets a left border and dimmed text color.
 - List markers (`-`, `1.`) -- left visible always (not hidden), same
   as Obsidian's own convention.
 - `> ` blockquote markers -- dimmed, not hidden.
@@ -32,36 +49,17 @@ Confirmed handled in `NotesEditor.tsx`'s `buildDecorations`:
 
 Base CommonMark constructs the parser already recognizes, but with no
 decoration logic in `NotesEditor.tsx` (render as plain, undecorated
-text today -- e.g. a fenced code block just shows as a normal
-paragraph of text, backticks and all):
+text today):
 
-- **Fenced code blocks** (` ```lang ... ``` `) -- `FencedCode`,
-  `CodeInfo`, `CodeText`, `CodeMark` nodes. Currently no syntax
-  highlighting or monospace styling for a multi-line code block, only
-  single-line `InlineCode`.
 - **Setext headings** (underlined with `===`/`---` instead of a
   leading `#`) -- `SetextHeading1`/`SetextHeading2`. A real, if less
   common, way to write an h1/h2.
-- **Horizontal rules** (`---`, `***`, `___` on their own line) --
-  `HorizontalRule`. Currently just renders as literal dashes.
-- **Blockquotes** -- only the `> ` marker itself is styled (dimmed);
-  the quoted *content* isn't visually set off (e.g. no left border,
-  no distinct background) the way a rendered blockquote normally
-  reads.
-- **Images** (`![alt](url)`) -- `Image` node exists (parsed
-  identically to `Link` plus a leading `!`), but there's no decoration
-  for it at all -- doesn't even reveal/hide consistently with `Link`,
-  since it's a separate node type never checked.
 - **Reference-style links** (`[text][ref]` + a separate
   `[ref]: url "title"` definition line) -- `LinkReference`,
-  `LinkLabel`, `LinkTitle`. The current `Link` handler only pulls
-  `URL` from an inline `[text](url)` child; a reference-style link's
-  URL lives in a separate `LinkReference` node the walker never
-  visits, so today it'd resolve to the `'#'` fallback.
-- **Autolinks** (`<https://example.com>`) -- `Autolink` node, not
-  rendered as a clickable link at all today.
-- **Hard line breaks** (two trailing spaces, or `\` at end of line) --
-  `HardBreak`. No visual distinction from a normal soft wrap.
+  `LinkLabel`, `LinkTitle`. The current `Link`/`Image` handler only
+  pulls `URL` from an inline `[text](url)` child; a reference-style
+  link's URL lives in a separate `LinkReference` node the walker never
+  visits, so today it'd resolve to the `'#'`/`''` fallback.
 - **HTML blocks/tags embedded in markdown** -- `HTMLBlock`, `HTMLTag`,
   `Comment`, `CommentBlock`, `ProcessingInstruction`. Not sanitized or
   rendered specially; would show as raw text (this is arguably fine
@@ -93,13 +91,31 @@ to writing the decoration logic itself:
 
 ## How this list was produced
 
-Ran the actual parser (not the docs) against a sample document
-covering every CommonMark + GFM construct, both with and without the
-`GFM` extension bundle enabled, and diffed the resulting node-type
-inventory against every `node.name === '...'` check that actually
-exists in `NotesEditor.tsx`'s `buildDecorations` function. This
-avoids the two likely failure modes of a memory/guess-based list:
-missing a construct the parser silently already produces a node for
-(so it'd render "fine" by accident, just undecorated), and claiming
-something is missing that's actually handled under a node name that
-doesn't match what you'd expect from reading the markdown spec.
+Originally: ran the actual parser (not the docs) against a sample
+document covering every CommonMark + GFM construct, both with and
+without the `GFM` extension bundle enabled, and diffed the resulting
+node-type inventory against every `node.name === '...'` check that
+actually existed in `NotesEditor.tsx`'s `buildDecorations` function at
+the time. This avoids the two likely failure modes of a memory/guess-
+based list: missing a construct the parser silently already produces
+a node for (so it'd render "fine" by accident, just undecorated), and
+claiming something is missing that's actually handled under a node
+name that doesn't match what you'd expect from reading the markdown
+spec.
+
+Updated after implementing images/autolinks/hard-breaks/horizontal-
+rules/blockquote-content/fenced-code-blocks: each new decoration was
+driven through a real running server + Playwright browser (not just a
+build check) -- typed the construct into a live `notes` element,
+confirmed the correct DOM element appeared (`<img>`, `<a>`, `<br>`,
+`<hr>`, styled block spans), confirmed clicking into that construct's
+line still reveals its raw markdown, and confirmed no console errors.
+That pass caught one real bug purely from the browser run (not
+visible from reading the code): `HardBreak`'s own parsed node range
+includes the trailing newline character, and a `Decoration.replace`
+spanning a line break is rejected by CodeMirror when it comes from a
+`ViewPlugin` rather than a `StateField` ("Decorations that replace
+line breaks may not be specified via plugins") -- fixed by trimming
+the decoration's `to` by one character, distinct from `Link`/`Image`/
+`HorizontalRule`, whose own node ranges don't reach into the next
+line's text.
