@@ -104,13 +104,25 @@ class Cell:
     # `@app.cell(is_main=True)` -- marks this cell as the deck's single
     # designated entry point (e.g. a cell whose body is an
     # `if __name__ == "__main__":` block, or any cell an author wants to
-    # call out as "the whole program, start to finish"). Purely a marker:
-    # it doesn't change execution, the dependency graph, or what's shown
-    # on any slide by itself -- an author who wants it on the title slide
-    # still lists it explicitly in that slide's own `cells=[...]`, same
-    # as any other cell. At most one cell in a Deck may have this set;
-    # `Deck.__post_init__`/`add_cell` enforce that (see their docstrings).
+    # call out as "the whole program, start to finish"). Doesn't change
+    # execution or the dependency graph, but DOES affect the title
+    # slide's own cell list: the deck's first slide (slides[0], if any)
+    # always shows this cell's editor, alongside `is_setup`'s cell if one
+    # exists -- see `effective_title_slide_cells` below, which computes
+    # that slide's cells fresh every time rather than an author manually
+    # listing them in that slide's own `cells=[...]` (which is now
+    # ignored for slide 0). At most one cell in a Deck may have this set;
+    # `add_cell` enforces that (see its own docstring).
     is_main: bool = False
+    # `@app.cell(is_setup=True)` -- marks this cell as the deck's
+    # imports/setup cell (e.g. a cell whose body is just `import
+    # turtle`/`import random`-style top-level statements). Same shape as
+    # `is_main` in every respect: doesn't change execution, at most one
+    # cell may have this set (`add_cell` enforces it), and its only
+    # effect is on the title slide's computed cell list
+    # (`effective_title_slide_cells`), where it's shown ABOVE the main
+    # cell's editor when both exist.
+    is_setup: bool = False
     # `@app.cell(hide_code=True)` -- some cells are informational only
     # (e.g. a title slide's own cell, or one that exists purely to
     # attach view items like notes/images) and have no code an author
@@ -142,6 +154,7 @@ class Cell:
         hide_def: bool = False,
         layout: dict[str, Any] | None = None,
         is_main: bool = False,
+        is_setup: bool = False,
         hide_code: bool = False,
     ) -> Cell:
         return cls(
@@ -153,6 +166,7 @@ class Cell:
             hide_def=hide_def,
             layout=layout,
             is_main=is_main,
+            is_setup=is_setup,
             hide_code=hide_code,
         )
 
@@ -193,6 +207,13 @@ class Deck:
                     f"cannot add cell {cell.name!r} as main: cell {existing_main!r} is already "
                     "the deck's main cell -- a deck can only have one"
                 )
+        if cell.is_setup:
+            existing_setup = next((c.name for c in self.cells.values() if c.is_setup), None)
+            if existing_setup is not None:
+                raise ValueError(
+                    f"cannot add cell {cell.name!r} as setup: cell {existing_setup!r} is already "
+                    "the deck's setup cell -- a deck can only have one"
+                )
         self.cells[cell.name] = cell
 
     def add_slide(self, slide: Slide) -> None:
@@ -200,3 +221,31 @@ class Deck:
         if unknown:
             raise ValueError(f"slide {slide.title!r} references unknown cells: {unknown}")
         self.slides.append(slide)
+
+    def effective_title_slide_cells(self) -> list[str]:
+        """The deck's first slide (slides[0], if any) always shows the
+        `is_setup` cell's editor (if one exists) stacked above the
+        `is_main` cell's editor (if one exists), instead of whatever an
+        author manually listed in that slide's own `cells=[...]` --
+        that list is ignored for slide 0 specifically, computed fresh
+        here every time instead, so it stays correct even if is_main/
+        is_setup change after the slide was declared. Skips whichever of
+        the two doesn't exist rather than erroring -- a deck with only a
+        main cell (no setup) still gets a title slide showing just that
+        one editor, and vice versa. Every OTHER slide (index 1+) keeps
+        using its own author-declared `cell_names` unchanged."""
+        setup = next((c.name for c in self.cells.values() if c.is_setup), None)
+        main = next((c.name for c in self.cells.values() if c.is_main), None)
+        return [name for name in (setup, main) if name is not None]
+
+    def effective_cell_names(self, slide_index: int) -> list[str]:
+        """`self.slides[slide_index].cell_names`, except for slide 0
+        (the title slide), where `effective_title_slide_cells()`'s
+        computed list is used instead -- the single point every wire
+        serialization call site (server.py, ws_handler.py) should read
+        a slide's cells through, so the override is applied consistently
+        rather than each call site needing its own index-0 special
+        case."""
+        if slide_index == 0:
+            return self.effective_title_slide_cells()
+        return self.slides[slide_index].cell_names

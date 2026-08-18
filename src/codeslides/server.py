@@ -98,6 +98,7 @@ def create_app(deck: Deck | None = None, deck_path: str | None = None) -> FastAP
                     ],
                     "layout": cell.layout,
                     "is_main": cell.is_main,
+                    "is_setup": cell.is_setup,
                     "hide_code": cell.hide_code,
                 }
                 for name, cell in d.cells.items()
@@ -105,11 +106,11 @@ def create_app(deck: Deck | None = None, deck_path: str | None = None) -> FastAP
             "slides": [
                 {
                     "title": s.title,
-                    "cells": s.cell_names,
+                    "cells": d.effective_cell_names(i),
                     "reveal_code": s.reveal_code,
                     "notes": s.notes,
                 }
-                for s in d.slides
+                for i, s in enumerate(d.slides)
             ],
         }
 

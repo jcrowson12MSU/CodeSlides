@@ -31,9 +31,12 @@ def test_deck_endpoint_reports_cell_instance_source_and_elements():
     response = client.get("/api/deck")
     body = response.json()
 
-    assert body["slides"] == [
-        {"title": "Demo", "cells": ["live_demo"], "reveal_code": True, "notes": "Notes."}
-    ]
+    # "Demo" is this deck's only (and therefore first) slide, so its
+    # served `cells` reflects Deck.effective_cell_names' title-slide
+    # override -- computed from is_main/is_setup, not the literal
+    # `cells=["live_demo"]` declared above. Neither cell here has either
+    # flag set, so it comes back empty.
+    assert body["slides"] == [{"title": "Demo", "cells": [], "reveal_code": True, "notes": "Notes."}]
     assert set(body["cells"].keys()) == {"setup", "live_demo"}
 
     assert body["cells"]["setup"]["instance"] == "static"
@@ -51,6 +54,81 @@ def test_deck_endpoint_reports_cell_instance_source_and_elements():
     ]
     assert "def live_demo(speed)" in live_demo_meta["source"]
     assert "@app.cell" not in live_demo_meta["source"]
+
+
+def test_deck_endpoint_title_slide_shows_setup_then_main_cell():
+    app = App()
+
+    @app.cell(is_setup=True)
+    def setup():
+        import turtle  # noqa: F401
+
+    @app.cell(is_main=True)
+    def main_cell():
+        pass
+
+    @app.cell
+    def other():
+        pass
+
+    # Author-declared cells=[...] is deliberately wrong here -- the
+    # title slide's served cells must come from is_setup/is_main, not
+    # this list, so a mismatch proves the override is actually applied
+    # rather than coincidentally matching.
+    @app.slide("Title", cells=["other"])
+    def slide_1():
+        pass
+
+    @app.slide("Details", cells=["other"])
+    def slide_2():
+        pass
+
+    client = TestClient(create_app(app.deck))
+    body = client.get("/api/deck").json()
+
+    assert body["slides"][0]["title"] == "Title"
+    assert body["slides"][0]["cells"] == ["setup", "main_cell"]
+    # A later slide (index 1+) is untouched -- its own author-declared
+    # cells are served as-is.
+    assert body["slides"][1]["title"] == "Details"
+    assert body["slides"][1]["cells"] == ["other"]
+
+    assert body["cells"]["setup"]["is_setup"] is True
+    assert body["cells"]["main_cell"]["is_main"] is True
+
+
+def test_deck_endpoint_title_slide_shows_only_whichever_of_setup_main_exists():
+    app = App()
+
+    @app.cell(is_main=True)
+    def main_only():
+        pass
+
+    @app.slide("Title", cells=[])
+    def slide_1():
+        pass
+
+    client = TestClient(create_app(app.deck))
+    body = client.get("/api/deck").json()
+
+    assert body["slides"][0]["cells"] == ["main_only"]
+
+
+def test_deck_endpoint_title_slide_is_empty_with_no_main_or_setup_cell():
+    app = App()
+
+    @app.cell
+    def plain():
+        pass
+
+    @app.slide("Title", cells=["plain"])
+    def slide_1():
+        pass
+
+    client = TestClient(create_app(app.deck))
+    body = client.get("/api/deck").json()
+
+    assert body["slides"][0]["cells"] == []
 
 
 def test_deck_endpoint_reports_title_as_the_deck_files_own_stem(tmp_path):

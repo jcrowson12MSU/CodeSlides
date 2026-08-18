@@ -235,6 +235,18 @@ class SetMainCell:
 
 
 @dataclass
+class SetSetupCell:
+    """Same shape as `SetMainCell`, for `deck.Cell.is_setup` -- "how do
+    I denote the cell containing the deck's imports/setup code" --
+    write-immediately-to-disk, one-per-deck, setting a new one
+    automatically un-sets whichever cell had it before."""
+
+    type: ClassVar[str] = "set_setup_cell"
+    session_id: str
+    cell_id: str
+
+
+@dataclass
 class SetHideCode:
     """Set/clear `cell_id`'s `hide_code` (`deck.Cell.hide_code` -- hides
     the entire code-editor column for this cell, a stronger, author-time
@@ -478,9 +490,10 @@ class CellRenamed:
     (`serialization.rename_cell`'s own `_detect_layout` call), and this
     must carry that forward or the client's local state would silently
     lose track of a previously-saved layout the moment its owning cell
-    gets renamed. `is_main`/`hide_code` for the same reason -- a rename
-    must not silently drop the deck's main-cell designation or a cell's
-    hide-code declaration from the client's local state."""
+    gets renamed. `is_main`/`is_setup`/`hide_code` for the same reason
+    -- a rename must not silently drop the deck's main/setup-cell
+    designation or a cell's hide-code declaration from the client's
+    local state."""
 
     type: ClassVar[str] = "cell_renamed"
     session_id: str
@@ -491,6 +504,7 @@ class CellRenamed:
     elements: list[dict[str, Any]]
     layout: dict[str, Any] | None = None
     is_main: bool = False
+    is_setup: bool = False
     hide_code: bool = False
 
 
@@ -506,6 +520,17 @@ class MainCellSet:
     session_id: str
     cell_id: str
     previous_main_cell_id: str | None = None
+
+
+@dataclass
+class SetupCellSet:
+    """Acknowledges a successful `set_setup_cell`, same shape as
+    `MainCellSet` for `is_setup`."""
+
+    type: ClassVar[str] = "setup_cell_set"
+    session_id: str
+    cell_id: str
+    previous_setup_cell_id: str | None = None
 
 
 @dataclass
@@ -642,6 +667,7 @@ ClientMessage = (
     | SetCellLayout
     | RenameCell
     | SetMainCell
+    | SetSetupCell
     | SetHideCode
     | RemoveCell
     | ReorderCells
@@ -663,6 +689,7 @@ ServerMessage = (
     | TitleSlideAdded
     | CellRenamed
     | MainCellSet
+    | SetupCellSet
     | HideCodeSet
     | CellRemoved
     | CellsReordered
@@ -691,6 +718,7 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
         SetCellLayout,
         RenameCell,
         SetMainCell,
+        SetSetupCell,
         SetHideCode,
         RemoveCell,
         ReorderCells,

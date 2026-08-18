@@ -41,6 +41,7 @@ class App:
         hide_def: bool = False,
         layout: dict[str, Any] | None = None,
         is_main: bool = False,
+        is_setup: bool = False,
         hide_code: bool = False,
     ):
         """Register a function as a Cell. See ARCHITECTURE.md sections 2-3.
@@ -66,9 +67,15 @@ class App:
         round-trips through on the next load.
 
         `is_main=True` marks this as the deck's one designated entry-
-        point cell (see `deck.Cell.is_main`'s own docstring) -- purely a
-        marker, raises `ValueError` at registration time if another cell
-        already has it set (`Deck.add_cell`).
+        point cell (see `deck.Cell.is_main`'s own docstring) -- affects
+        the title slide's computed cell list, raises `ValueError` at
+        registration time if another cell already has it set
+        (`Deck.add_cell`).
+
+        `is_setup=True` marks this as the deck's one designated setup/
+        imports cell (see `deck.Cell.is_setup`'s own docstring) -- shown
+        above the `is_main` cell on the title slide when both exist,
+        same one-per-deck enforcement as `is_main`.
 
         `hide_code=True` (see `deck.Cell.hide_code`'s own docstring)
         removes the entire code-editor column for this cell -- a
@@ -85,6 +92,7 @@ class App:
                     hide_def=hide_def,
                     layout=layout,
                     is_main=is_main,
+                    is_setup=is_setup,
                     hide_code=hide_code,
                 )
             )

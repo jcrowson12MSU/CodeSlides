@@ -3,7 +3,7 @@ import random
 
 app = App()
 
-@app.cell(hide_def=True)
+@app.cell(hide_def=True, is_setup=True)
 def setup():
     import turtle
     import random
@@ -265,7 +265,11 @@ a student would run themselves outside of any single slide."""
     createMatrix, markCorners, marchingSquares
 
 
-@app.slide('Title', cells=['cell_4'])
+# cells=[] deliberately -- the title slide (deck's first slide) always
+# shows the is_setup cell's editor stacked above the is_main cell's,
+# computed server-side (Deck.effective_title_slide_cells), overriding
+# whatever's listed here.
+@app.slide('Title', cells=[])
 def slide_title():
     """"""
 

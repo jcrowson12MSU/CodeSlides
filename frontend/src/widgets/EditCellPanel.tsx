@@ -37,6 +37,12 @@ export interface EditCellPanelProps {
    * *different* one main instead, same as a radio button -- there's
    * nothing meaningful about "no cell is main" as a state to write. */
   onSetMainCell: () => void
+  /** Whether this cell is currently the deck's one designated setup/
+   * imports cell (`deck.Cell.is_setup`). */
+  isSetup: boolean
+  /** Check the "Setup cell" box -- same shape as `onSetMainCell` above,
+   * for `is_setup`. */
+  onSetSetupCell: () => void
   /** Whether this cell currently has its code editor hidden
    * (`deck.Cell.hide_code`) -- an author-time declaration for a cell
    * that's informational only. */
@@ -93,6 +99,8 @@ export function EditCellPanel({
   onRename,
   isMain,
   onSetMainCell,
+  isSetup,
+  onSetSetupCell,
   isHideCode,
   onSetHideCode,
   tabs,
@@ -246,6 +254,19 @@ export function EditCellPanel({
           }}
         />
         Main cell
+      </label>
+
+      <label className="cs-edit-cell-setup">
+        <input
+          type="checkbox"
+          checked={isSetup}
+          // Same checking-only shape as the Main cell checkbox above --
+          // see onSetSetupCell's own docstring.
+          onChange={(event) => {
+            if (event.target.checked) onSetSetupCell()
+          }}
+        />
+        Setup cell
       </label>
 
       <label className="cs-edit-cell-hide-code">

@@ -1102,6 +1102,7 @@ class Kernel:
                 stale,
                 hide_def=new_cell.hide_def,
                 is_main=new_cell.is_main,
+                is_setup=new_cell.is_setup,
                 hide_code=new_cell.hide_code,
             )
         if old_name in session.namespace:
@@ -1137,6 +1138,26 @@ class Kernel:
         from codeslides.serialization import set_main_cell as _set_main_cell_on_disk
 
         _set_main_cell_on_disk(self.deck_path, cell_name)
+
+        from codeslides.loader import load_deck
+
+        self.reload_deck(load_deck(self.deck_path))
+        return self.deck.cells[cell_name]
+
+    def set_setup_cell(self, session: Session, cell_name: str) -> Cell:
+        """Mark `cell_name` as the deck's one designated setup/imports
+        cell (`deck.Cell.is_setup`), same shape as `set_main_cell` in
+        every respect -- on disk immediately, one-per-deck (enforced by
+        `serialization.set_setup_cell` stripping any other holder), and
+        reloads this Kernel's baseline synchronously afterward."""
+        if self.deck_path is None:
+            raise ValueError("cannot set a setup cell: this Kernel was not started from a deck file")
+        if cell_name not in self.deck.cells:
+            raise ValueError(f"cannot set cell {cell_name!r} as setup: it no longer exists")
+
+        from codeslides.serialization import set_setup_cell as _set_setup_cell_on_disk
+
+        _set_setup_cell_on_disk(self.deck_path, cell_name)
 
         from codeslides.loader import load_deck
 
@@ -1479,6 +1500,8 @@ class Kernel:
             cell.elements,
             session.source_overrides[cell_name],
             hide_def=cell.hide_def,
+            is_main=cell.is_main,
+            is_setup=cell.is_setup,
             hide_code=cell.hide_code,
         )
 

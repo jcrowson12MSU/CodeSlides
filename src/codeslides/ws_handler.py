@@ -52,9 +52,11 @@ from codeslides.protocol import (
     SetElementValue,
     SetHideCode,
     SetMainCell,
+    SetSetupCell,
     SetSlideOrder,
     SetTestSource,
     SetUiState,
+    SetupCellSet,
     SlideAdded,
     TitleSlideAdded,
 )
@@ -493,11 +495,11 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
             [
                 {
                     "title": s.title,
-                    "cells": s.cell_names,
+                    "cells": registry.kernel.deck.effective_cell_names(i),
                     "reveal_code": s.reveal_code,
                     "notes": s.notes,
                 }
-                for s in registry.kernel.deck.slides
+                for i, s in enumerate(registry.kernel.deck.slides)
             ]
             if reordered_slides
             else None
@@ -560,11 +562,16 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
             )
         except (InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
             return [ErrorMessage(message=str(exc), session_id=message.session_id)]
+        # Slides are always appended at the end (add_slide's own
+        # docstring), so this new slide is only ever slide 0 -- and
+        # therefore subject to the title-slide cells override -- when the
+        # deck had no slides before this call.
+        new_index = len(registry.kernel.deck.slides) - 1
         return [
             SlideAdded(
                 session_id=message.session_id,
                 title=slide.title,
-                cell_names=list(slide.cell_names),
+                cell_names=registry.kernel.deck.effective_cell_names(new_index),
                 reveal_code=slide.reveal_code,
                 notes=slide.notes,
             )
@@ -589,11 +596,11 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
         slides_payload = [
             {
                 "title": s.title,
-                "cells": s.cell_names,
+                "cells": registry.kernel.deck.effective_cell_names(i),
                 "reveal_code": s.reveal_code,
                 "notes": s.notes,
             }
-            for s in registry.kernel.deck.slides
+            for i, s in enumerate(registry.kernel.deck.slides)
         ]
         return [
             TitleSlideAdded(
@@ -669,6 +676,7 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 ],
                 layout=cell.layout,
                 is_main=cell.is_main,
+                is_setup=cell.is_setup,
                 hide_code=cell.hide_code,
             )
         ]
@@ -694,6 +702,27 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 session_id=message.session_id,
                 cell_id=cell.name,
                 previous_main_cell_id=previous_main,
+            )
+        ]
+
+    if isinstance(message, SetSetupCell):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        # Same capture-before-call rationale as SetMainCell above.
+        previous_setup = next(
+            (name for name, c in registry.kernel.deck.cells.items() if c.is_setup and name != message.cell_id),
+            None,
+        )
+        try:
+            cell = registry.kernel.set_setup_cell(session, message.cell_id)
+        except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
+            return [ErrorMessage(message=str(exc), session_id=message.session_id, cell_id=message.cell_id)]
+        return [
+            SetupCellSet(
+                session_id=message.session_id,
+                cell_id=cell.name,
+                previous_setup_cell_id=previous_setup,
             )
         ]
 

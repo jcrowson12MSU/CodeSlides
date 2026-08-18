@@ -37,6 +37,14 @@ export interface CellMeta {
   // set it), so `?? false` at every read site rather than a required
   // field, matching `layout`'s own "not always present" precedent.
   is_main?: boolean
+  // Whether this is the deck's one designated setup/imports cell
+  // (`is_setup` in the .py file) -- same shape as `is_main` in every
+  // respect, including its own badge/checkbox state in EditCellPanel.
+  // The two together determine the title slide's (deck.slides[0])
+  // cell list server-side (Deck.effective_title_slide_cells) -- this
+  // Cell component itself doesn't compute or care about that, it only
+  // ever renders whichever cells App.tsx/SlideShow.tsx hand it.
+  is_setup?: boolean
   // Author-time declaration that this cell has no code editor at all
   // (`hide_code` in the .py file) -- e.g. a title slide's own cell, or
   // one that exists purely to attach view items. Combined into the
@@ -97,6 +105,9 @@ export interface CellProps {
    * cell's local `is_main` too, so this Cell doesn't need to know or
    * care which cell that was. */
   onSetMainCell: () => void
+  /** EditCellPanel's "Setup cell" checkbox -- same shape as
+   * onSetMainCell above, for `is_setup`. */
+  onSetSetupCell: () => void
   /** EditCellPanel's "Hide code editor" checkbox: set/clear this cell's
    * `hide_code`. Writes to the deck's .py file immediately (same
    * precedent as onRenameCell/onSetMainCell). Unlike onSetMainCell, this
@@ -190,6 +201,7 @@ export function Cell({
   onToggleCollapse,
   onRenameCell,
   onSetMainCell,
+  onSetSetupCell,
   onSetHideCode,
   onAddElement,
   onRemoveElement,
@@ -734,6 +746,8 @@ export function Cell({
           onRename={onRenameCell}
           isMain={meta.is_main ?? false}
           onSetMainCell={onSetMainCell}
+          isSetup={meta.is_setup ?? false}
+          onSetSetupCell={onSetSetupCell}
           isHideCode={meta.hide_code ?? false}
           onSetHideCode={onSetHideCode}
           tabs={allTabs}

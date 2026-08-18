@@ -45,6 +45,7 @@ export interface SlideShowProps {
   onToggleCollapse: (cellId: string) => void
   onRenameCell: (cellId: string, newName: string) => void
   onSetMainCell: (cellId: string) => void
+  onSetSetupCell: (cellId: string) => void
   onSetHideCode: (cellId: string, hideCode: boolean) => void
   onAddElement: (cellId: string, name: string, kind: string, config: Record<string, unknown>) => void
   onRemoveElement: (cellId: string, elementName: string) => void
@@ -87,6 +88,7 @@ export function SlideShow({
   onToggleCollapse,
   onRenameCell,
   onSetMainCell,
+  onSetSetupCell,
   onSetHideCode,
   onAddElement,
   onRemoveElement,
@@ -238,6 +240,7 @@ export function SlideShow({
               onToggleCollapse={() => onToggleCollapse(cellId)}
               onRenameCell={(newName) => onRenameCell(cellId, newName)}
               onSetMainCell={() => onSetMainCell(cellId)}
+              onSetSetupCell={() => onSetSetupCell(cellId)}
               onSetHideCode={(hideCode) => onSetHideCode(cellId, hideCode)}
               onAddElement={(name, kind, config) => onAddElement(cellId, name, kind, config)}
               onRemoveElement={(elementName) => onRemoveElement(cellId, elementName)}

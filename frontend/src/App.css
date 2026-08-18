@@ -1488,6 +1488,7 @@ body.cs-slides-locked {
 }
 
 .cs-edit-cell-main,
+.cs-edit-cell-setup,
 .cs-edit-cell-hide-code {
   display: flex;
   align-items: center;

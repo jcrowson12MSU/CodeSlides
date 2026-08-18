@@ -760,8 +760,13 @@ def test_save_deck_flushes_a_pending_slide_order(tmp_path):
 
     assert len(messages) == 1
     assert isinstance(messages[0], DeckSaved)
+    # "Second" is now slide 0 after the reorder -- its served `cells` is
+    # computed fresh from is_main/is_setup (Deck.effective_cell_names),
+    # not the author-declared `["live_demo"]` -- this fixture's cells
+    # have neither flag set, so it comes back empty. "First", now slide
+    # 1, is unaffected and still shows its own declared `["setup"]`.
     assert messages[0].slides == [
-        {"title": "Second", "cells": ["live_demo"], "reveal_code": False, "notes": ""},
+        {"title": "Second", "cells": [], "reveal_code": False, "notes": ""},
         {"title": "First", "cells": ["setup"], "reveal_code": False, "notes": ""},
     ]
     # written to disk immediately -- and the Kernel's own baseline
@@ -988,9 +993,16 @@ def test_add_slide_emits_slide_added_and_writes_to_disk(tmp_path):
     added = messages[0]
     assert added.session_id == session.session_id
     assert added.title == "Intro"
-    assert added.cell_names == ["setup", "live_demo"]
+    # This is the deck's first (and only) slide, so it's slide 0 --
+    # `added.cell_names` reflects Deck.effective_cell_names' title-slide
+    # override (computed from is_main/is_setup) rather than the literal
+    # ["setup", "live_demo"] passed in; this fixture's cells have
+    # neither flag set, so it comes back empty.
+    assert added.cell_names == []
     assert added.reveal_code is False
-    # written to disk immediately -- no separate save_deck needed
+    # The on-disk decorator itself still gets the author-declared cells
+    # verbatim, unaffected by the wire-serialization-only override above
+    # -- written to disk immediately, no separate save_deck needed.
     assert "@app.slide('Intro', cells=['setup', 'live_demo'])" in path.read_text()
     # and the Kernel's own baseline picked it up synchronously
     assert any(s.title == "Intro" for s in registry.kernel.deck.slides)
