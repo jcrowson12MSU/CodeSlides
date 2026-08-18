@@ -4,6 +4,16 @@ runnable CodeSlides cells wherever the source had a code example, plus
 richer live demonstrations for the two purely-conceptual slides (IDE,
 error taxonomy) that had no code of their own.
 
+Deliberately straight-line code throughout -- no `def` anywhere inside
+a cell body, and no `ui.tests` snippet calls a function either. This
+is the first chapter; functions haven't been introduced to the
+student yet, so nothing here should read as if they had been. Where
+an earlier draft used a small helper function purely to make a
+`ui.tests` variant runnable (e.g. "run this again with a different
+name"), the test variant instead just re-states the same few lines of
+straight-line code with different literal values, exactly like a
+student re-typing the lines themselves would.
+
 Slides that showed `input()` keep `input()` in the cell's own source
 for realism (that's genuinely how a student would type it), but the
 runnable version underneath uses `ui.tests(...)` with hardcoded stand-in
@@ -21,7 +31,7 @@ after code-block pattern); the fixed version is the real runnable
 cell. Runtime and logic errors (Slides 19-20), by contrast, are
 syntactically valid Python that only fails when *run* -- those are
 genuinely live: click Run and watch a real traceback/wrong-answer
-appear, then compare against the corrected cell alongside it.
+appear, then compare against the corrected version alongside it.
 """
 
 from codeslides import App, cs, ui
@@ -46,10 +56,10 @@ Use **Slides** to step through the lecture in order, or switch to
     instance="editable",
     elements=[
         ui.notes("notes"),
-        ui.tests("Run it", default='print(hello_program("Ava"))'),
+        ui.tests("Run it with a different name", default='name = "Sam"\nmessage = "Hello, " + name\nprint(message)'),
     ],
 )
-def how_programs_work(name="Ada"):
+def how_programs_work():
     """## How Programs Work: Input → Process → Output
 
 A program is a list of instructions that run one at a time.
@@ -58,14 +68,11 @@ A program is a list of instructions that run one at a time.
 - **Process:** do something with that information
 - **Output:** show or store the result
 
-Run the test below with a name of your own -- try
-`hello_program("Ava")` or `hello_program("Sam")`."""
-
-    def hello_program(who):
-        message = "Hello, " + who
-        return message
-
-    return hello_program(name)
+Run the test below with a different name typed in -- change `"Sam"`
+to your own name."""
+    name = "Ada"
+    message = "Hello, " + name
+    print(message)
 
 
 @app.cell(
@@ -127,10 +134,13 @@ variable_name = value
     instance="editable",
     elements=[
         ui.notes("notes"),
-        ui.tests("Run it", default='add_two_numbers("4", "9")'),
+        ui.tests(
+            "Run it with different numbers",
+            default='first = int("20")\nsecond = int("22")\n\ntotal = first + second\n\nprint("Total:", total)',
+        ),
     ],
 )
-def simple_program(first="4", second="9"):
+def simple_program():
     """## A Simple Python Program
 
 ```python
@@ -146,18 +156,15 @@ print("Total:", total)
 - **Process:** add them
 - **Output:** print the total
 
-The runnable version below stands in for `input()` with two string
-arguments, converts them the same way `int(input(...))` would, and
-returns the total."""
+The runnable version below stands in for `input()` with a fixed
+string, converted the same way `int(input(...))` would be. Run the
+test to try it with different numbers."""
+    first = int("4")
+    second = int("9")
 
-    def add_two_numbers(first_str, second_str):
-        first_n = int(first_str)
-        second_n = int(second_str)
-        total = first_n + second_n
-        print("Total:", total)
-        return total
+    total = first + second
 
-    return add_two_numbers(first, second)
+    print("Total:", total)
 
 
 @app.cell(hide_def=True, elements=[ui.notes("notes")])
@@ -178,7 +185,7 @@ Ask:
     instance="editable",
     elements=[
         ui.notes("notes"),
-        ui.tests("Run it", default="add_two_numbers(12, 30)"),
+        ui.tests("Run it with different numbers", default="first_n = 12\nsecond_n = 30\ntotal = first_n + second_n\nprint(total)"),
     ],
 )
 def algorithm():
@@ -195,22 +202,20 @@ Example algorithm:
 4. Print the answer
 ```
 
-Then translate the algorithm into Python -- the same
-`add_two_numbers` from the previous slide *is* that translation."""
-
-    def add_two_numbers(first_n, second_n):
-        total = first_n + second_n
-        print("Total:", total)
-        return total
-
-    return add_two_numbers
+Then translate the algorithm into Python, one step at a time -- the
+code below *is* that translation, the same shape as `simple_program`
+from a few slides back."""
+    first_n = 4
+    second_n = 9
+    total = first_n + second_n
+    print(total)
 
 
 @app.cell(
     instance="editable",
     elements=[
         ui.notes("notes"),
-        ui.tests("Run it", default='print_examples()'),
+        ui.tests("Run it", default='print("Hello")\nprint("Welcome to Python")'),
     ],
 )
 def print_function():
@@ -224,12 +229,8 @@ print("Welcome to Python")
 ```
 
 Each `print()` normally starts a new line."""
-
-    def print_examples():
-        print("Hello")
-        print("Welcome to Python")
-
-    return print_examples
+    print("Hello")
+    print("Welcome to Python")
 
 
 @app.cell(
@@ -400,10 +401,10 @@ Output:
     instance="editable",
     elements=[
         ui.notes("notes"),
-        ui.tests("Run it", default='greet_by_name("Sam")'),
+        ui.tests("Run it with a different name", default='name = "Sam"\nprint("Hello,", name)'),
     ],
 )
-def input_and_prompts(name="Sam"):
+def input_and_prompts():
     """## Input and Prompts
 
 `input()` reads what the user types.
@@ -418,12 +419,8 @@ Important: `input()` always gives back a string.
 ```python
 age = int(input("Age: "))
 ```"""
-
-    def greet_by_name(who):
-        print("Hello,", who)
-        return who
-
-    return greet_by_name(name)
+    name = "Ada"
+    print("Hello,", name)
 
 
 @app.cell(hide_def=True, elements=[ui.notes("notes")])
@@ -490,11 +487,11 @@ print("Hello")
         ui.notes("notes"),
         ui.tests(
             "Type a number",
-            default='parse_age("15")',
+            default='age_text = "15"\nage = int(age_text)\nprint(age)',
         ),
         ui.tests(
             "Type something that is not a number",
-            default='parse_age("twelve")',
+            default='age_text = "twelve"\nage = int(age_text)\nprint(age)',
         ),
     ],
 )
@@ -514,11 +511,9 @@ cannot become an integer.
 Try both tests below: `"15"` succeeds, `"twelve"` raises a real
 `ValueError` you can see in the output -- click **Run** on the
 second test to watch it happen."""
-
-    def parse_age(age_text):
-        return int(age_text)
-
-    return parse_age
+    age_text = "15"
+    age = int(age_text)
+    print(age)
 
 
 @app.cell(
@@ -527,11 +522,11 @@ second test to watch it happen."""
         ui.notes("notes"),
         ui.tests(
             "Buggy version (adds instead of multiplies)",
-            default="print(rectangle_area_buggy(10, 5))",
+            default="length = 10\nwidth = 5\narea = length + width\nprint(area)",
         ),
         ui.tests(
             "Fixed version",
-            default="print(rectangle_area_fixed(10, 5))",
+            default="length = 10\nwidth = 5\narea = length * width\nprint(area)",
         ),
     ],
 )
@@ -558,14 +553,11 @@ area = length * width
 Run both tests: the buggy version prints `15` (10 + 5, silently
 wrong); the fixed version prints `50` (10 × 5, correct) -- same
 inputs, same lack of any error, very different answers."""
+    length = 10
+    width = 5
 
-    def rectangle_area_buggy(length, width):
-        return length + width  # bug: should multiply
-
-    def rectangle_area_fixed(length, width):
-        return length * width
-
-    return rectangle_area_buggy, rectangle_area_fixed
+    area = length + width  # bug: should multiply
+    print(area)
 
 
 @app.cell(
@@ -598,7 +590,13 @@ compare: one puts `Hello` and `World` on separate lines, the other
 joins them on one line with a single space."""
 
 
-@app.cell(instance="editable", elements=[ui.notes("notes")])
+@app.cell(
+    instance="editable",
+    elements=[
+        ui.notes("notes"),
+        ui.tests("Run it and watch the TypeError", default='age = "15"  # forgot int(...)\nnext_age = age + 1'),
+    ],
+)
 def common_beginner_mistakes():
     """## Common Beginner Mistakes
 
@@ -621,13 +619,8 @@ next_age = age + 1
 
 Forgot to convert input to `int` -- this one is a **runtime** error
 (`str` + `int` raises `TypeError`), not a syntax error, since the
-code itself is grammatically valid Python."""
-
-    def next_age_buggy(age_text):
-        age = age_text  # forgot int(...)
-        return age + 1  # str + int -> TypeError
-
-    return next_age_buggy
+code itself is grammatically valid Python. Run the test below to see
+that error happen for real."""
 
 
 @app.cell(
@@ -667,8 +660,22 @@ question* about it and prints `True`/`False`."""
     elements=[
         ui.notes("notes"),
         ui.tests(
-            "Run the pay calculator",
-            default='print(pay_summary("Ava", 32, 18.5))',
+            "Run it with your own name, hours, and rate",
+            default=(
+                'name = "Sam"\n'
+                "hours = 20\n"
+                "rate = 12.5\n"
+                "\n"
+                "pay = hours * rate\n"
+                "\n"
+                "print()\n"
+                'print("Pay Summary")\n'
+                'print("-----------")\n'
+                'print("Employee:", name)\n'
+                'print("Hours:", hours)\n'
+                'print("Rate: $", rate, sep="")\n'
+                'print("Pay: $", pay, sep="")'
+            ),
         ),
     ],
 )
@@ -700,21 +707,20 @@ This program uses:
 - processing
 - formatted output
 
-Run the test below with your own name, hours, and rate -- for
-example `pay_summary("Sam", 20, 12.5)`."""
+Run the test below with your own name, hours, and rate typed in."""
+    name = "Ava"
+    hours = 32
+    rate = 18.5
 
-    def pay_summary(name, hours, rate):
-        pay = hours * rate
-        print()
-        print("Pay Summary")
-        print("-----------")
-        print("Employee:", name)
-        print("Hours:", hours)
-        print("Rate: $", rate, sep="")
-        print("Pay: $", pay, sep="")
-        return pay
+    pay = hours * rate
 
-    return pay_summary
+    print()
+    print("Pay Summary")
+    print("-----------")
+    print("Employee:", name)
+    print("Hours:", hours)
+    print("Rate: $", rate, sep="")
+    print("Pay: $", pay, sep="")
 
 
 @app.slide("Title", cells=[])
