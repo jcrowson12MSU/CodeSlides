@@ -1138,6 +1138,61 @@ def reorder_slides(deck_path: str, slide_order: list[int]) -> None:
     path.write_text(updated)
 
 
+def remove_slide(deck_path: str, index: int) -> None:
+    """Delete slide `index`'s whole `@app.slide(...)` block from
+    `deck_path`, on disk, immediately -- keyed by *position*, not
+    title, same rationale as `reorder_slides` (`_slide_line_spans`'s
+    own docstring: two slides can share a title). The inverse of
+    `append_slide`.
+
+    Deliberately does NOT touch `deck.cells` or any other slide's
+    `cells=[...]` -- removing a slide is presentation-only, unlike
+    `remove_cell`'s own cascade into slides that reference the
+    removed cell (that cascade exists because a slide pointing at a
+    cell that no longer exists is invalid on the next `load_deck`;
+    the reverse isn't true, a cell not referenced by any slide is
+    perfectly valid, it's simply not shown on any slide -- still
+    editable/runnable from Cells view). This is the whole point of
+    the feature: remove a slide without deleting the cell it shows.
+
+    Raises `SaveConflictError` if `index` is out of range, or
+    `InvalidSourceError` if the result doesn't parse."""
+    path = Path(deck_path)
+    original = path.read_text()
+    spans = _slide_line_spans(original)
+    if not (0 <= index < len(spans)):
+        raise SaveConflictError(
+            f"cannot remove slide {index}: the deck only has {len(spans)} slide(s)"
+        )
+
+    start, end = spans[index]
+    lines = original.splitlines(keepends=True)
+    # Same delete-then-collapse-to-two-blank-lines shape as
+    # `remove_cell` (see its own comment for why exactly two).
+    del lines[start - 1 : end]
+    cut = start - 1
+    end_of_prev = cut
+    while end_of_prev > 0 and lines[end_of_prev - 1].strip() == "":
+        end_of_prev -= 1
+    end_of_next = cut
+    while end_of_next < len(lines) and lines[end_of_next].strip() == "":
+        end_of_next += 1
+    if end_of_prev > 0 and end_of_next < len(lines):
+        lines[end_of_prev:end_of_next] = ["\n", "\n"]
+    else:
+        lines[end_of_prev:end_of_next] = []
+    updated = "".join(lines)
+
+    try:
+        ast.parse(updated)
+    except SyntaxError as exc:
+        raise InvalidSourceError(
+            f"removing slide {index} would leave {deck_path!r} with invalid Python syntax, not saved: {exc}"
+        ) from exc
+
+    path.write_text(updated)
+
+
 def _replace_elements(
     deck_path: str,
     cell_name: str,

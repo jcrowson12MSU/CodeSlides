@@ -446,6 +446,9 @@ function App() {
           ]
           addSlidePending.current = false
           setAddSlideError(undefined)
+        } else if (msg.type === 'slide_removed') {
+          changed = true
+          slides = slides.filter((_, i) => i !== msg.index)
         } else if (msg.type === 'title_slide_added') {
           if (!changed) cells = { ...cells }
           changed = true
@@ -526,6 +529,33 @@ function App() {
   function handleAddTitleSlide() {
     if (!sessionId) return
     send({ type: 'add_title_slide', session_id: sessionId })
+  }
+
+  // Removes slide `index` from the deck entirely, on disk immediately
+  // (same write-now precedent as `handleAddSlide`/`handleRemoveCell`,
+  // not staged behind Save the way `handleReorderSlides` is) --
+  // deliberately does NOT delete the cell(s) that slide showed; see
+  // `RemoveSlide`'s own docstring (protocol.py) for the distinction
+  // from `handleRemoveCell`. Every slide after the removed one shifts
+  // down by one position, so `slideIndex` needs adjusting: a slide
+  // strictly before the removed one shifts its own index down by one
+  // to keep tracking the same slide the user was looking at; a slide
+  // strictly after stays put, its own index unaffected. Removing the
+  // *currently-viewed* slide itself deliberately does NOT decrement --
+  // per the user's own choice, staying at the same numeric index shows
+  // whichever slide slides into that now-vacant spot (i.e. what used
+  // to be the next slide), only clamped down by one if the removed
+  // slide was the last one in the deck (nothing left to slide into
+  // that spot).
+  function handleRemoveSlide(index: number) {
+    if (!sessionId) return
+    const wasLastSlide = index === (deck?.slides.length ?? 1) - 1
+    send({ type: 'remove_slide', session_id: sessionId, index })
+    setSlideIndex((current) => {
+      if (index < current) return current - 1
+      if (index === current && wasLastSlide) return Math.max(0, current - 1)
+      return current
+    })
   }
 
   // Reorders the deck's slides to match `displayedOrder` -- a
@@ -963,6 +993,7 @@ function App() {
           onReorderSlides={handleReorderSlides}
           onAddSlide={handleAddSlide}
           onAddTitleSlide={handleAddTitleSlide}
+          onRemoveSlide={handleRemoveSlide}
           addSlideError={addSlideError}
         />
       )}

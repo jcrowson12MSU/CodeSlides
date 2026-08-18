@@ -26,6 +26,7 @@ from codeslides.protocol import (
     NavigateSlide,
     RemoveCell,
     RemoveElement,
+    RemoveSlide,
     RenameCell,
     ReorderCells,
     ReorderElements,
@@ -41,6 +42,7 @@ from codeslides.protocol import (
     SetTestSource,
     SetUiState,
     SlideAdded,
+    SlideRemoved,
     TitleSlideAdded,
 )
 from codeslides.ws_handler import SessionRegistry, handle_message
@@ -1006,6 +1008,57 @@ def test_add_slide_emits_slide_added_and_writes_to_disk(tmp_path):
     assert "@app.slide('Intro', cells=['setup', 'live_demo'])" in path.read_text()
     # and the Kernel's own baseline picked it up synchronously
     assert any(s.title == "Intro" for s in registry.kernel.deck.slides)
+
+
+def test_remove_slide_deletes_the_slide_but_keeps_the_cell(tmp_path):
+    registry, path = _build_file_backed_registry_with_slides(tmp_path)
+    session = registry.create()
+    assert [s.title for s in registry.kernel.deck.slides] == ["First", "Second"]
+
+    messages = handle_message(registry, RemoveSlide(session_id=session.session_id, index=0))
+
+    assert messages == [SlideRemoved(session_id=session.session_id, index=0)]
+    # "First" (the slide referencing `setup`) is gone...
+    assert [s.title for s in registry.kernel.deck.slides] == ["Second"]
+    assert "@app.slide('First'" not in path.read_text()
+    # ...but `setup` itself is fully intact, on disk and in the reloaded
+    # baseline -- the whole point of the feature, distinct from
+    # RemoveCell which deletes the cell's own code.
+    assert "def setup():" in path.read_text()
+    assert "setup" in registry.kernel.deck.cells
+
+
+def test_remove_slide_rejects_an_out_of_range_index(tmp_path):
+    registry, _ = _build_file_backed_registry_with_slides(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(registry, RemoveSlide(session_id=session.session_id, index=5))
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+    assert "only has 2 slide(s)" in messages[0].message
+    # nothing was removed
+    assert [s.title for s in registry.kernel.deck.slides] == ["First", "Second"]
+
+
+def test_remove_slide_by_position_not_title_when_titles_collide(tmp_path):
+    # Two slides can share a title (Deck._slide_line_spans' own
+    # rationale for keying removal by position, not name) -- confirm
+    # removing index 0 removes the FIRST one specifically, not
+    # "whichever slide happens to be named X".
+    registry, path = _build_file_backed_registry_with_slides(tmp_path)
+    session = registry.create()
+    handle_message(
+        registry, AddSlide(session_id=session.session_id, title="First", cell_names=["live_demo"])
+    )
+    assert [s.title for s in registry.kernel.deck.slides] == ["First", "Second", "First"]
+
+    handle_message(registry, RemoveSlide(session_id=session.session_id, index=0))
+
+    titles = [s.title for s in registry.kernel.deck.slides]
+    assert titles == ["Second", "First"]
+    # the remaining "First" is the newer one (references live_demo, not setup)
+    assert registry.kernel.deck.slides[1].cell_names == ["live_demo"]
 
 
 def test_add_slide_with_reveal_code(tmp_path):

@@ -11,6 +11,15 @@ export interface EditSlideDeckPanelProps {
   // are all generated server-side (kernel.Kernel.add_title_slide) from
   // the deck's own current state.
   onAddTitleSlide: () => void
+  // Removes slide `index` from the deck entirely, on disk immediately
+  // (App.tsx's handleRemoveSlide) -- deliberately does NOT delete the
+  // cell(s) that slide shows, only the slide grouping itself (see
+  // RemoveSlide's own docstring, protocol.py, for why this is a
+  // separate concept from deleting a cell). Guarded by a
+  // window.confirm, same convention Cell.tsx's own "Delete cell"
+  // button already uses for an equally immediate, unrecoverable
+  // write.
+  onRemoveSlide: (index: number) => void
   addSlideError?: string
 }
 
@@ -30,6 +39,7 @@ export function EditSlideDeckPanel({
   onReorderSlides,
   onAddSlide,
   onAddTitleSlide,
+  onRemoveSlide,
   addSlideError,
 }: EditSlideDeckPanelProps) {
   const [title, setTitle] = useState('')
@@ -96,6 +106,23 @@ export function EditSlideDeckPanel({
                 </button>
               </div>
               <span>{slide.title}</span>
+              <button
+                type="button"
+                className="cs-remove-slide-button"
+                aria-label={`Remove ${slide.title}`}
+                onClick={() => {
+                  // The cell(s) this slide shows are never deleted --
+                  // only this one presentation grouping -- worth
+                  // saying explicitly in the prompt so it doesn't read
+                  // the same as Cell.tsx's own "Delete cell" confirm,
+                  // which really is unrecoverable code loss.
+                  if (window.confirm(`Remove slide "${slide.title}"? Its cell(s) will not be deleted.`)) {
+                    onRemoveSlide(index)
+                  }
+                }}
+              >
+                Remove
+              </button>
             </li>
           ))}
         </ul>

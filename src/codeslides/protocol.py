@@ -185,6 +185,29 @@ class SetSlideOrder:
 
 
 @dataclass
+class RemoveSlide:
+    """Delete slide `index` entirely -- its own `@app.slide(...)` block,
+    on disk, immediately (same write-immediately precedent as
+    `AddSlide`/`RemoveCell`: no staged/unsaved delete state). Keyed by
+    *position*, not title, same rationale as `SetSlideOrder`'s own
+    `slide_order` (`serialization._slide_line_spans`'s docstring: two
+    slides can share a title).
+
+    Deliberately does NOT delete the cell(s) that slide referenced,
+    nor touch any other slide -- removing a slide only removes that
+    one presentation grouping; every cell it showed is still fully
+    intact and editable/runnable from Cells view, same as it was
+    before this slide existed. This is the whole point of the
+    feature, distinct from `RemoveCell` (which deletes a cell's code
+    entirely, and *does* cascade into stripping that cell's name out
+    of every slide referencing it -- the exact inverse relationship)."""
+
+    type: ClassVar[str] = "remove_slide"
+    session_id: str
+    index: int
+
+
+@dataclass
 class SetCellLayout:
     """Stage a new layout (code/side divider fraction, upper/lower panel
     divider fraction, which section each view-item tab lives in -- see
@@ -556,6 +579,20 @@ class CellRemoved:
 
 
 @dataclass
+class SlideRemoved:
+    """Acknowledges a successful `remove_slide`: just the removed
+    position, so the client can splice that one slide out of its local
+    `deck.slides` array without a full refetch -- same "here's what to
+    delete" role `CellRemoved` plays for cells. No cell information at
+    all here, deliberately: removing a slide never touches any cell,
+    so there's nothing else for the client to update."""
+
+    type: ClassVar[str] = "slide_removed"
+    session_id: str
+    index: int
+
+
+@dataclass
 class CellsReordered:
     """Acknowledges a successful `reorder_cells`: the deck's full new
     cell-name order, so the client can re-render its cell list in that
@@ -664,6 +701,7 @@ ClientMessage = (
     | AddSlide
     | AddTitleSlide
     | SetSlideOrder
+    | RemoveSlide
     | SetCellLayout
     | RenameCell
     | SetMainCell
@@ -692,6 +730,7 @@ ServerMessage = (
     | SetupCellSet
     | HideCodeSet
     | CellRemoved
+    | SlideRemoved
     | CellsReordered
     | ElementAdded
     | ElementRemoved
@@ -715,6 +754,7 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
         AddSlide,
         AddTitleSlide,
         SetSlideOrder,
+        RemoveSlide,
         SetCellLayout,
         RenameCell,
         SetMainCell,

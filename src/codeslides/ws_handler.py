@@ -40,6 +40,7 @@ from codeslides.protocol import (
     NavigateSlide,
     RemoveCell,
     RemoveElement,
+    RemoveSlide,
     RenameCell,
     ReorderCells,
     ReorderElements,
@@ -58,6 +59,7 @@ from codeslides.protocol import (
     SetUiState,
     SetupCellSet,
     SlideAdded,
+    SlideRemoved,
     TitleSlideAdded,
 )
 from codeslides.serialization import (
@@ -638,6 +640,23 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
         # SaveDeck actually writes it.
         session.slide_order_override = list(message.slide_order)
         return []
+
+    if isinstance(message, RemoveSlide):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if registry.kernel.deck_path is None:
+            return [
+                ErrorMessage(
+                    message="no deck file to remove a slide from (not started from a file)",
+                    session_id=message.session_id,
+                )
+            ]
+        try:
+            registry.kernel.remove_slide(message.index)
+        except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
+            return [ErrorMessage(message=str(exc), session_id=message.session_id)]
+        return [SlideRemoved(session_id=message.session_id, index=message.index)]
 
     if isinstance(message, SetCellLayout):
         session = registry.get(message.session_id)

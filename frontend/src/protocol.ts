@@ -114,6 +114,12 @@ export interface SetSlideOrder {
   slide_order: number[]
 }
 
+export interface RemoveSlide {
+  type: 'remove_slide'
+  session_id: string
+  index: number
+}
+
 export interface SetCellLayout {
   type: 'set_cell_layout'
   session_id: string
@@ -203,6 +209,7 @@ export type ClientMessage =
   | AddSlide
   | AddTitleSlide
   | SetSlideOrder
+  | RemoveSlide
   | SetCellLayout
   | RenameCell
   | SetMainCell
@@ -300,6 +307,12 @@ export interface SlideAdded {
   cell_names: string[]
   reveal_code: boolean
   notes: string
+}
+
+export interface SlideRemoved {
+  type: 'slide_removed'
+  session_id: string
+  index: number
 }
 
 export interface TitleSlideAdded {
@@ -421,6 +434,7 @@ export type ServerMessage =
   | DeckSaved
   | CellAdded
   | SlideAdded
+  | SlideRemoved
   | TitleSlideAdded
   | CellRenamed
   | MainCellSet

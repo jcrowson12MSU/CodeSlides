@@ -986,6 +986,32 @@ class Kernel:
 
         return self.deck.slides[-1]
 
+    def remove_slide(self, index: int) -> None:
+        """Delete slide `index` entirely -- on disk, immediately, then
+        reloaded into this Kernel's own baseline synchronously, same
+        write-now precedent as `add_slide`/`remove_cell`.
+
+        Deliberately does NOT touch any Session's own state (unlike
+        `remove_cell`, which pops the removed name out of every
+        Session's `instances`/`source_overrides`/`namespace`) -- a
+        Slide has no per-Session instance to begin with (`add_slide`'s
+        own docstring: "nothing to run"), and removing one doesn't
+        remove any cell, so there's nothing cell-shaped for a Session
+        to forget here.
+
+        Requires `self.deck_path` (raises `ValueError` without one,
+        same as `add_slide`)."""
+        if self.deck_path is None:
+            raise ValueError("cannot remove a slide: this Kernel was not started from a deck file")
+
+        from codeslides.serialization import remove_slide as _remove_slide_on_disk
+
+        _remove_slide_on_disk(self.deck_path, index)
+
+        from codeslides.loader import load_deck
+
+        self.reload_deck(load_deck(self.deck_path))
+
     def add_title_slide(self, session: Session) -> tuple[Cell, Slide, ExecutionResult]:
         """Create a title slide (TODO.md #61): a new `cs.md(...)` cell
         holding the deck's own title, a one-line summary placeholder, and

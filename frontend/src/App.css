@@ -1726,6 +1726,27 @@ body.cs-slides-locked {
   padding: 0.25rem 0;
 }
 
+/* Same visual treatment as .cs-delete-cell-button (Cell.tsx's own
+   "Delete cell" -- both are an immediate, unrecoverable disk write,
+   confirmed via window.confirm before either ever fires), pushed to
+   the row's own right edge since `<span>{slide.title}</span>` above
+   it has no fixed width to otherwise separate it from the up/down
+   arrows. */
+.cs-remove-slide-button {
+  margin-left: auto;
+  border: 1px solid #e6b3ac;
+  border-radius: 3px;
+  background: none;
+  cursor: pointer;
+  font-size: var(--cs-font-sm);
+  color: #c0392b;
+  padding: 0.05rem 0.5rem;
+}
+
+.cs-remove-slide-button:hover {
+  background: #fbeae8;
+}
+
 .cs-edit-slide-deck-hint {
   color: #999;
   font-style: italic;
