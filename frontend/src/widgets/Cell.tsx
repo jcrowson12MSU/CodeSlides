@@ -259,6 +259,15 @@ export function Cell({
   // those would silently snap an in-progress or already-adjusted layout
   // back to whatever was last saved.
   const [codeFraction, setCodeFraction] = useState(() => meta.layout?.code_fraction ?? DEFAULT_CODE_FRACTION)
+  // The title-slide-only split between `extraCodeAbove` (the setup
+  // cell's composed-in editor) and this cell's own -- only ever
+  // rendered/draggable when `extraCodeAbove` is actually provided (see
+  // the JSX below), but declared unconditionally same as every other
+  // layout fraction here, so its value survives across renders where
+  // `extraCodeAbove` might toggle (e.g. slide navigation away and back).
+  const [extraCodeFraction, setExtraCodeFraction] = useState(
+    () => meta.layout?.extra_code_fraction ?? DEFAULT_CODE_FRACTION,
+  )
   // Presenter-only line highlighting: purely local, ephemeral state (not
   // sent over the websocket, not persisted to the deck's .py source) --
   // same rationale as `codeFraction` above, but reset on every mount
@@ -397,8 +406,8 @@ export function Cell({
   // lockstep with every corresponding `setX` call, never read to drive
   // rendering -- only `emitLayoutChange` (below) ever reads it, at the
   // moment a drag/tab-move/default-tab-change actually settles.
-  const layoutRef = useRef({ codeFraction, panelFraction, tabPanel, defaultTab })
-  layoutRef.current = { codeFraction, panelFraction, tabPanel, defaultTab }
+  const layoutRef = useRef({ codeFraction, panelFraction, tabPanel, defaultTab, extraCodeFraction })
+  layoutRef.current = { codeFraction, panelFraction, tabPanel, defaultTab, extraCodeFraction }
 
   // Reports this cell's complete current layout up to App.tsx (per the
   // user's request that Save persist it) -- called once a drag settles
@@ -418,6 +427,7 @@ export function Cell({
       panel_fraction: current.panelFraction,
       lower_tabs: lowerTabs,
       ...(current.defaultTab !== undefined ? { default_tab: current.defaultTab } : {}),
+      extra_code_fraction: current.extraCodeFraction,
     })
   }, [onLayoutChange])
 
@@ -558,6 +568,45 @@ export function Cell({
       window.addEventListener('pointerup', stopPanelResizing)
     },
     [handlePanelResizeMove, stopPanelResizing],
+  )
+
+  // The setup/main editor split within `.cs-cell-code`, same mirror-of-
+  // `startResizing`/`handleResizeMove`/`stopResizing` shape as the
+  // panel-resize handlers just above -- a third, independent draggable
+  // divider (different axis/container/state again). Only ever rendered
+  // (and thus only ever dragged) when `extraCodeAbove` is provided --
+  // see the JSX below -- but declared unconditionally like every other
+  // handler here.
+  const extraCodeRef = useRef<HTMLDivElement | null>(null)
+  const extraCodeDraggingRef = useRef(false)
+
+  const handleExtraCodeResizeMove = useCallback((event: PointerEvent) => {
+    const container = extraCodeRef.current
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+    if (rect.height === 0) return
+    const fraction = (event.clientY - rect.top) / rect.height
+    setExtraCodeFraction(Math.min(MAX_CODE_FRACTION, Math.max(MIN_CODE_FRACTION, fraction)))
+  }, [])
+
+  const stopExtraCodeResizing = useCallback(() => {
+    if (!extraCodeDraggingRef.current) return
+    extraCodeDraggingRef.current = false
+    document.body.classList.remove('cs-resizing-vertical')
+    window.removeEventListener('pointermove', handleExtraCodeResizeMove)
+    window.removeEventListener('pointerup', stopExtraCodeResizing)
+    emitLayoutChange()
+  }, [handleExtraCodeResizeMove, emitLayoutChange])
+
+  const startExtraCodeResizing = useCallback(
+    (event: React.PointerEvent) => {
+      event.preventDefault()
+      extraCodeDraggingRef.current = true
+      document.body.classList.add('cs-resizing-vertical')
+      window.addEventListener('pointermove', handleExtraCodeResizeMove)
+      window.addEventListener('pointerup', stopExtraCodeResizing)
+    },
+    [handleExtraCodeResizeMove, stopExtraCodeResizing],
   )
 
   // A single tab's own view-item content -- extracted so both sections
@@ -843,23 +892,57 @@ export function Cell({
           )}
 
           {!hideCode && (
-            <div className="cs-cell-code" style={{ flexBasis: `${codeFraction * 100}%` }}>
-              {/* Title-slide-only composition (SlideShow.tsx): the
-                  setup cell's own editor rendered here, above this
-                  cell's own, sharing this column's codeFraction-driven
-                  width instead of getting an independent one. See
-                  `extraCodeAbove`'s own docstring. */}
-              {extraCodeAbove}
-              <CodeEditor
-                source={meta.source}
-                onRunCell={onRunCell}
-                onRunAll={onRunAll}
-                readOnly={meta.instance === 'static'}
-                highlightedLines={highlightedLines}
-                onToggleLineHighlight={toggleLineHighlight}
-                lineOffset={lineOffset}
-                onLineCountChange={onLineCountChange}
-              />
+            <div
+              className="cs-cell-code"
+              ref={extraCodeAbove ? extraCodeRef : undefined}
+              style={{ flexBasis: `${codeFraction * 100}%` }}
+            >
+              {extraCodeAbove ? (
+                <>
+                  {/* Title-slide-only composition (SlideShow.tsx): the
+                      setup cell's own editor rendered here, above this
+                      cell's own, sharing this column's codeFraction-
+                      driven width instead of getting an independent
+                      one. The two share `extraCodeFraction` as their
+                      own top/bottom split, draggable via the handle
+                      below -- same "flex-basis in %, drag measures the
+                      shared container's own rect" shape as `panelFraction`
+                      above, just a third independent instance of it. */}
+                  <div className="cs-cell-extra-code" style={{ flexBasis: `${extraCodeFraction * 100}%` }}>
+                    {extraCodeAbove}
+                  </div>
+                  <div
+                    className="cs-panel-resize-handle"
+                    onPointerDown={startExtraCodeResizing}
+                    role="separator"
+                    aria-orientation="horizontal"
+                    aria-label={`Resize ${cellId}'s setup/main editor split`}
+                  />
+                  <div className="cs-cell-extra-code" style={{ flexBasis: `${(1 - extraCodeFraction) * 100}%` }}>
+                    <CodeEditor
+                      source={meta.source}
+                      onRunCell={onRunCell}
+                      onRunAll={onRunAll}
+                      readOnly={meta.instance === 'static'}
+                      highlightedLines={highlightedLines}
+                      onToggleLineHighlight={toggleLineHighlight}
+                      lineOffset={lineOffset}
+                      onLineCountChange={onLineCountChange}
+                    />
+                  </div>
+                </>
+              ) : (
+                <CodeEditor
+                  source={meta.source}
+                  onRunCell={onRunCell}
+                  onRunAll={onRunAll}
+                  readOnly={meta.instance === 'static'}
+                  highlightedLines={highlightedLines}
+                  onToggleLineHighlight={toggleLineHighlight}
+                  lineOffset={lineOffset}
+                  onLineCountChange={onLineCountChange}
+                />
+              )}
             </div>
           )}
         </div>

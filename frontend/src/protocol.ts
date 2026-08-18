@@ -24,6 +24,14 @@ export interface CellLayout {
   panel_fraction?: number
   lower_tabs?: string[]
   default_tab?: string
+  // The title-slide-only split between a composed `extraCodeAbove`
+  // editor (Cell.tsx/SlideShow.tsx) and this cell's own -- meaningless
+  // outside that context (a normal cell with no extraCodeAbove ignores
+  // it entirely), but saved on the MAIN cell's own layout since that's
+  // the cell whose Cell instance actually owns the divider/drag state.
+  // Same "top gets this fraction, bottom gets the rest" meaning as
+  // `panel_fraction`.
+  extra_code_fraction?: number
 }
 
 // -- Client -> server messages ----------------------------------------------

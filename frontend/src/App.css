@@ -350,6 +350,18 @@ button.cs-save-button {
   gap: 0.5rem;
 }
 
+/* Wraps `extraCodeAbove`/the main CodeEditor when both are present
+   (Cell.tsx) -- same "flex: 0 0 auto, explicit % basis, min-height: 0"
+   shape as `.cs-cell-panels`' own upper/lower sections, so each of the
+   two stacked editors respects `extraCodeFraction`'s drag-set share of
+   height instead of both just growing to fit their own content. */
+.cs-cell-extra-code {
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
 .cs-cell-side {
   flex: 0 0 auto;
   min-width: 0;
