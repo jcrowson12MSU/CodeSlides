@@ -216,11 +216,24 @@ export function SlideShow({
         {slide.cells.map((cellId) => {
           const meta = cellMeta[cellId]
           if (!meta) return null
+          // The title slide (index 0) stacks the setup cell's editor
+          // above the main cell's (Deck.effective_title_slide_cells,
+          // server-side) purely to show its code -- there's no room for
+          // a second view-items column above the main cell's own
+          // notes/canvas/output, and nothing conceptually meaningful
+          // about showing "half" the title slide's real content twice.
+          // Suppressing the setup cell's side column here is scoped to
+          // this one slide/cell combination: the same cell shown on its
+          // own dedicated slide elsewhere (e.g. `examples/
+          // marchingSquares.py`'s separate "Setup" slide) still renders
+          // its side column normally.
+          const hideSide = index === 0 && (meta.is_setup ?? false)
           return (
             <Cell
               key={cellId}
               cellId={cellId}
               meta={meta}
+              hideSide={hideSide}
               lineOffset={cellLineOffsets[cellId] ?? 0}
               onLineCountChange={(count) => onLineCountChange(cellId, count)}
               state={cellState[cellId]}
