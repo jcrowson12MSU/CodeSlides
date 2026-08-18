@@ -60,6 +60,14 @@ function App() {
   // (and still owns the Cmd+Control+Left/Right keyboard shortcut), but
   // no longer owns the index itself.
   const [slideIndex, setSlideIndex] = useState(0)
+  // The title slide (index 0) shows the deck's own title here instead of
+  // its own declared slide title -- per the user's request, matching
+  // what Cells view's header always shows for the deck (`deck?.title`),
+  // rather than whatever an author happened to name that one slide (e.g.
+  // the literal string "Title" -- `examples/marchingSquares.py`'s own
+  // `@app.slide('Title', ...)`). Every other slide still shows its own
+  // title unchanged.
+  const displayedSlideTitle = slideIndex === 0 ? (deck?.title ?? '') : activeSlideTitle
   // The "Edit slide deck" panel (rename of TODO's "+ New slide" button,
   // per the user's request): reorder existing slides and create new
   // ones, from the header row next to the Cells/Slides toggle.
@@ -742,7 +750,7 @@ function App() {
           >
             &larr;
           </button>
-          <h2 className="cs-slide-title cs-slide-title-in-header">{activeSlideTitle}</h2>
+          <h2 className="cs-slide-title cs-slide-title-in-header">{displayedSlideTitle}</h2>
           <button
             type="button"
             className="cs-slide-nav-button"
@@ -801,11 +809,12 @@ function App() {
           )}
           {/* Cells view: the deck's own title (its filename, server.py's
               /api/deck). Slides view: the current slide's title in this
-              same spot instead -- same content the collapsed header
-              above already shows via activeSlideTitle, just now also
-              shown while the header is expanded. */}
+              same spot instead (the title slide substituting the deck's
+              own title too, per displayedSlideTitle's own docstring) --
+              same content the collapsed header above already shows, just
+              now also shown while the header is expanded. */}
           <h1 className={`cs-app-title ${scrolled ? 'cs-app-title-scrolled' : ''}`}>
-            {viewMode === 'slides' ? activeSlideTitle : (deck?.title ?? '')}
+            {viewMode === 'slides' ? displayedSlideTitle : (deck?.title ?? '')}
           </h1>
           {viewMode === 'slides' && deck && (
             <>
