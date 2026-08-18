@@ -901,98 +901,83 @@ body.cs-resizing-vertical {
 }
 
 .cs-notes-viewer {
-  position: relative; /* anchors .cs-notes-toggle's absolute positioning */
   border: 1px solid #eee;
   border-radius: 4px;
   padding: 0.5rem;
 }
 
-.cs-notes-toggle {
-  /* Overlaid in the corner rather than given its own row (previously
-     .cs-notes-header) -- with no element-name label left to share that
-     row with, a whole row reserved for just this one small button read
-     as unwanted blank space above the rendered markdown. */
-  position: absolute;
-  top: 0.5rem;
-  right: 0.5rem;
-  font-size: var(--cs-font-sm);
-  border: 1px solid #ccc;
-  border-radius: 3px;
-  background: white;
-  padding: 0.15rem 0.5rem;
-  cursor: pointer;
+/* Obsidian-style live markdown editor (NotesEditor.tsx) -- replaces the
+   old Edit/Preview textarea toggle, so there's no separate .cs-notes-
+   editor/.cs-notes-toggle pair anymore: this IS both the editing surface
+   and the rendered view at once. Deliberately styled as prose, not a
+   code editor -- no gutter/line-numbers extension is added in
+   NotesEditor.tsx, and font-size/line-height here match the old static
+   .cs-notes-rendered body text exactly so there's no visual seam versus
+   the view this replaces. */
+.cs-notes-live-editor .cm-editor {
+  outline: none;
 }
 
-.cs-notes-editor {
-  width: 100%;
-  min-height: 80px;
-  font-family: ui-monospace, monospace;
-  font-size: var(--cs-font-base);
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  padding: 0.4rem;
-  box-sizing: border-box;
-  resize: vertical;
+.cs-notes-live-editor .cm-content {
+  caret-color: var(--text-h, #08060d);
 }
 
-.cs-notes-rendered {
-  font-size: var(--cs-font-md);
-  line-height: 1.4;
-  /* Reserves room for .cs-notes-toggle's absolutely-positioned corner
-     overlay so a long first-line heading wraps around it instead of
-     running underneath -- only the first couple lines actually sit
-     next to the button, but padding the whole block is simpler than
-     targeting just :first-child and costs nothing once text wraps
-     below the button's own height. */
-  padding-right: 3.5rem;
+.cs-notes-live-h1,
+.cs-notes-live-h2,
+.cs-notes-live-h3,
+.cs-notes-live-h4,
+.cs-notes-live-h5,
+.cs-notes-live-h6 {
+  font-weight: 600;
 }
 
-.cs-notes-rendered h1,
-.cs-notes-rendered h2,
-.cs-notes-rendered h3,
-.cs-notes-rendered h4,
-.cs-notes-rendered h5,
-.cs-notes-rendered h6 {
-  /* Notes are a small sidebar viewer, not a document -- the browser's
-     default heading sizes/margins (up to 2em with a matching margin)
-     were designed for full-page reading, not a title sitting a few
-     lines above a couple sentences of body text. */
-  margin: 0 0 0.15rem;
-}
-
-/* Each level sized independently (fonts.css's --cs-font-notes-h1..h6) so
-   a markdown ## renders visibly smaller than a #, rather than every
-   heading level collapsing to one identical size. */
-.cs-notes-rendered h1 {
+/* Same per-level scale as the old static preview (fonts.css's
+   --cs-font-notes-h1..h6) -- resizing a heading level there affects both
+   this live editor and CellOutputView's markdown-typed output equally,
+   since both read the same variables. */
+.cs-notes-live-h1 {
   font-size: var(--cs-font-notes-h1);
 }
 
-.cs-notes-rendered h2 {
+.cs-notes-live-h2 {
   font-size: var(--cs-font-notes-h2);
 }
 
-.cs-notes-rendered h3 {
+.cs-notes-live-h3 {
   font-size: var(--cs-font-notes-h3);
 }
 
-.cs-notes-rendered h4 {
+.cs-notes-live-h4 {
   font-size: var(--cs-font-notes-h4);
 }
 
-.cs-notes-rendered h5 {
+.cs-notes-live-h5 {
   font-size: var(--cs-font-notes-h5);
 }
 
-.cs-notes-rendered h6 {
+.cs-notes-live-h6 {
   font-size: var(--cs-font-notes-h6);
 }
 
-.cs-notes-rendered :first-child {
-  margin-top: 0;
+.cs-notes-live-bold {
+  font-weight: 700;
 }
 
-.cs-notes-rendered :last-child {
-  margin-bottom: 0;
+.cs-notes-live-italic {
+  font-style: italic;
+}
+
+.cs-notes-inline-code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+  background: var(--code-bg, #f4f3ec);
+  border-radius: 3px;
+  padding: 0.1em 0.3em;
+}
+
+.cs-notes-quote-mark {
+  color: var(--text, #6b6375);
+  opacity: 0.6;
 }
 
 .cs-tests-viewer {

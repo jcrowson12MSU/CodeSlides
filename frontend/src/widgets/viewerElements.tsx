@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { renderMarkdown } from './markdown'
+import { NotesEditor } from './NotesEditor'
 
 // Viewer-element widgets (ARCHITECTURE.md section 3a): image, iframe,
 // notes. Unlike the input elements in inputElements.tsx, these display
@@ -109,37 +109,23 @@ export interface NotesViewerProps {
   onChangeSource: (source: string) => void
 }
 
-// The one viewer with two modes (ARCHITECTURE.md section 3a): a markdown
-// editor and a rendered view, toggled by the user. Toggling and editing
-// are both pure UI/authoring state -- neither sends set_element_value nor
-// triggers a cell re-run (ARCHITECTURE.md section 8); edits go out as
-// set_ui_state's notes_source field instead. Unlike every other viewer,
-// this one never shows its own element name -- notes content is markdown
-// meant to be read starting right at its own title if it has one, not
-// prefixed with authoring metadata a reader has no use for.
+// Always-live markdown (Obsidian-style live preview, ARCHITECTURE.md
+// section 3a): no Edit/Preview toggle -- NotesEditor renders markdown
+// inline as you type, revealing raw syntax only on the line(s) the
+// cursor currently touches. Editing is pure UI/authoring state -- it
+// doesn't send set_element_value nor trigger a cell re-run
+// (ARCHITECTURE.md section 8); edits go out as set_ui_state's
+// notes_source field instead, same wire path the old textarea used.
+// Unlike every other viewer, this one never shows its own element name
+// -- notes content is markdown meant to be read starting right at its
+// own title if it has one, not prefixed with authoring metadata a
+// reader has no use for.
 export function NotesViewer({ content, onChangeSource }: NotesViewerProps) {
-  const [editing, setEditing] = useState(false)
   const source = typeof content === 'string' ? content : ''
 
   return (
     <div className="cs-element cs-element-viewer cs-notes-viewer">
-      {/* Absolutely positioned over the content (not a flex row of its
-          own) so it never reserves a full row's worth of vertical space
-          above the rendered markdown -- with no element-name label left
-          to share that row (see this component's own comment above), an
-          empty header row read as unwanted blank space at the top. */}
-      <button type="button" className="cs-notes-toggle" onClick={() => setEditing((v) => !v)}>
-        {editing ? 'preview' : 'edit'}
-      </button>
-      {editing ? (
-        <textarea
-          className="cs-notes-editor"
-          value={source}
-          onChange={(event) => onChangeSource(event.target.value)}
-        />
-      ) : (
-        <div className="cs-notes-rendered" dangerouslySetInnerHTML={{ __html: renderMarkdown(source) }} />
-      )}
+      <NotesEditor source={source} onChangeSource={onChangeSource} />
     </div>
   )
 }
