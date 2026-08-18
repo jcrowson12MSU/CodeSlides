@@ -31,15 +31,30 @@
   --cs-font-notes-h4: 0.95rem;
   --cs-font-notes-h5: 0.9rem;
   --cs-font-notes-h6: 0.85rem;
-  --cs-font-code: 13px; /* Cells-view code editor's own base size --
-                            CodeEditor.tsx's CodeMirror theme
-                            (EditorView.theme()) reads this directly, since
-                            it emits literal CSS and a var() reference
-                            works there too. Kept in px like the monospace
-                            editor's own sizing convention, rather than
-                            rem. */
-  --cs-font-code-slides: 16px; /* Slides-view override of the same editor,
-                                   larger for presenting/reading from a
-                                   distance (`.cs-slide .cs-code-editor
-                                   .cm-editor`). */
+  --cs-font-code: 0.72222em; /* Cells-view code editor's own base size --
+                                 CodeEditor.tsx's CodeMirror theme
+                                 (EditorView.theme()) reads this directly,
+                                 since it emits literal CSS and a var()
+                                 reference works there too. `em`, not
+                                 `rem`, deliberately: `rem` always
+                                 resolves against the true document root
+                                 no matter what an ancestor's own
+                                 font-size is, so it can't be locally
+                                 re-anchored -- only `em` inherits through
+                                 .cs-code-editor's own font-size:18px
+                                 override (App.css), which is what keeps
+                                 this a fixed 13px regardless of
+                                 index.css's page-wide root-font-size
+                                 media query. See that override's own
+                                 comment for why the editor's size is
+                                 kept fixed rather than shrinking on
+                                 narrow viewports like the rest of the
+                                 app's rem-based scale. */
+  --cs-font-code-slides: 0.88889em; /* Slides-view override of the same
+                                        editor, larger for presenting/
+                                        reading from a distance
+                                        (`.cs-slide .cs-code-editor
+                                        .cm-editor`) -- 16px at the same
+                                        local 18px em-anchor as
+                                        --cs-font-code above. */
 }

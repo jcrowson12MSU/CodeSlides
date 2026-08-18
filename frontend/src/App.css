@@ -390,6 +390,22 @@ body.cs-resizing {
   min-width: 0;
   flex: 1 1 auto;
   display: flex;
+  /* Establishes a fixed 18px `em` base for everything inside this editor
+     (including CodeMirror's own EditorView.theme() styles, which read
+     --cs-font-code/-code-slides as `em`, not `rem` -- fonts.css), so
+     those values inherit *this* font-size rather than the page's
+     :root one, which itself drops from 18px to 16px under a
+     max-width:1024px media query (index.css). `rem` can't be locally
+     re-anchored like this -- it always resolves against the true
+     document root regardless of any intervening ancestor's own
+     font-size, which is exactly why --cs-font-code/-code-slides use
+     `em` here while the rest of the type scale (fonts.css) uses `rem`.
+     Without this override, the code editor's text would get very
+     slightly smaller on narrow viewports along with the rest of the
+     root-relative scale -- fine for prose, but the editor's size was
+     deliberately kept fixed instead (matches how most code editors
+     behave, independent of window width). */
+  font-size: 18px;
 }
 
 /* `height: 100%` (not `max-height`) is what makes the editor track
