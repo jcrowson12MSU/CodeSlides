@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import type { CellState } from '../deckState'
 import type { CellLayout } from '../protocol'
 import { Cell, type CellMeta } from './Cell'
+import { CodeEditor } from './CodeEditor'
 import { computeLineOffsets } from './lineOffsets'
 
 export interface SlideMeta {
@@ -216,24 +217,46 @@ export function SlideShow({
         {slide.cells.map((cellId) => {
           const meta = cellMeta[cellId]
           if (!meta) return null
-          // The title slide (index 0) stacks the setup cell's editor
-          // above the main cell's (Deck.effective_title_slide_cells,
-          // server-side) purely to show its code -- there's no room for
-          // a second view-items column above the main cell's own
-          // notes/canvas/output, and nothing conceptually meaningful
-          // about showing "half" the title slide's real content twice.
-          // Suppressing the setup cell's side column here is scoped to
-          // this one slide/cell combination: the same cell shown on its
-          // own dedicated slide elsewhere (e.g. `examples/
-          // marchingSquares.py`'s separate "Setup" slide) still renders
-          // its side column normally.
-          const hideSide = index === 0 && (meta.is_setup ?? false)
+          // The title slide (index 0, Deck.effective_title_slide_cells
+          // server-side) composes the setup cell's editor directly INTO
+          // the main cell's own rendered Cell (via extraCodeAbove)
+          // rather than rendering it as an independent top-level Cell --
+          // there's only one view-items column on this slide (the main
+          // cell's own notes/canvas/output), and the setup editor needs
+          // to share that Cell's own codeFraction-driven width to align
+          // with the main editor below it, not size itself
+          // independently. So the setup cell is skipped here entirely;
+          // see the `extraCodeAbove` prop below, on the main cell's own
+          // <Cell>, for where it actually renders. Elsewhere (Cells
+          // view, or the setup cell's own dedicated "Setup" slide) it
+          // still renders as a normal, independent Cell.
+          if (index === 0 && meta.is_setup) return null
+          // Only injected onto the main cell specifically (not just
+          // "whichever cell isn't setup") -- effective_title_slide_cells
+          // only ever puts setup/main on this slide today, but scoping
+          // to `meta.is_main` keeps this correct even if that ever
+          // changes, rather than assuming every other cell here wants
+          // the setup editor stacked above it.
+          const setupCellId =
+            index === 0 && meta.is_main ? slide.cells.find((id) => cellMeta[id]?.is_setup) : undefined
+          const setupMeta = setupCellId ? cellMeta[setupCellId] : undefined
           return (
             <Cell
               key={cellId}
               cellId={cellId}
               meta={meta}
-              hideSide={hideSide}
+              extraCodeAbove={
+                setupCellId && setupMeta ? (
+                  <CodeEditor
+                    source={setupMeta.source}
+                    onRunCell={(source) => onRunCell(setupCellId, source)}
+                    onRunAll={onRunAll}
+                    readOnly={setupMeta.instance === 'static'}
+                    lineOffset={cellLineOffsets[setupCellId] ?? 0}
+                    onLineCountChange={(count) => onLineCountChange(setupCellId, count)}
+                  />
+                ) : undefined
+              }
               lineOffset={cellLineOffsets[cellId] ?? 0}
               onLineCountChange={(count) => onLineCountChange(cellId, count)}
               state={cellState[cellId]}

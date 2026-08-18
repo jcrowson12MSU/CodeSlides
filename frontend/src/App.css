@@ -341,6 +341,13 @@ button.cs-save-button {
   min-width: 0;
   min-height: 0;
   display: flex;
+  /* Column, not the default row -- normally there's just one CodeEditor
+     here so direction never mattered, but the title slide's own
+     composition (Cell.tsx's `extraCodeAbove`, SlideShow.tsx) stacks a
+     second one above it, and both need to lay out top-to-bottom
+     sharing this column's width, not side-by-side squeezing it. */
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .cs-cell-side {

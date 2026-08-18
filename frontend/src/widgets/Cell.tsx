@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { CellState } from '../deckState'
 import type { CellLayout } from '../protocol'
 import { CellOutputView } from './CellOutputView'
@@ -75,18 +75,22 @@ export interface CellProps {
    * it's ORed with `meta.hide_code` below so an author's `hide_code=True`
    * always wins regardless of what a caller passes. */
   hideCode?: boolean
-  /** Hide just the view-items column (`.cs-cell-side` -- notes/canvas/
-   * output/etc), showing only the code editor -- the mirror image of
-   * `hideCode`, same "caller-only, no author-time equivalent" shape
-   * (there's no `meta.hide_side`; this is purely a layout decision the
-   * caller makes, not something an author declares on the cell itself).
-   * Used by SlideShow.tsx for the title slide's setup cell specifically
-   * (see Deck.effective_title_slide_cells' own docstring): the setup
-   * cell's own view items (if it has any) have no place to go when it's
-   * stacked above the main cell purely to show its code, so its side
-   * column is suppressed there -- but only there; the same cell shown
-   * on its own dedicated slide elsewhere still renders normally. */
-  hideSide?: boolean
+  /** Renders inside this Cell's own `.cs-cell-code` column, directly
+   * above its own `CodeEditor` -- sharing that column's `codeFraction`-
+   * driven width rather than getting an independent one. Used by
+   * SlideShow.tsx for the title slide only (see Deck.
+   * effective_title_slide_cells' own docstring): the setup cell's
+   * editor is composed INTO the main cell's own rendered `Cell` this
+   * way, rather than the two rendering as separate top-level `Cell`s
+   * each with their own view-items column and resize state -- there's
+   * only one `.cs-cell-side` (the main cell's own notes/canvas/output)
+   * and one shared code-column width on the title slide, and this is
+   * what makes the setup editor visually align to it instead of
+   * spanning the full row on its own. Purely presentational: the setup
+   * cell's own source/onRunCell/etc are whatever the caller wires up on
+   * the passed-in element, this Cell doesn't know or care it's a
+   * different cell's editor. */
+  extraCodeAbove?: ReactNode
   /** Hide the entire `.cs-cell-header` row (collapse toggle, cell name,
    * status/read-only badges, Edit button) -- Slides-view-only, per the
    * user's request: a slide has exactly one cell already framed by the
@@ -204,7 +208,7 @@ export function Cell({
   testSourceValues,
   collapsed,
   hideCode: hideCodeProp = false,
-  hideSide = false,
+  extraCodeAbove,
   hideHeader = false,
   onRunCell,
   onRunAll,
@@ -793,45 +797,42 @@ export function Cell({
               wide (reported bug: slide 2 "Image Preview" with code
               hidden). `100%` here means "the only column, fill the
               row." */}
-          {!hideSide && (
-            <div
-              className="cs-cell-side"
-              style={{ flexBasis: hideCode ? '100%' : `${(1 - codeFraction) * 100}%` }}
-            >
-              {/* Two independent, stacked sections (per the user's
-                  request) -- each is its own drop target
-                  (onDragOver/onDrop) for a tab dragged from either
-                  section's strip, and each renders only the tabs
-                  currently assigned to it (`upperTabs`/`lowerTabs`,
-                  driven by `tabPanel`). An empty section still renders
-                  its (empty) strip as a drop target, collapsed to a
-                  thin header-only row via `.cs-cell-panel-empty`
-                  rather than claiming the panel's full flex-basis
-                  share for nothing to show, per the user's own scoping
-                  decision. */}
-              <div className="cs-cell-panels" ref={panelsRef}>
-                {renderPanel('upper', upperTabs, upperActiveTab, setUpperActiveTab, lowerTabs.length === 0)}
-                {upperTabs.length > 0 && lowerTabs.length > 0 && (
-                  <div
-                    className="cs-panel-resize-handle"
-                    onPointerDown={startPanelResizing}
-                    role="separator"
-                    aria-orientation="horizontal"
-                    aria-label={`Resize ${cellId}'s upper/lower view-item split`}
-                  />
-                )}
-                {renderPanel('lower', lowerTabs, lowerActiveTab, setLowerActiveTab, upperTabs.length === 0)}
-              </div>
+          <div
+            className="cs-cell-side"
+            style={{ flexBasis: hideCode ? '100%' : `${(1 - codeFraction) * 100}%` }}
+          >
+            {/* Two independent, stacked sections (per the user's
+                request) -- each is its own drop target
+                (onDragOver/onDrop) for a tab dragged from either
+                section's strip, and each renders only the tabs
+                currently assigned to it (`upperTabs`/`lowerTabs`,
+                driven by `tabPanel`). An empty section still renders
+                its (empty) strip as a drop target, collapsed to a
+                thin header-only row via `.cs-cell-panel-empty`
+                rather than claiming the panel's full flex-basis
+                share for nothing to show, per the user's own scoping
+                decision. */}
+            <div className="cs-cell-panels" ref={panelsRef}>
+              {renderPanel('upper', upperTabs, upperActiveTab, setUpperActiveTab, lowerTabs.length === 0)}
+              {upperTabs.length > 0 && lowerTabs.length > 0 && (
+                <div
+                  className="cs-panel-resize-handle"
+                  onPointerDown={startPanelResizing}
+                  role="separator"
+                  aria-orientation="horizontal"
+                  aria-label={`Resize ${cellId}'s upper/lower view-item split`}
+                />
+              )}
+              {renderPanel('lower', lowerTabs, lowerActiveTab, setLowerActiveTab, upperTabs.length === 0)}
             </div>
-          )}
+          </div>
 
-          {/* No handle (and no split to speak of) once either column is
-              hidden -- ARCHITECTURE.md's slideshow reveal-code toggle
-              already collapses to a single column when code is hidden,
+          {/* No handle (and no split to speak of) once the code column
+              itself is hidden -- ARCHITECTURE.md's slideshow reveal-code
+              toggle already collapses to a single column in that case,
               same as a screen narrow enough to stack the two columns
-              (see the @media rule in App.css); `hideSide` is the mirror
-              case, the view-items column gone instead. */}
-          {!hideCode && !hideSide && (
+              (see the @media rule in App.css). */}
+          {!hideCode && (
             <div
               className="cs-resize-handle"
               onPointerDown={startResizing}
@@ -842,7 +843,13 @@ export function Cell({
           )}
 
           {!hideCode && (
-            <div className="cs-cell-code" style={{ flexBasis: hideSide ? '100%' : `${codeFraction * 100}%` }}>
+            <div className="cs-cell-code" style={{ flexBasis: `${codeFraction * 100}%` }}>
+              {/* Title-slide-only composition (SlideShow.tsx): the
+                  setup cell's own editor rendered here, above this
+                  cell's own, sharing this column's codeFraction-driven
+                  width instead of getting an independent one. See
+                  `extraCodeAbove`'s own docstring. */}
+              {extraCodeAbove}
               <CodeEditor
                 source={meta.source}
                 onRunCell={onRunCell}
