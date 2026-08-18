@@ -23,7 +23,6 @@ import {
   highlightActiveLine,
   highlightActiveLineGutter,
   keymap,
-  lineNumbers,
   rectangularSelection,
 } from '@codemirror/view'
 import { useEffect, useRef } from 'react'
@@ -43,6 +42,27 @@ export interface CodeEditorProps {
   // means -- it just reports the raw click.
   highlightedLines?: ReadonlySet<number>
   onToggleLineHighlight?: (line: number, shiftKey: boolean) => void
+  // How many lines precede this cell's own source, in deck order -- so
+  // this editor's displayed line numbers continue where the previous
+  // cell's left off (e.g. a 15-line cell followed by one starting at
+  // 16) instead of every cell restarting at 1, making the deck read as
+  // one continuous program rather than N independent snippets. Purely a
+  // *display* offset (formatNumber below), not a real document
+  // position -- CodeMirror's own internal line numbers, folding, and
+  // this editor's line-highlight feature all keep operating on each
+  // cell's actual 1-based lines underneath. Optional/defaults to 0 so a
+  // standalone cell (or a caller that doesn't track deck order) renders
+  // exactly as before.
+  lineOffset?: number
+  // Fired with this cell's current line count on every document change
+  // (not just Shift+Enter's onRunCell) -- lets a caller keep a live
+  // per-cell line-count map for computing *other* cells' `lineOffset`
+  // above without waiting for a run, since the editor is uncontrolled
+  // and its live content otherwise never reaches outside this component
+  // between runs (`source` only reflects what was last loaded/run, see
+  // the mount-effect docstring below). Optional so a caller that
+  // doesn't chain line numbers across cells doesn't need to provide it.
+  onLineCountChange?: (count: number) => void
 }
 
 // Ephemeral, presenter-driven line highlighting (not persisted, not
@@ -96,6 +116,78 @@ class HighlightGutterMarker extends GutterMarker {
 }
 const highlightGutterMarker = new HighlightGutterMarker()
 
+// Reactive line-offset for lineNumbers()'s formatNumber (below) -- a
+// StateField (not a value captured once when the mount effect's
+// extensions array is built) so a later change to the `lineOffset` prop
+// -- e.g. an earlier cell in the deck gaining/losing lines as it's
+// edited -- updates the displayed numbers via `dispatch`, the same
+// pattern `highlightField`/`setHighlightedLines` above already use for
+// `highlightedLines`.
+const setLineOffset = StateEffect.define<number>()
+const lineOffsetField = StateField.define<number>({
+  create: () => 0,
+  update(offset, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setLineOffset)) return effect.value
+    }
+    return offset
+  },
+})
+
+// A hand-built line-number gutter, not CodeMirror's own lineNumbers()
+// extension -- lineNumbers()'s `formatNumber` option looked like the
+// right tool for this (it's documented for exactly "customize the
+// displayed number"), but its built-in `lineMarkerChange` only compares
+// the *facet* holding the formatNumber function/config object for
+// identity, never actually re-invoking formatNumber to see if its
+// *output* changed -- confirmed by reading @codemirror/view's own
+// source (the built-in NumberMarker's `lineMarkerChange` predicate).
+// Since this component passes one stable formatNumber closure at mount
+// (reading lineOffsetField internally), that facet never changes
+// identity across the editor's lifetime, so lineNumbers() silently never
+// redraws when `lineOffset` changes after mount -- reproduced by editing
+// an earlier cell and finding a later cell's own gutter frozen at its
+// original numbers despite the underlying offset state updating
+// correctly. Building the gutter directly (same @codemirror/view API
+// the highlight gutter below already uses) lets `lineMarkerChange`
+// explicitly check for a `setLineOffset` effect and force a redraw.
+class LineNumberMarker extends GutterMarker {
+  label: string
+  constructor(label: string) {
+    super()
+    this.label = label
+  }
+  eq(other: LineNumberMarker) {
+    return other.label === this.label
+  }
+  toDOM() {
+    return document.createTextNode(this.label)
+  }
+}
+
+function offsetLineNumberGutter(): Extension {
+  return gutter({
+    class: 'cm-lineNumbers',
+    renderEmptyElements: false,
+    lineMarker: (view, line) => {
+      const lineNumber = view.state.doc.lineAt(line.from).number
+      const offset = view.state.field(lineOffsetField)
+      return new LineNumberMarker(String(lineNumber + offset))
+    },
+    lineMarkerChange: (update) => update.transactions.some((tr) => tr.effects.some((e) => e.is(setLineOffset))),
+    initialSpacer: (view) => {
+      // Same purpose as CodeMirror's own lineNumbers() spacer: reserves
+      // the gutter's final width up front from the largest number it'll
+      // ever show, so the gutter doesn't visibly grow/shrink by a
+      // character width as line numbers cross a power-of-ten boundary
+      // (e.g. 9 -> 10) while scrolling or editing.
+      let widest = 9
+      while (widest < view.state.doc.lines) widest = widest * 10 + 9
+      return new LineNumberMarker(String(widest + view.state.field(lineOffsetField)))
+    },
+  })
+}
+
 // A single cell's source editor (ARCHITECTURE.md section 2/3): CodeMirror
 // 6 with Python highlighting plus a hand-assembled bundle of its standard
 // editing extensions (EDITOR_BEHAVIOR.md's Option B2) -- auto-indent on
@@ -121,6 +213,8 @@ export function CodeEditor({
   readOnly = false,
   highlightedLines,
   onToggleLineHighlight,
+  lineOffset = 0,
+  onLineCountChange,
 }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -129,9 +223,17 @@ export function CodeEditor({
   const onRunCellRef = useRef(onRunCell)
   const onRunAllRef = useRef(onRunAll)
   const onToggleLineHighlightRef = useRef(onToggleLineHighlight)
+  const onLineCountChangeRef = useRef(onLineCountChange)
+  // Read once by lineOffsetField.init() in the mount effect below (so a
+  // cell that mounts with a non-zero offset -- the common case, any cell
+  // after the first -- doesn't flash at 0 for a frame before the sync
+  // effect further down catches up).
+  const lineOffsetRef = useRef(lineOffset)
   onRunCellRef.current = onRunCell
   onRunAllRef.current = onRunAll
   onToggleLineHighlightRef.current = onToggleLineHighlight
+  onLineCountChangeRef.current = onLineCountChange
+  lineOffsetRef.current = lineOffset
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -164,7 +266,8 @@ export function CodeEditor({
     // than relying on array-position ordering to keep working correctly
     // as more extensions get added later.
     const extensions: Extension[] = [
-      lineNumbers(),
+      lineOffsetField.init(() => lineOffsetRef.current),
+      offsetLineNumberGutter(),
       python(),
       // CodeMirror's own default `indentUnit` is 2 spaces; every deck's
       // .py source (and Python convention generally, PEP 8) uses 4 --
@@ -242,6 +345,9 @@ export function CodeEditor({
         '.cm-content': { fontFamily: 'ui-monospace, monospace', textAlign: 'left' },
         '.cm-line': { textAlign: 'left' },
       }),
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged) onLineCountChangeRef.current?.(update.state.doc.lines)
+      }),
     ]
 
     const view = new EditorView({
@@ -249,6 +355,12 @@ export function CodeEditor({
       parent: containerRef.current,
     })
     viewRef.current = view
+    // Fired once at mount too (not just on later docChanged) -- a cell
+    // that never gets edited would otherwise never report its line
+    // count at all, leaving whatever cells follow it stuck using
+    // `deck.cells`' own (possibly stale, e.g. after a rename/reorder
+    // round-trip) source-derived count until this cell happens to change.
+    onLineCountChangeRef.current?.(view.state.doc.lines)
 
     return () => view.destroy()
     // Intentionally mount once; `source` prop changes after mount are
@@ -281,6 +393,16 @@ export function CodeEditor({
     if (!view) return
     view.dispatch({ effects: setHighlightedLines.of(highlightedLines ?? new Set()) })
   }, [highlightedLines])
+
+  // Same dispatch-on-change shape as the highlight sync effect above --
+  // a preceding cell in the deck gaining/losing lines (as the user
+  // edits it) changes this cell's own `lineOffset` prop, and the
+  // displayed numbers here need to follow without re-mounting the view.
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({ effects: setLineOffset.of(lineOffset) })
+  }, [lineOffset])
 
   return <div className="cs-code-editor" ref={containerRef} />
 }

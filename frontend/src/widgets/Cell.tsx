@@ -129,6 +129,19 @@ export interface CellProps {
   onMoveCellDown?: () => void
   isFirstCell?: boolean
   isLastCell?: boolean
+  /** How many lines precede this cell's own source, in deck order --
+   * passed straight through to CodeEditor's own `lineOffset` (see its
+   * docstring). Computed by the caller (App.tsx), not here, since only
+   * the caller iterating the whole deck in order knows every *other*
+   * cell's line count; optional/defaults to 0 so a caller that doesn't
+   * track deck order (there are none currently, but this keeps the prop
+   * additive) renders exactly as before. */
+  lineOffset?: number
+  /** Passed straight through to CodeEditor's own `onLineCountChange` --
+   * lets the caller keep a live per-cell line-count map (used to compute
+   * every *other* cell's `lineOffset` above) that updates on every
+   * keystroke, not just when this cell is run. */
+  onLineCountChange?: (count: number) => void
   /** Called with this cell's complete current layout (code/side
    * fraction, upper/lower panel fraction, which tabs are in the lower
    * section) whenever any of those settle after a user interaction --
@@ -189,6 +202,8 @@ export function Cell({
   isFirstCell = false,
   isLastCell = false,
   onLayoutChange,
+  lineOffset = 0,
+  onLineCountChange,
 }: CellProps) {
   // Author's `hide_code=True` always wins, regardless of what a caller
   // passes for `hideCode` -- there's genuinely nothing to reveal for a
@@ -804,6 +819,8 @@ export function Cell({
                 readOnly={meta.instance === 'static'}
                 highlightedLines={highlightedLines}
                 onToggleLineHighlight={toggleLineHighlight}
+                lineOffset={lineOffset}
+                onLineCountChange={onLineCountChange}
               />
             </div>
           )}

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { useDeckState } from './deckState'
 import type { CellLayout } from './protocol'
 import { useCodeSlidesSocket } from './useCodeSlidesSocket'
 import { Cell, type CellMeta } from './widgets/Cell'
 import { EditSlideDeckPanel } from './widgets/EditSlideDeckPanel'
+import { computeLineOffsets } from './widgets/lineOffsets'
 import { SlideShow, type SlideMeta } from './widgets/SlideShow'
 
 interface DeckSummary {
@@ -145,6 +146,28 @@ function App() {
   const pendingSlideOrder = useRef<number[] | null>(null)
   const { sessionId, messages, send } = useCodeSlidesSocket()
   const cellState = useDeckState(messages)
+  // Each cell's own live line count, keyed by cellId -- updated on every
+  // keystroke via CodeEditor's `onLineCountChange` (see lineOffsets.ts's
+  // own docstring for why `deck.cells[cellId].source` alone isn't
+  // enough: it's only as fresh as the last deck-shape event, not live
+  // typing). Read, not written, by the `cellLineOffsets` memo below.
+  const [liveLineCounts, setLiveLineCounts] = useState<Record<string, number>>({})
+  const handleLineCountChange = useCallback((cellId: string, count: number) => {
+    setLiveLineCounts((prev) => (prev[cellId] === count ? prev : { ...prev, [cellId]: count }))
+  }, [])
+  // Recomputed when the cells record's identity changes (a new cell
+  // added/removed/reordered) or any cell's live count changes -- not on
+  // every unrelated re-render (a slider drag, a cell's own output
+  // updating) -- since it's an O(n) pass over the whole deck. Shared
+  // between Cells view (below) and SlideShow.tsx's own Slides view,
+  // which recomputes the same thing from the same `deck.cells`/live
+  // counts it already receives as `cellMeta`, rather than needing this
+  // passed in.
+  const deckCells = deck?.cells
+  const cellLineOffsets = useMemo(
+    () => (deckCells ? computeLineOffsets(deckCells, liveLineCounts) : {}),
+    [deckCells, liveLineCounts],
+  )
 
   useEffect(() => {
     fetch('/api/deck')
@@ -876,6 +899,8 @@ function App() {
               key={cellId}
               cellId={cellId}
               meta={meta}
+              lineOffset={cellLineOffsets[cellId] ?? 0}
+              onLineCountChange={(count) => handleLineCountChange(cellId, count)}
               state={mergedCellState[cellId]}
               elementValues={elementValues[cellId] ?? {}}
               testSourceValues={testSourceOverrides[cellId] ?? {}}
@@ -922,6 +947,8 @@ function App() {
           index={slideIndex}
           onIndexChange={setSlideIndex}
           cellMeta={deck.cells}
+          liveLineCounts={liveLineCounts}
+          onLineCountChange={handleLineCountChange}
           cellState={mergedCellState}
           elementValues={elementValues}
           testSourceValues={testSourceOverrides}

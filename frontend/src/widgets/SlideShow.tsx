@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import type { CellState } from '../deckState'
 import type { CellLayout } from '../protocol'
 import { Cell, type CellMeta } from './Cell'
+import { computeLineOffsets } from './lineOffsets'
 
 export interface SlideMeta {
   title: string
@@ -25,6 +26,14 @@ export interface SlideShowProps {
   index: number
   onIndexChange: (index: number) => void
   cellMeta: Record<string, CellMeta>
+  // Lifted up into App.tsx (same rationale as `index` above): Cells view
+  // and this Slides view must agree on the same deck-global line numbers
+  // for a cell shared between both, so the live-count state they're
+  // derived from lives in one place rather than each view keeping (and
+  // drifting from) its own copy. See lineOffsets.ts's own docstring for
+  // why a live count, not just `cellMeta[cellId].source`, is needed.
+  liveLineCounts: Record<string, number>
+  onLineCountChange: (cellId: string, count: number) => void
   cellState: Record<string, CellState | undefined>
   elementValues: Record<string, Record<string, unknown>>
   testSourceValues: Record<string, Record<string, string>>
@@ -65,6 +74,8 @@ export function SlideShow({
   index,
   onIndexChange,
   cellMeta,
+  liveLineCounts,
+  onLineCountChange,
   cellState,
   elementValues,
   testSourceValues,
@@ -87,6 +98,12 @@ export function SlideShow({
   const slideRef = useRef<HTMLDivElement | null>(null)
 
   const slide = slides[index]
+  // Deck-global offsets (App.tsx's own `cellLineOffsets` computes the
+  // same thing from the same `cellMeta`) -- this view only renders the
+  // *current* slide's cells, but their displayed line numbers still need
+  // to reflect each cell's position in the whole deck, not just among
+  // the handful of cells on this one slide.
+  const cellLineOffsets = useMemo(() => computeLineOffsets(cellMeta, liveLineCounts), [cellMeta, liveLineCounts])
 
   // The user wants a slide's single cell to grow and fill whatever
   // vertical space is left below it, rather than only shrinking to fit
@@ -202,6 +219,8 @@ export function SlideShow({
               key={cellId}
               cellId={cellId}
               meta={meta}
+              lineOffset={cellLineOffsets[cellId] ?? 0}
+              onLineCountChange={(count) => onLineCountChange(cellId, count)}
               state={cellState[cellId]}
               elementValues={elementValues[cellId] ?? {}}
               testSourceValues={testSourceValues[cellId] ?? {}}
