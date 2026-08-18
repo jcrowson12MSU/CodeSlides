@@ -39,11 +39,58 @@ Confirmed handled in `NotesEditor.tsx`'s `buildDecorations`:
   backticks).
 - Blockquote content -- the whole quoted block (not just the `> `
   marker) gets a left border and dimmed text color.
+- **Tables** (`| a | b |` / `|---|---|`) -- `@lezer/markdown`'s `Table`
+  extension enabled via `markdown({ extensions: [...] })`. Cells are
+  bordered `inline-block` segments per row, header row tinted, pipe
+  characters (`TableDelimiter`) hidden. NOT a real `<table>`/CSS
+  `display: table` grid -- see the "Why tables aren't a real table"
+  note below for why, and its one real layout limitation.
+- **Task lists** (`- [ ] todo` / `- [x] done`) -- `TaskList` extension
+  enabled. `TaskMarker` becomes a real, clickable
+  `<input type="checkbox">` (not just a styled glyph) that writes the
+  toggle back into the markdown source; a checked task's whole line
+  gets struck through.
+- **Subscript** (`~sub~`) and **Superscript** (`^sup^`) -- `Subscript`/
+  `Superscript` extensions enabled individually (not part of the base
+  `GFM` bundle). Rendered as `<sub>`/`<sup>`-styled inline spans.
 - List markers (`-`, `1.`) -- left visible always (not hidden), same
   as Obsidian's own convention.
 - `> ` blockquote markers -- dimmed, not hidden.
 - Cursor-aware reveal: any of the above shows its raw syntax again
   while the cursor is on that line, matching the rest of the feature.
+
+### Why tables aren't a real `<table>`
+
+Tried a real `<table>` widget first (same "replace with a real DOM
+element" pattern as `LinkWidget`/`ImageWidget`), and separately tried
+CSS `display: table`/`table-row`/`table-cell` roles on top of mark
+decorations -- both fail for the same underlying reason. A `Table`
+node's range spans every row's own `.cm-line`, and CodeMirror
+explicitly forbids a `ViewPlugin`-supplied decoration (as opposed to a
+`StateField`'s) from either being block-level or replacing across a
+line break ("Decorations that replace line breaks may not be
+specified via plugins" / "Block decorations may not be specified via
+plugins" -- see `@codemirror/view`'s own `emit()` validation). Since
+each row is a separate line, `TableHeader`/`TableRow` marks land on
+different `.cm-line`s and are DOM siblings, never actually nested
+inside one shared `display: table` container -- confirmed empirically
+(not guessed): the browser's anonymous-table-box fixup produced wildly
+inconsistent per-row heights (up to 3x the plain text height) once
+tried in a real browser.
+
+Settled on bordered `inline-block` cells with no shared row container
+instead. This means: **columns are not guaranteed to align between
+rows** -- each row sizes its own cells independently based on that
+row's own content width, with no cross-row column-width measurement
+(would need actual JS layout measurement across the whole table,
+out of scope for a per-line decoration pass). In practice this mostly
+reads fine for short cell content (see the screenshot verification
+during this feature's own implementation), but a table with very
+different cell-content lengths per column, per row, may show visibly
+uneven column edges. A future StateField-based rewrite of this whole
+plugin could lift this limitation (and enable real `<table>`
+rendering) but is a materially bigger architectural change than any
+decoration added so far.
 
 ## Not yet implemented
 
@@ -70,24 +117,15 @@ text today):
   (`&amp;`, `&copy;`) -- `Escape`, `Entity` nodes exist but aren't
   decoded/rendered specially.
 
-GFM extensions -- the parser doesn't even recognize these today,
-since `NotesEditor.tsx`'s `markdown()` call passes no `extensions`
-config (defaults to base CommonMark only, per
-`@codemirror/lang-markdown`'s own default). Adding any of these means
-first passing `@lezer/markdown`'s exported `GFM` bundle (or the
-specific extension) into `markdown({ extensions: ... })`, in addition
-to writing the decoration logic itself:
+GFM extensions still not enabled/decorated:
 
-- **Tables** (`| a | b |` / `|---|---|`) -- `Table`, `TableRow`,
-  `TableCell`, `TableHeader`, `TableDelimiter`.
 - **Strikethrough** (`~~text~~`) -- `Strikethrough`,
-  `StrikethroughMark`.
-- **Task lists** (`- [ ] todo` / `- [x] done`) -- `Task`,
-  `TaskMarker`.
-- Also available in `@lezer/markdown` but not included in the base
-  `GFM` bundle test above -- would need pulling in individually if
-  ever wanted: **Subscript** (`~sub~`), **Superscript** (`^sup^`),
-  **Emoji** shortcodes (`:smile:`).
+  `StrikethroughMark`. Part of the base `GFM` bundle (unlike Table/
+  TaskList, which are now individually enabled -- see above), but not
+  pulled in, since it wasn't asked for alongside tables/tasklists/sub/
+  superscript.
+- **Emoji shortcodes** (`:smile:`) -- separate `Emoji` extension, not
+  in the base `GFM` bundle, not pulled in.
 
 ## How this list was produced
 

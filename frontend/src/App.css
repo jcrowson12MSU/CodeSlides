@@ -1031,6 +1031,67 @@ body.cs-resizing-vertical {
   white-space: pre-wrap;
 }
 
+.cs-notes-live-task-checkbox {
+  margin: 0 0.4em 0 0;
+  vertical-align: middle;
+  cursor: pointer;
+}
+
+.cs-notes-live-task-checked {
+  text-decoration: line-through;
+  color: var(--text, #6b6375);
+  opacity: 0.7;
+}
+
+/* GFM tables (Table/TableHeader/TableRow/TableCell nodes) -- can't
+   become a real <table> element the way Link/Image do (see
+   NotesEditor.tsx's own comment on this), since a Table's node range
+   spans every row's own .cm-line and CodeMirror forbids a ViewPlugin-
+   supplied replace decoration from crossing a line break. That also
+   rules out a genuine CSS display: table/table-row/table-cell grid --
+   TableHeader/TableRow marks each land on a *different* .cm-line, so
+   they're siblings in the DOM, never actually nested inside one
+   display: table container the way real table markup requires (tried
+   this first; the browser's anonymous-table-box fixup produced wildly
+   inflated, inconsistent row heights once TableDelimiter's mark decoration
+   is added into the mix). Cells are instead styled as bordered inline-
+   flex segments per row -- every row stays its own real line (so
+   clicking into a cell to edit it still works normally) and reads as a
+   bordered grid, but columns are NOT guaranteed to align consistently
+   between rows (would need actual column-width measurement across the
+   whole table, out of scope for a per-line decoration pass). */
+.cs-notes-live-table-row {
+  font-size: var(--cs-font-md);
+}
+
+.cs-notes-live-table-cell {
+  display: inline-block;
+  border: 1px solid #ddd;
+  padding: 0.2rem 0.5rem;
+  min-width: 4rem;
+  vertical-align: middle;
+}
+
+/* TableHeader is the Table's first row-shaped child -- styled with the
+   same cs-notes-live-table-row class as an ordinary TableRow, plus this
+   one background/weight tint, distinguished by node type in
+   NotesEditor.tsx rather than DOM position (unlike a real <table>, rows
+   here aren't nested under one shared parent to select by :first-child). */
+.cs-notes-live-table-header {
+  background: #eee;
+  font-weight: 600;
+}
+
+.cs-notes-live-sub {
+  vertical-align: sub;
+  font-size: 0.75em;
+}
+
+.cs-notes-live-sup {
+  vertical-align: super;
+  font-size: 0.75em;
+}
+
 .cs-tests-viewer {
   border: 1px solid #eee;
   border-radius: 4px;

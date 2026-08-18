@@ -2,6 +2,7 @@ import { markdown } from '@codemirror/lang-markdown'
 import { syntaxTree } from '@codemirror/language'
 import { EditorState, type Extension } from '@codemirror/state'
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view'
+import { Subscript, Superscript, Table, TaskList } from '@lezer/markdown'
 import { useEffect, useRef } from 'react'
 
 export interface NotesEditorProps {
@@ -122,6 +123,55 @@ class HorizontalRuleWidget extends WidgetType {
   }
 }
 
+// `[ ]`/`[x]` (GFM TaskList's own TaskMarker node, always exactly 3
+// characters -- see TaskParser in @lezer/markdown) becomes a real,
+// clickable checkbox rather than just a styled glyph. Unlike every other
+// widget in this file, it writes back to the document: toggling it
+// flips the single 'x'/' ' character at `markerFrom + 1` in place, same
+// "real interaction, not just a static rendering" bar the rest of the
+// live-preview feature holds itself to (bold/italic/links all reveal
+// their raw syntax on click; a checkbox that couldn't be clicked would
+// be a downgrade from that). Needs the EditorView (not just the marker's
+// own range) to dispatch that change.
+class TaskMarkerWidget extends WidgetType {
+  checked: boolean
+  markerFrom: number
+  view: EditorView
+  constructor(checked: boolean, markerFrom: number, view: EditorView) {
+    super()
+    this.checked = checked
+    this.markerFrom = markerFrom
+    this.view = view
+  }
+  eq(other: TaskMarkerWidget) {
+    return other.checked === this.checked && other.markerFrom === this.markerFrom
+  }
+  toDOM() {
+    const input = document.createElement('input')
+    input.type = 'checkbox'
+    input.checked = this.checked
+    input.className = 'cs-notes-live-task-checkbox'
+    input.addEventListener('mousedown', (event) => {
+      // mousedown, not click -- click fires after CodeMirror's own
+      // mousedown handling has already tried to place the cursor from
+      // this same event, which (since the widget replaced the marker
+      // text) would land the selection right on this line and reveal
+      // raw syntax before the toggle's own dispatch below gets a chance
+      // to run, producing a visible flash of "[ ]"/"[x]" the user didn't
+      // ask to edit. Stopping propagation here keeps the click purely a
+      // checkbox toggle, not also a cursor placement.
+      event.preventDefault()
+      event.stopPropagation()
+      const replacement = this.checked ? ' ' : 'x'
+      this.view.dispatch({ changes: { from: this.markerFrom + 1, to: this.markerFrom + 2, insert: replacement } })
+    })
+    return input
+  }
+  ignoreEvent() {
+    return true
+  }
+}
+
 // Lines the cursor's selection currently touches -- markdown constructs
 // overlapping any of these lines stay in raw form instead of being
 // decorated, so the author can see/edit the syntax they're actively
@@ -159,7 +209,7 @@ const HEADING_CLASS: Record<string, string> = {
   ATXHeading6: 'cs-notes-live-h6',
 }
 
-function buildDecorations(state: EditorState, hasFocus: boolean): DecorationSet {
+function buildDecorations(state: EditorState, hasFocus: boolean, view: EditorView): DecorationSet {
   // Without the focus check, the cursor's default initial position (doc
   // offset 0, before any user interaction) would count as "active" and
   // permanently reveal raw syntax on whatever construct happens to sit
@@ -319,6 +369,79 @@ function buildDecorations(state: EditorState, hasFocus: boolean): DecorationSet 
         builder.push({ from: node.from, to: node.to, deco: Decoration.mark({ class: 'cs-notes-quote-mark' }) })
         return
       }
+
+      if (node.name === 'TaskMarker' && !revealed) {
+        // '[ ]' or '[x]'/'[X]' -- the char in between is at markerFrom + 1
+        // (TaskParser's own elt(TaskMarker, leaf.start, leaf.start + 3)).
+        // A single 3-char marker never crosses a line, so replacing it
+        // with a widget from a ViewPlugin is safe (unlike a Table/
+        // HardBreak-shaped range that could span a line break).
+        const checked = state.doc.sliceString(node.from + 1, node.from + 2).toLowerCase() === 'x'
+        builder.push({
+          from: node.from,
+          to: node.to,
+          deco: Decoration.replace({ widget: new TaskMarkerWidget(checked, node.from, view) }),
+        })
+        return
+      }
+
+      if (node.name === 'Task' && !revealed) {
+        // Styles the whole task-list item's line (strike-through when
+        // checked) -- same "mark the container, not just its marker"
+        // pattern Blockquote/FencedCode already use, since Task also
+        // spans a full block and TaskMarker above only covers the '[ ]'.
+        const checked = state.doc.sliceString(node.from + 1, node.from + 2).toLowerCase() === 'x'
+        builder.push({
+          from: node.from,
+          to: node.to,
+          deco: Decoration.mark({ class: checked ? 'cs-notes-live-task cs-notes-live-task-checked' : 'cs-notes-live-task' }),
+        })
+        return
+      }
+
+      if ((node.name === 'TableHeader' || node.name === 'TableRow') && !revealed) {
+        // No real <table>/CSS table-role layout -- see this file's own
+        // comment on App.css's .cs-notes-live-table-row for why (a
+        // Table's row-level children each land on a different .cm-line,
+        // so they're DOM siblings, never truly nested inside one shared
+        // display: table container the way both a real <table> and CSS
+        // table display roles require). Styled as a bordered flex row
+        // instead -- TableHeader gets an extra class for its background/
+        // weight tint, node type distinguishes it, not DOM position.
+        const rowClass =
+          node.name === 'TableHeader' ? 'cs-notes-live-table-row cs-notes-live-table-header' : 'cs-notes-live-table-row'
+        builder.push({ from: node.from, to: node.to, deco: Decoration.mark({ class: rowClass }) })
+        return
+      }
+
+      if (node.name === 'TableCell' && !revealed) {
+        builder.push({ from: node.from, to: node.to, deco: Decoration.mark({ class: 'cs-notes-live-table-cell' }) })
+        return
+      }
+
+      if (node.name === 'TableDelimiter' && !revealed) {
+        // The '|' column separators (both the header/body rows' own
+        // pipes and the '---' alignment row) -- hidden, since the CSS
+        // grid layout above (display: table-row/table-cell on the marks
+        // just built) is what visually separates columns once rendered,
+        // the literal '|' character would just be redundant clutter.
+        builder.push({ from: node.from, to: node.to, deco: Decoration.replace({}) })
+        return
+      }
+
+      if ((node.name === 'Subscript' || node.name === 'Superscript') && !revealed) {
+        builder.push({
+          from: node.from,
+          to: node.to,
+          deco: Decoration.mark({ class: node.name === 'Subscript' ? 'cs-notes-live-sub' : 'cs-notes-live-sup' }),
+        })
+        return
+      }
+
+      if ((node.name === 'SubscriptMark' || node.name === 'SuperscriptMark') && !revealed) {
+        builder.push({ from: node.from, to: node.to, deco: Decoration.replace({}) })
+        return
+      }
     },
   })
 
@@ -334,7 +457,7 @@ const liveMarkdownPlugin = ViewPlugin.fromClass(
     decorations: DecorationSet
     view: EditorView
     onFocus = () => {
-      this.decorations = buildDecorations(this.view.state, true)
+      this.decorations = buildDecorations(this.view.state, true, this.view)
       // Forces CodeMirror to re-pull `decorations` from this plugin --
       // focus/blur are DOM events, not transactions, so nothing else
       // would trigger a redraw after just mutating the field above. An
@@ -343,18 +466,18 @@ const liveMarkdownPlugin = ViewPlugin.fromClass(
       this.view.dispatch({})
     }
     onBlur = () => {
-      this.decorations = buildDecorations(this.view.state, false)
+      this.decorations = buildDecorations(this.view.state, false, this.view)
       this.view.dispatch({})
     }
     constructor(view: EditorView) {
       this.view = view
-      this.decorations = buildDecorations(view.state, view.hasFocus)
+      this.decorations = buildDecorations(view.state, view.hasFocus, view)
       view.dom.addEventListener('focus', this.onFocus, true)
       view.dom.addEventListener('blur', this.onBlur, true)
     }
     update(update: ViewUpdate) {
       if (update.docChanged || update.selectionSet || update.viewportChanged) {
-        this.decorations = buildDecorations(update.state, update.view.hasFocus)
+        this.decorations = buildDecorations(update.state, update.view.hasFocus, update.view)
       }
     }
     destroy() {
@@ -375,7 +498,7 @@ export function NotesEditor({ source, onChangeSource }: NotesEditorProps) {
     if (!containerRef.current) return
 
     const extensions: Extension[] = [
-      markdown(),
+      markdown({ extensions: [Table, TaskList, Subscript, Superscript] }),
       liveMarkdownPlugin,
       EditorView.lineWrapping,
       EditorView.updateListener.of((update) => {
