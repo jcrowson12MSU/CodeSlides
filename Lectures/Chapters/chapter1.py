@@ -436,13 +436,13 @@ this very code editor, the **Run** button on each cell, the output
 panel below it, and this live notes editor are the same four pieces
 every IDE has.
 
-| IDE tool | Here, it's... |
-| -------- | -------------- |
-| Code editor | the panel on the right |
-| Run button | `Shift+Enter` |
-| Console | the output panel |
-| Highlighting | automatic, as you type |
-| Debugger | the error slides next |"""
+| IDE tool | What it's for | Here, it's... |
+| -------- | -------------- | ----------------- |
+| Code editor | Write the source | the panel on the right |
+| Run button | Execute the code | `Shift+Enter` |
+| Console | See results and errors | the output panel |
+| Highlighting | Spot typos at a glance | automatic, as you type |
+| Debugger | Find what went wrong | the error slides next |"""
 
 
 @app.cell(hide_def=True, elements=[ui.notes("notes")])

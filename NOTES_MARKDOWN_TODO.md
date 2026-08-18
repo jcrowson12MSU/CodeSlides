@@ -33,18 +33,16 @@ Confirmed handled in `NotesEditor.tsx`'s `buildDecorations`:
   with a real `<hr>`.
 - Fenced code blocks (` ```lang ... ``` `) -- monospace, shaded
   background, matching `.cs-notes-inline-code`'s own styling but
-  block-level. Unlike inline code, the fence lines and language tag
-  stay visible even when rendered (matches Obsidian's own live-preview
-  treatment of code blocks -- only inline `` `code` `` hides its
-  backticks).
+  block-level. Fence lines (` ``` `) and the language tag are hidden
+  when rendered, same as inline code hides its backticks -- only the
+  code's own body text shows.
 - Blockquote content -- the whole quoted block (not just the `> `
   marker) gets a left border and dimmed text color.
 - **Tables** (`| a | b |` / `|---|---|`) -- `@lezer/markdown`'s `Table`
-  extension enabled via `markdown({ extensions: [...] })`. Cells are
-  bordered `inline-block` segments per row, header row tinted, pipe
-  characters (`TableDelimiter`) hidden. NOT a real `<table>`/CSS
-  `display: table` grid -- see the "Why tables aren't a real table"
-  note below for why, and its one real layout limitation.
+  extension enabled via `markdown({ extensions: [...] })`, rendered as
+  a real `<table>` widget (`TableWidget`) -- genuinely column-aligned,
+  not per-row-independent styling. See "How tables became a real
+  `<table>`" below for the StateField migration this required.
 - **Task lists** (`- [ ] todo` / `- [x] done`) -- `TaskList` extension
   enabled. `TaskMarker` becomes a real, clickable
   `<input type="checkbox">` (not just a styled glyph) that writes the
@@ -59,38 +57,40 @@ Confirmed handled in `NotesEditor.tsx`'s `buildDecorations`:
 - Cursor-aware reveal: any of the above shows its raw syntax again
   while the cursor is on that line, matching the rest of the feature.
 
-### Why tables aren't a real `<table>`
+### How tables became a real `<table>`
 
-Tried a real `<table>` widget first (same "replace with a real DOM
-element" pattern as `LinkWidget`/`ImageWidget`), and separately tried
-CSS `display: table`/`table-row`/`table-cell` roles on top of mark
-decorations -- both fail for the same underlying reason. A `Table`
-node's range spans every row's own `.cm-line`, and CodeMirror
-explicitly forbids a `ViewPlugin`-supplied decoration (as opposed to a
-`StateField`'s) from either being block-level or replacing across a
-line break ("Decorations that replace line breaks may not be
-specified via plugins" / "Block decorations may not be specified via
-plugins" -- see `@codemirror/view`'s own `emit()` validation). Since
-each row is a separate line, `TableHeader`/`TableRow` marks land on
-different `.cm-line`s and are DOM siblings, never actually nested
-inside one shared `display: table` container -- confirmed empirically
-(not guessed): the browser's anonymous-table-box fixup produced wildly
-inconsistent per-row heights (up to 3x the plain text height) once
-tried in a real browser.
+Tables originally shipped as bordered `inline-block` cells (no shared
+row/table container), documented right here as a known limitation:
+columns weren't guaranteed to align between rows, since each row's
+`.cm-line` sized its own cells independently with no cross-row
+column-width measurement. A user later reported tables "not rendering
+correctly" -- confirmed in a real browser (a 3-column table's header
+split across two visual rows) -- which upgraded that documented
+limitation into an actual bug to fix, not just a caveat to live with.
 
-Settled on bordered `inline-block` cells with no shared row container
-instead. This means: **columns are not guaranteed to align between
-rows** -- each row sizes its own cells independently based on that
-row's own content width, with no cross-row column-width measurement
-(would need actual JS layout measurement across the whole table,
-out of scope for a per-line decoration pass). In practice this mostly
-reads fine for short cell content (see the screenshot verification
-during this feature's own implementation), but a table with very
-different cell-content lengths per column, per row, may show visibly
-uneven column edges. A future StateField-based rewrite of this whole
-plugin could lift this limitation (and enable real `<table>`
-rendering) but is a materially bigger architectural change than any
-decoration added so far.
+The real fix required migrating `NotesEditor.tsx`'s whole decoration
+source from a `ViewPlugin` to a `StateField` (`notesDecorationsField`).
+The `ViewPlugin` was the reason a real `<table>` widget wasn't possible
+in the first place: CodeMirror explicitly forbids a `ViewPlugin`-
+supplied decoration from being block-level or replacing across a line
+break ("Decorations that replace line breaks may not be specified via
+plugins" / "Block decorations may not be specified via plugins" --
+`@codemirror/view`'s own `emit()` validation), and a `Table` node's
+range spans every row's own line. A `StateField` has no such
+restriction. The migration's other moving part: the old `ViewPlugin`
+tracked focus/blur by mutating its own field directly from DOM
+listeners, which a `StateField` can't do (it only changes in response
+to a dispatched transaction) -- replaced with `EditorView.
+focusChangeEffect`, CodeMirror's own facet for turning a focus/blur DOM
+event into a dispatched `StateEffect`, read back out by a small
+`hasFocusField` the decorations field consults.
+
+`TableWidget` walks a `Table` node's `TableHeader`/`TableRow` children
+and each row's `TableCell` children, pulling plain document text per
+cell (not the parsed inline-markdown tree within it -- same fidelity
+the prior per-cell mark styling had), and builds a real `<table>` with
+`<th>`/`<td>` rows. Verified in a real browser: a 3-column table now
+renders as one properly aligned grid, not two misaligned visual rows.
 
 ## Not yet implemented
 

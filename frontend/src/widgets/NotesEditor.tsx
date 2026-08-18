@@ -1,7 +1,7 @@
 import { markdown } from '@codemirror/lang-markdown'
 import { syntaxTree } from '@codemirror/language'
-import { EditorState, type Extension } from '@codemirror/state'
-import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view'
+import { EditorState, StateEffect, StateField, type Extension } from '@codemirror/state'
+import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view'
 import { Subscript, Superscript, Table, TaskList } from '@lezer/markdown'
 import { useEffect, useRef } from 'react'
 
@@ -136,12 +136,10 @@ class HorizontalRuleWidget extends WidgetType {
 class TaskMarkerWidget extends WidgetType {
   checked: boolean
   markerFrom: number
-  view: EditorView
-  constructor(checked: boolean, markerFrom: number, view: EditorView) {
+  constructor(checked: boolean, markerFrom: number) {
     super()
     this.checked = checked
     this.markerFrom = markerFrom
-    this.view = view
   }
   eq(other: TaskMarkerWidget) {
     return other.checked === this.checked && other.markerFrom === this.markerFrom
@@ -162,10 +160,82 @@ class TaskMarkerWidget extends WidgetType {
       // checkbox toggle, not also a cursor placement.
       event.preventDefault()
       event.stopPropagation()
+      // Decorations now come from a StateField (notesDecorationsField
+      // below), not a ViewPlugin, so this widget is no longer
+      // constructed with a `view` reference to close over -- look it up
+      // from the DOM instead, CodeMirror's own documented way for a
+      // widget's event handler to reach the view that rendered it.
+      const view = EditorView.findFromDOM(input)
+      if (!view) return
       const replacement = this.checked ? ' ' : 'x'
-      this.view.dispatch({ changes: { from: this.markerFrom + 1, to: this.markerFrom + 2, insert: replacement } })
+      view.dispatch({ changes: { from: this.markerFrom + 1, to: this.markerFrom + 2, insert: replacement } })
     })
     return input
+  }
+  ignoreEvent() {
+    return true
+  }
+}
+
+// A GFM table (`| a | b |` rows), rendered as a real <table>. Unlike
+// every other widget in this file, this one's underlying node genuinely
+// spans multiple lines -- which is exactly why it couldn't exist before
+// this file's ViewPlugin-based decoration source became a StateField
+// (see `notesDecorationsField` below): CodeMirror rejects any
+// ViewPlugin-supplied decoration that's block-level or that replaces a
+// line break, and a Table's own range covers every row's own line.
+// Cell content is plain document text (not the parsed inline-markdown
+// tree within each cell) -- same fidelity the old per-row mark-based
+// styling had, just now genuinely grid-aligned instead of drifting
+// between rows.
+class TableWidget extends WidgetType {
+  rows: string[][]
+  headerRowCount: number
+  from: number
+  constructor(rows: string[][], headerRowCount: number, from: number) {
+    super()
+    this.rows = rows
+    this.headerRowCount = headerRowCount
+    this.from = from
+  }
+  eq(other: TableWidget) {
+    return (
+      other.headerRowCount === this.headerRowCount &&
+      other.from === this.from &&
+      other.rows.length === this.rows.length &&
+      other.rows.every((row, i) => row.length === this.rows[i].length && row.every((cell, j) => cell === this.rows[i][j]))
+    )
+  }
+  toDOM() {
+    const table = document.createElement('table')
+    table.className = 'cs-notes-live-table'
+    this.rows.forEach((cells, rowIndex) => {
+      const tr = document.createElement('tr')
+      const cellTag = rowIndex < this.headerRowCount ? 'th' : 'td'
+      for (const cellText of cells) {
+        const cell = document.createElement(cellTag)
+        cell.textContent = cellText
+        tr.appendChild(cell)
+      }
+      table.appendChild(tr)
+    })
+    // A rendered <table> intercepts clicks (ignoreEvent() below tells
+    // CodeMirror not to treat them as its own cursor-placement gesture),
+    // so without this, clicking a cell would do nothing -- every other
+    // construct in this editor reveals its raw markdown on click, and a
+    // table should be no exception (it's still meant to be editable, not
+    // a read-only rendering). Places the cursor at the table's own start
+    // position, which reliably reveals the whole table on the next
+    // render (activeLineRanges/overlapsActiveLine key off the cursor
+    // touching any line the Table node's range covers).
+    table.addEventListener('mousedown', (event) => {
+      const view = EditorView.findFromDOM(table)
+      if (!view) return
+      event.preventDefault()
+      view.dispatch({ selection: { anchor: this.from }, scrollIntoView: false })
+      view.focus()
+    })
+    return table
   }
   ignoreEvent() {
     return true
@@ -209,7 +279,7 @@ const HEADING_CLASS: Record<string, string> = {
   ATXHeading6: 'cs-notes-live-h6',
 }
 
-function buildDecorations(state: EditorState, hasFocus: boolean, view: EditorView): DecorationSet {
+function buildDecorations(state: EditorState, hasFocus: boolean): DecorationSet {
   // Without the focus check, the cursor's default initial position (doc
   // offset 0, before any user interaction) would count as "active" and
   // permanently reveal raw syntax on whatever construct happens to sit
@@ -264,11 +334,14 @@ function buildDecorations(state: EditorState, hasFocus: boolean, view: EditorVie
       }
 
       if (node.name === 'CodeMark' && !revealed) {
-        // Only hides InlineCode's own backticks -- a FencedCode block's
-        // ``` fence lines are also CodeMark nodes, but those stay visible
-        // (see the FencedCode/CodeInfo/CodeText branch below), so check
-        // the immediate parent rather than hiding every CodeMark on sight.
-        if (node.node.parent?.name === 'InlineCode') {
+        // Hides both InlineCode's own backticks and a FencedCode block's
+        // ``` fence lines (its parent is FencedCode, not InlineCode) --
+        // each fence line's CodeMark is single-line (the opening ```lang
+        // and closing ``` each sit on their own line), so replacing it is
+        // safe from a ViewPlugin (doesn't cross a line break) even though
+        // FencedCode's own overall range does.
+        const parentName = node.node.parent?.name
+        if (parentName === 'InlineCode' || parentName === 'FencedCode') {
           builder.push({ from: node.from, to: node.to, deco: Decoration.replace({}) })
         }
         return
@@ -349,11 +422,13 @@ function buildDecorations(state: EditorState, hasFocus: boolean, view: EditorVie
         return
       }
 
-      if ((node.name === 'CodeInfo' || node.name === 'CodeText') && !revealed) {
-        // No hiding here (unlike inline CodeMark) -- a fenced block's
-        // ``` fence lines and language tag stay visible even when
-        // rendered, matching Obsidian's own live-preview treatment of
-        // code blocks (only inline `code` hides its backticks).
+      if (node.name === 'CodeInfo' && !revealed) {
+        // The language tag right after the opening ``` (e.g. `python` in
+        // ```python) -- single-line like the fence marks themselves, so
+        // hiding it is safe from a ViewPlugin. CodeText (the code's own
+        // body lines) is deliberately left alone below -- only the fence
+        // markup disappears, not the code itself.
+        builder.push({ from: node.from, to: node.to, deco: Decoration.replace({}) })
         return
       }
 
@@ -380,7 +455,7 @@ function buildDecorations(state: EditorState, hasFocus: boolean, view: EditorVie
         builder.push({
           from: node.from,
           to: node.to,
-          deco: Decoration.replace({ widget: new TaskMarkerWidget(checked, node.from, view) }),
+          deco: Decoration.replace({ widget: new TaskMarkerWidget(checked, node.from) }),
         })
         return
       }
@@ -399,33 +474,41 @@ function buildDecorations(state: EditorState, hasFocus: boolean, view: EditorVie
         return
       }
 
-      if ((node.name === 'TableHeader' || node.name === 'TableRow') && !revealed) {
-        // No real <table>/CSS table-role layout -- see this file's own
-        // comment on App.css's .cs-notes-live-table-row for why (a
-        // Table's row-level children each land on a different .cm-line,
-        // so they're DOM siblings, never truly nested inside one shared
-        // display: table container the way both a real <table> and CSS
-        // table display roles require). Styled as a bordered flex row
-        // instead -- TableHeader gets an extra class for its background/
-        // weight tint, node type distinguishes it, not DOM position.
-        const rowClass =
-          node.name === 'TableHeader' ? 'cs-notes-live-table-row cs-notes-live-table-header' : 'cs-notes-live-table-row'
-        builder.push({ from: node.from, to: node.to, deco: Decoration.mark({ class: rowClass }) })
-        return
-      }
-
-      if (node.name === 'TableCell' && !revealed) {
-        builder.push({ from: node.from, to: node.to, deco: Decoration.mark({ class: 'cs-notes-live-table-cell' }) })
-        return
-      }
-
-      if (node.name === 'TableDelimiter' && !revealed) {
-        // The '|' column separators (both the header/body rows' own
-        // pipes and the '---' alignment row) -- hidden, since the CSS
-        // grid layout above (display: table-row/table-cell on the marks
-        // just built) is what visually separates columns once rendered,
-        // the literal '|' character would just be redundant clutter.
-        builder.push({ from: node.from, to: node.to, deco: Decoration.replace({}) })
+      if (node.name === 'Table' && !revealed) {
+        // Real <table> widget replacing the whole block -- only possible
+        // now that decorations come from a StateField (see
+        // notesDecorationsField below), not the old ViewPlugin, which
+        // CodeMirror forbids from crossing a line break (a Table's own
+        // range spans every row's line). Walk TableHeader/TableRow
+        // children for each row, and each row's TableCell children for
+        // cell text -- plain document text per cell, not the parsed
+        // inline-markdown tree within it (same fidelity the prior mark-
+        // based styling had).
+        const rows: string[][] = []
+        let headerRowCount = 0
+        let rowCursor = node.node.firstChild
+        while (rowCursor) {
+          if (rowCursor.name === 'TableHeader' || rowCursor.name === 'TableRow') {
+            const cells: string[] = []
+            let cellCursor = rowCursor.firstChild
+            while (cellCursor) {
+              if (cellCursor.name === 'TableCell') {
+                cells.push(state.doc.sliceString(cellCursor.from, cellCursor.to).trim())
+              }
+              cellCursor = cellCursor.nextSibling
+            }
+            rows.push(cells)
+            if (rowCursor.name === 'TableHeader') headerRowCount++
+          }
+          rowCursor = rowCursor.nextSibling
+        }
+        if (rows.length > 0) {
+          builder.push({
+            from: node.from,
+            to: node.to,
+            deco: Decoration.replace({ widget: new TableWidget(rows, headerRowCount, node.from), block: true }),
+          })
+        }
         return
       }
 
@@ -452,41 +535,35 @@ function buildDecorations(state: EditorState, hasFocus: boolean, view: EditorVie
   )
 }
 
-const liveMarkdownPlugin = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet
-    view: EditorView
-    onFocus = () => {
-      this.decorations = buildDecorations(this.view.state, true, this.view)
-      // Forces CodeMirror to re-pull `decorations` from this plugin --
-      // focus/blur are DOM events, not transactions, so nothing else
-      // would trigger a redraw after just mutating the field above. An
-      // empty dispatch is CodeMirror's own documented way to request a
-      // view update with no document/selection change of its own.
-      this.view.dispatch({})
+// Carries a focus/blur transition into a transaction -- a StateField can
+// only change in response to a dispatched transaction, unlike the old
+// ViewPlugin this replaced (see TableWidget's own comment for why a
+// StateField became necessary at all), which could mutate its own
+// `decorations` field directly from DOM focus/blur listeners. CodeMirror's
+// `EditorView.focusChangeEffect` facet (wired up in the extensions list
+// below) is its own documented mechanism for exactly this: turning a
+// focus/blur DOM event into a dispatched effect.
+const setFocus = StateEffect.define<boolean>()
+
+const hasFocusField = StateField.define<boolean>({
+  create: () => false,
+  update(value, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setFocus)) return effect.value
     }
-    onBlur = () => {
-      this.decorations = buildDecorations(this.view.state, false, this.view)
-      this.view.dispatch({})
-    }
-    constructor(view: EditorView) {
-      this.view = view
-      this.decorations = buildDecorations(view.state, view.hasFocus, view)
-      view.dom.addEventListener('focus', this.onFocus, true)
-      view.dom.addEventListener('blur', this.onBlur, true)
-    }
-    update(update: ViewUpdate) {
-      if (update.docChanged || update.selectionSet || update.viewportChanged) {
-        this.decorations = buildDecorations(update.state, update.view.hasFocus, update.view)
-      }
-    }
-    destroy() {
-      this.view.dom.removeEventListener('focus', this.onFocus, true)
-      this.view.dom.removeEventListener('blur', this.onBlur, true)
-    }
+    return value
   },
-  { decorations: (v) => v.decorations },
-)
+})
+
+const notesDecorationsField = StateField.define<DecorationSet>({
+  create: (state) => buildDecorations(state, state.field(hasFocusField)),
+  update(decorations, tr) {
+    const focusChanged = tr.effects.some((e) => e.is(setFocus))
+    if (!tr.docChanged && !tr.selection && !focusChanged) return decorations
+    return buildDecorations(tr.state, tr.state.field(hasFocusField))
+  },
+  provide: (field) => EditorView.decorations.from(field),
+})
 
 export function NotesEditor({ source, onChangeSource }: NotesEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -499,7 +576,9 @@ export function NotesEditor({ source, onChangeSource }: NotesEditorProps) {
 
     const extensions: Extension[] = [
       markdown({ extensions: [Table, TaskList, Subscript, Superscript] }),
-      liveMarkdownPlugin,
+      hasFocusField,
+      notesDecorationsField,
+      EditorView.focusChangeEffect.of((_state, focusing) => setFocus.of(focusing)),
       EditorView.lineWrapping,
       EditorView.updateListener.of((update) => {
         if (update.docChanged) onChangeSourceRef.current(update.state.doc.toString())
