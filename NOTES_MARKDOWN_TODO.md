@@ -35,7 +35,12 @@ Confirmed handled in `NotesEditor.tsx`'s `buildDecorations`:
   background, matching `.cs-notes-inline-code`'s own styling but
   block-level. Fence lines (` ``` `) and the language tag are hidden
   when rendered, same as inline code hides its backticks -- only the
-  code's own body text shows.
+  code's own body text shows, with no blank line left behind where the
+  opening/closing fence used to be (collapses the whole line, marker
+  text and its own trailing newline together, not just the marker
+  text in place -- see `FencedCode`'s own comment in `NotesEditor.tsx`
+  for why that distinction needed a `StateField`, same underlying
+  constraint as the table fix below).
 - Blockquote content -- the whole quoted block (not just the `> `
   marker) gets a left border and dimmed text color.
 - **Tables** (`| a | b |` / `|---|---|`) -- `@lezer/markdown`'s `Table`

@@ -2,6 +2,7 @@ import { markdown } from '@codemirror/lang-markdown'
 import { syntaxTree } from '@codemirror/language'
 import { EditorState, StateEffect, StateField, type Extension } from '@codemirror/state'
 import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view'
+import type { SyntaxNode } from '@lezer/common'
 import { Subscript, Superscript, Table, TaskList } from '@lezer/markdown'
 import { useEffect, useRef } from 'react'
 
@@ -334,14 +335,14 @@ function buildDecorations(state: EditorState, hasFocus: boolean): DecorationSet 
       }
 
       if (node.name === 'CodeMark' && !revealed) {
-        // Hides both InlineCode's own backticks and a FencedCode block's
-        // ``` fence lines (its parent is FencedCode, not InlineCode) --
-        // each fence line's CodeMark is single-line (the opening ```lang
-        // and closing ``` each sit on their own line), so replacing it is
-        // safe from a ViewPlugin (doesn't cross a line break) even though
-        // FencedCode's own overall range does.
-        const parentName = node.node.parent?.name
-        if (parentName === 'InlineCode' || parentName === 'FencedCode') {
+        // Only InlineCode's own backticks here -- a FencedCode block's
+        // own ``` fence lines are handled entirely within the FencedCode
+        // branch below (hiding just the CodeMark/CodeInfo text, as this
+        // branch used to for both, left the fence lines' own newlines
+        // behind as blank lines; collapsing a whole line -- marker text
+        // AND its trailing newline -- needs one combined decoration, not
+        // two separate ones).
+        if (node.node.parent?.name === 'InlineCode') {
           builder.push({ from: node.from, to: node.to, deco: Decoration.replace({}) })
         }
         return
@@ -419,16 +420,43 @@ function buildDecorations(state: EditorState, hasFocus: boolean): DecorationSet 
 
       if (node.name === 'FencedCode' && !revealed) {
         builder.push({ from: node.from, to: node.to, deco: Decoration.mark({ class: 'cs-notes-live-codeblock' }) })
-        return
-      }
 
-      if (node.name === 'CodeInfo' && !revealed) {
-        // The language tag right after the opening ``` (e.g. `python` in
-        // ```python) -- single-line like the fence marks themselves, so
-        // hiding it is safe from a ViewPlugin. CodeText (the code's own
-        // body lines) is deliberately left alone below -- only the fence
-        // markup disappears, not the code itself.
-        builder.push({ from: node.from, to: node.to, deco: Decoration.replace({}) })
+        // Collapse the opening ```lang line and the closing ``` line
+        // entirely -- marker text AND the line's own trailing newline --
+        // rather than just hiding the CodeMark/CodeInfo text in place
+        // (which used to leave each fence line behind as a blank line,
+        // since a decoration that empties a line's content doesn't
+        // remove the line itself). Only safe now that decorations come
+        // from notesDecorationsField (a StateField), not the old
+        // ViewPlugin -- collapsing a line's own newline is exactly the
+        // "replace across a line break" CodeMirror forbids a
+        // ViewPlugin-supplied decoration from doing (see HardBreak's own
+        // comment above, and notesDecorationsField's).
+        const children: SyntaxNode[] = []
+        for (let c = node.node.firstChild; c; c = c.nextSibling) children.push(c)
+        const openMark = children.find((c) => c.name === 'CodeMark')
+        const closeMark = [...children].reverse().find((c) => c.name === 'CodeMark' && c !== openMark)
+        // Stop at the first CodeText (the code's own first line) or, for
+        // an empty fenced block, the closing mark -- NOT CodeInfo, which
+        // must be swallowed by this same replace (it's part of the
+        // opening line being collapsed, not content to preserve).
+        const firstBodyNode = children.find((c) => c.name === 'CodeText' || c === closeMark)
+        if (openMark && firstBodyNode) {
+          // From the opening ``` through the very start of the code's
+          // own first line (or the closing ``` for an empty block) --
+          // covers CodeInfo too without a separate decoration for it,
+          // and its `to` lands exactly at that next node's `from`, which
+          // is the position right after the opening line's own newline.
+          builder.push({ from: openMark.from, to: firstBodyNode.from, deco: Decoration.replace({}) })
+        }
+        if (closeMark) {
+          // The closing ``` line -- from the start of its own line
+          // (not just the mark itself, so a leading newline gets
+          // absorbed into this replace instead of surviving as a blank
+          // line before it) through the mark's own end.
+          const lineStart = state.doc.lineAt(closeMark.from).from
+          builder.push({ from: lineStart, to: closeMark.to, deco: Decoration.replace({}) })
+        }
         return
       }
 
