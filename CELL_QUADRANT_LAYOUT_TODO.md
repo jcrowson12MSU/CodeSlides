@@ -88,16 +88,21 @@ special.
   needs explicit design attention (see the dedicated item below) but
   is still contained to the `Cell`/`SlideShow` boundary, not a
   server-side concern.
-- **Exception: item 2b is a real backend concern, not just a
-  `Cell.tsx` one.** Everything above is about *where a tab renders*,
-  which is pure layout/presentation — `Cell.layout`'s genericness
-  covers it fully. But "removing the primary editor deletes the
-  cell's body code" (confirmed in "Design decisions") is not a layout
-  change at all — it mutates `Cell.source`/`reads`/`writes` on the
-  Python side, i.e. the cell's actual content, not just how it's
-  displayed. This is the one place the "almost entirely a `Cell.tsx`
-  change" framing breaks down; budget real backend design time for it
-  rather than treating it as another layout key.
+- **Exception: item 2b touches the backend, but verified to be a
+  small, well-precedented change, not an open-ended one.** "Removing
+  the primary editor deletes the cell's body code" (confirmed in
+  "Design decisions") mutates `Cell.source` on the Python side, not
+  just layout — so it's not covered by `Cell.layout`'s genericness.
+  But per item 2b's own verified findings: the add/remove-element
+  mutation path already exists end-to-end
+  (`Kernel.add_element`/`remove_element`, `kernel.py:1417`/`1451`) and
+  the `pass`-bodied-stub shape for "a cell with no real body" is
+  already established (`blank_cell_source`, `serialization.py:110`) —
+  the only genuinely new backend code is a reserved-element-name guard
+  and a "can't remove primary editor while tests exist" guard, both
+  small and localized. Budget real (if modest) backend time for it;
+  it is not another layout key, but it's also not a from-scratch
+  subsystem.
 
 ## Design decisions — confirmed by the user
 
@@ -311,38 +316,71 @@ sign-off needed on these points.
   `Cell.tsx`, contrary to "Why this is almost entirely a `Cell.tsx`
   change" above.** Per "Design decisions," removing the primary-editor
   tab must delete the cell's actual Python function body, not just
-  hide a tab — this reaches into `Deck`/`Cell` (`deck.py`) and
-  whatever authoring-side mutation path backs "remove an element in
-  the running app" today (need to identify/confirm this path exists
-  already for ordinary elements, or whether element removal from the
-  UI is itself new — check `EditCellPanel.tsx` and its
-  `set_cell_layout`/mutation call sites before assuming). Specific
-  sub-problems to resolve here, not yet designed:
-  - What does "delete the cell's body" actually mean mechanically —
-    does `cell.source` get rewritten to an empty/stub function
-    (`def cell_name(): pass`, still parseable, still has a name bound
-    in the namespace per this project's existing "every cell name is
-    callable" behavior) or does the cell stop being a runnable node in
-    the dependency graph (`graph.py`) entirely while it exists? A stub
-    function is much less invasive to the rest of the kernel/graph
-    machinery and is the likely answer, but needs explicit confirmation
-    before implementation, not an assumption baked in silently.
-  - `reads`/`writes` (currently derived from parsing `cell.source`) go
-    to empty sets once the body is gone — confirm nothing downstream
-    (dependency graph edges, `EditCellPanel`'s reads/writes display)
-    breaks or shows stale data when a cell transitions from "has code"
-    to "has none."
-  - Symmetric direction: adding a primary editor back to a
-    body-less cell needs a real starting source (likely an empty/stub
-    function body, mirroring `@app.cell`'s own initial-authoring
-    default if one already exists — check `app.py`/CLI scaffolding for
-    precedent rather than inventing a new default from scratch).
+  hide a tab — this reaches into `Deck`/`Cell` (`deck.py`). **Verified
+  against the actual current code (not left as an open question) —
+  the needed infrastructure already exists and this is smaller than it
+  first looked:**
+  - **A full add/remove-element mutation path already exists and is
+    the direct precedent to extend**, not something to invent:
+    `Kernel.add_element`/`Kernel.remove_element` (`kernel.py:1417`,
+    `kernel.py:1451`) each write straight to the deck's `.py` file via
+    `serialization.add_element`/`serialization.remove_element`
+    (`serialization.py:1586`, `serialization.py:1634`), reload the
+    deck synchronously, and re-run the affected cell — wired end-to-end
+    already through `AddElement`/`RemoveElement` websocket messages
+    (`protocol.ts:168-182`) and `EditCellPanel.tsx`'s existing "Elements"
+    add/remove UI (`EditCellPanel.tsx:306-434`, `onAddElement`/
+    `onRemoveElement`). "Remove the primary editor" and "add the
+    primary editor back" should be modeled as this exact same
+    add-element/remove-element flow with `kind='__code__'` (or however
+    item 2's sentinel is actually keyed) rather than a new mutation
+    mechanism — the only genuinely new backend work is (a) the stub-
+    source generation on add (below) and (b) the "can't remove while
+    tests exist" guard (below), not the plumbing itself.
+  - **"Delete the cell's body" = rewrite `cell.source` to a `pass`-bodied
+    stub, confirmed as the right shape, not a guess.** This project
+    already has the exact precedent: `blank_cell_source(name)`
+    (`serialization.py:110-118`) generates
+    `'@app.cell(instance="editable")\ndef {name}():\n    pass\n'` for a
+    brand-new cell (used by `append_cell`, `serialization.py:510`). Use
+    the same shape when clearing an existing cell's body instead of
+    inventing a new one. This is safe with the graph/kernel machinery
+    specifically because of how `parse_cell` (`graph.py:272-301`)
+    derives `reads`/`writes`: it unconditionally does
+    `writes = writes | {cell.name}` (`graph.py:286`) regardless of body
+    content, so a `pass`-bodied stub still writes its own name into the
+    namespace (the "every cell name is callable" precedent holds) and
+    parses/graphs with zero special-casing — `reads` for a stub is
+    simply the empty set, which `build_graph` already handles like any
+    other cell with no reads. **No dependency-graph or kernel change is
+    needed for this half at all.**
+  - Symmetric direction (add a primary editor back to a body-less
+    cell): reuse `blank_cell_source(name)` verbatim as the starting
+    source — same stub shape `append_cell` already uses for a
+    brand-new cell, no new default to design.
+  - **Real remaining gap: element *names* have no collision guard
+    against a reserved sentinel today.** Checked directly:
+    `serialization.add_element`'s only validation is
+    `if any(e.name == element.name for e in existing): raise
+    SaveConflictError(...)` (`serialization.py:1600-1601`) — a
+    same-cell duplicate check, nothing that reserves `'__code__'` (or
+    whatever sentinel item 2 settles on) from being used as an
+    ordinary author-chosen element name. `EditCellPanel.tsx`'s own
+    add-element form (`canAdd`, `EditCellPanel.tsx:129`) only checks
+    non-empty + not-already-present, same gap on the frontend. **This
+    needs an explicit reserved-name check added in both places** (the
+    frontend `canAdd` guard and `add_element`'s dup-check, or a shared
+    validator both call) — this was flagged as a risk to check in item
+    2's writeup; this item confirms it's a real gap requiring an actual
+    code change, not just a hypothetical.
   - Enforce **"can't remove the primary editor while test editors
     exist"** (the add-time-only dependency rule from "Design
-    decisions" means removal must be blocked, not cascaded) — the UI
-    action to remove the primary editor tab needs a guard/disabled
-    state when `tests`-kind elements are present on the cell, with
-    messaging that explains why (remove the test editor(s) first).
+    decisions" means removal must be blocked, not cascaded) — add this
+    guard in `Kernel.remove_element` (or the `EditCellPanel`/frontend
+    layer, or both) specifically for the `'__code__'` sentinel case,
+    with messaging that explains why (remove the test editor(s)
+    first). No existing precedent for this specific guard — it's new
+    logic, unlike everything else in this item.
   - This item should be scheduled early relative to item 3 (not done
     last) since it changes what "the cell has a primary editor" even
     means at the data-model level — item 3's quadrant render logic
