@@ -88,9 +88,10 @@ special.
 
 ## Design decisions — confirmed by the user
 
-All four open questions from the first draft of this document are now
-settled. These are decisions, not recommendations — implement exactly
-as stated below, no further sign-off needed on these four points.
+The four open questions from the first draft of this document, plus
+one confirmed follow-up (whole-column collapse), are all settled.
+These are decisions, not recommendations — implement exactly as
+stated below, no further sign-off needed on these five points.
 
 - **Terminology**: `top-left` / `top-right` / `bottom-left` /
   `bottom-right`. Use these identifiers consistently in code, CSS
@@ -100,14 +101,41 @@ as stated below, no further sign-off needed on these four points.
   `.cs-cell-panel-empty` already gives an empty upper/lower section
   today (a thin header-only row, still a valid drop target), extended
   symmetrically to all 4 quadrants rather than just 2.
+- **Empty column (both of its own quadrants empty): the whole column
+  collapses to a thin strip, not just its two individual quadrant
+  strips stacked.** This is a second, coarser-grained collapse rule on
+  top of the per-quadrant one above, confirmed by the user as a
+  follow-up: if `top-left` AND `bottom-left` are both empty, the
+  entire left column (both quadrants, plus the horizontal divider
+  between them) collapses to a single thin strip claiming
+  (approximately) none of the row's width — not two separate
+  thin-strip quadrants stacked vertically, which is what the
+  per-quadrant rule alone would otherwise produce. Equivalently for
+  the right column. This mirrors `hideCode`'s own existing precedent
+  in `Cell.tsx` today (`.cs-cell-side` gets `flexBasis: '100%'` when
+  `hideCode` is true, collapsing the *other* column to nothing) but
+  needs to work symmetrically in both directions now, and needs to
+  compose correctly with the vertical divider: dragging the vertical
+  divider while one column is in this whole-column-collapsed state
+  should presumably do nothing (there's no meaningful "resize" of a
+  column that isn't rendering any width-worthy content) — confirm this
+  behavior explicitly during implementation/verification (see items 3
+  and 8 below) rather than leaving it to whatever the flexbox math
+  happens to produce.
 - **Divider count and shape: 3 independent dividers, not a crosshair.**
   - One vertical divider, full height, between the left column
     (top-left + bottom-left) and the right column (top-right +
-    bottom-right).
+    bottom-right). Hidden/inert while either column is whole-column-
+    collapsed (per the point above) — there's nothing to drag between
+    a real column and a collapsed strip.
   - One horizontal divider, spanning only the left column's width,
-    between top-left and bottom-left.
+    between top-left and bottom-left. Hidden/inert while the left
+    column itself is whole-column-collapsed (both of its quadrants
+    empty) — same "no real split to drag" reasoning, one level down.
   - A second, independent horizontal divider, spanning only the right
-    column's width, between top-right and bottom-right.
+    column's width, between top-right and bottom-right. Same
+    hidden/inert-when-whole-column-collapsed treatment as the left
+    column's own divider, mirrored.
   - These do **not** need to sit at the same height — dragging the
     left column's horizontal divider must not move the right column's
     one, and vice versa. This is the opposite of a `+`-shaped
@@ -132,8 +160,10 @@ as stated below, no further sign-off needed on these four points.
 - [x] **1. Confirm the quadrant identifier scheme and divider design
   with the user.** Done — see "Design decisions — confirmed by the
   user" above: `top-left`/`top-right`/`bottom-left`/`bottom-right`
-  naming, empty quadrant collapses to a strip, 3 independent dividers
-  (not a crosshair), no minimum-quadrant-size clamping.
+  naming, a single empty quadrant collapses to a strip, an entire
+  column with both its own quadrants empty collapses to one thin
+  strip (not two stacked ones), 3 independent dividers (not a
+  crosshair), no minimum-quadrant-size clamping.
 
 - [ ] **2. Extend `CellLayout` with the new fields** (`protocol.ts` +
   `Cell.layout`'s own docstring in `deck.py`, documentation only — no
@@ -178,27 +208,80 @@ as stated below, no further sign-off needed on these four points.
       (`right_panel_fraction`) default to the browser's own default
       (0.5, matching every other divider's un-saved default) rather
       than inventing a value with no real precedent to migrate from.
-  - A sentinel tab id for the code editor itself in the
-    quadrant-assignment map (mirroring `'__output__'`'s own past
-    precedent as a synthetic non-element tab id, now removed per the
-    Output-tab-elimination work — confirm the exact sentinel string
-    doesn't collide with any real element name, same care that
-    precedent needed) — or, alternatively, an explicit
-    `code_quadrant: Quadrant | null` field (`null` meaning "not shown,
-    left out of the layout entirely," directly matching the user's own
-    "or left out of the layout entirely" wording) kept separate from
-    the element-tab map rather than folded into it. **Decide which of
-    these two shapes before implementing** — folding the code editor
-    into the same map as elements is more uniform (2 and 3 below,
-    "one drag-and-drop system," become trivially true by
-    construction); a separate `code_quadrant` field is more explicit
-    about the code editor's still-somewhat-special status (it's the
-    only "tab" that isn't an `Element`, has no `meta.elements` entry,
-    and needs its own removed/hidden semantics distinct from "no
-    quadrant assigned" for every other tab, which by construction
-    always has *some* quadrant). This one sub-question is still open
-    (not yet confirmed with the user) — everything else in this item
-    is settled.
+  - **Open sub-question, elaborated: how does the code editor's own
+    quadrant get represented in `CellLayout`?** Two real options,
+    neither yet confirmed with the user:
+
+    **Option A — sentinel tab id, folded into the same map as
+    elements.** `tab_quadrant: Record<string, Quadrant>` gains one
+    more possible key, a reserved string like `'__code__'`, alongside
+    real element names like `'notes'`/`'canvas'`. `allTabs` (currently
+    `meta.elements.map((e) => e.name)`) becomes `[...meta.elements.
+    map((e) => e.name), '__code__']` (when code isn't hidden), so the
+    code editor flows through `renderPanel`'s existing drag-source/
+    drop-target loop unmodified — no new code path for it, it just
+    shows up as one more draggable button. "Not currently shown"
+    (the user's own "or left out of the layout entirely" wording)
+    means `'__code__'` is simply absent from `allTabs` in the first
+    place (when `hide_code` is set) or has no entry in `tab_quadrant`
+    at all if the concept of "code exists as a tab but nobody's
+    dragged it anywhere yet" needs representing (falls back to a
+    default quadrant, same as any element tab defaults to `top-left`
+    today via `panelOf`). Risk: `'__code__'` must never collide with a
+    real element name — the exact same care the old, now-removed
+    `'__output__'` sentinel needed (confirm this by grep-checking
+    `ui.py`'s element constructors don't accept an author-chosen name
+    of `'__code__'` unchecked, or reserve/reject it explicitly if they
+    do) — and every place in the codebase that currently iterates
+    `meta.elements` expecting only real elements (e.g. `EditCellPanel`'s
+    own tab list, `renderTabContent`'s dispatch) needs an explicit
+    check to skip or special-case the sentinel, since it now appears
+    in `allTabs` without a corresponding `meta.elements` entry.
+
+    **Option B — separate `code_quadrant: Quadrant | null` field**,
+    kept out of `tab_quadrant` entirely. `null` means "not shown right
+    now" — directly matches the user's own wording with no sentinel-
+    string collision risk to manage. `Cell.tsx`'s render explicitly
+    checks `code_quadrant` alongside (not through) the element-tab
+    loop: each of the 4 quadrant-render calls needs to also ask "is
+    this the code editor's own quadrant?" and, if so, render the
+    `<CodeEditor>` either instead of or alongside that quadrant's
+    element tabs (a quadrant can hold both element tabs and the code
+    editor as separate tabs within it, or code could be modeled as
+    *the only* thing a quadrant holds if it's assigned there — this
+    itself needs deciding either way, but is naturally forced into the
+    open either way since Option A's `'__code__'`-as-a-tab shape
+    already answers it for free: code coexists with element tabs in
+    whatever quadrant it's dragged into, one more tab among others,
+    exactly like today's elements already do). Risk: this is a second,
+    parallel mechanism next to `tab_quadrant` that every render/drag/
+    drop code path touching tabs needs to remember to also check —
+    more explicit about the code editor's special status, but more
+    places in `Cell.tsx` need to know two systems exist instead of
+    one.
+
+    **Recommendation: Option A (sentinel tab id).** The user's own
+    request explicitly frames the code editor as something that
+    should be "able to be moved around" the same way view items
+    already are — "treat the cell's main code editor like a view item
+    that is able to be moved around." A sentinel folded into the exact
+    same map/drag/drop system elements already use is the most direct
+    reading of "treat it *like* a view item": one map, one drag
+    source, one drop target implementation, one `renderPanel` call
+    site, not two parallel systems that both need to stay in sync.
+    The collision risk is real but bounded and checkable (a handful of
+    grep-verifiable call sites, not an open-ended concern), and this
+    project already has direct, working precedent for exactly this
+    pattern (`'__output__'`) even though that specific sentinel was
+    later removed for unrelated reasons (the Output tab concept itself
+    went away, not the sentinel-tab-id *technique*). Option B remains
+    documented above as the fallback if, during implementation, the
+    "does a quadrant hold code AND elements, or code alone" question
+    turns out to need a real code-only-quadrant mode Option A can't
+    express — but start with Option A. **This recommendation itself
+    still needs the user's actual sign-off before implementation** —
+    it is not yet a confirmed decision the way the four items in
+    "Design decisions" above are.
 
 - [ ] **3. Rewrite `Cell.tsx`'s layout render as 4 independent
   quadrants**
@@ -249,6 +332,28 @@ as stated below, no further sign-off needed on these four points.
     not just "start with it in no quadrant" — these are different: the
     former shouldn't appear anywhere in the edit panel's tab list
     either).
+  - **Whole-column collapse** (confirmed follow-up decision, see
+    "Design decisions" above): compute, per render, whether each
+    column has zero tabs across both of its own quadrants
+    (`upperTabs.length === 0 && lowerTabs.length === 0`-equivalent,
+    per column) and collapse that whole column to a thin strip when
+    true — not two separately-collapsed quadrant strips stacked, one
+    single column-wide strip. This needs its own flex-basis math
+    alongside (not replacing) the existing per-quadrant
+    `.cs-cell-panel-empty` collapse: a column with e.g. `top-left`
+    populated and `bottom-left` empty still shows the normal
+    2-quadrant split with just `bottom-left` thin; only when *both*
+    are empty does the whole column collapse. When a column is
+    whole-column-collapsed, its own internal horizontal divider (and,
+    if *both* columns are simultaneously in this state, the vertical
+    divider too) must not render as draggable — there's nothing
+    meaningful to resize. Mirrors `hideCode`'s existing `flexBasis:
+    '100%'`-on-the-other-column precedent in today's `Cell.tsx`
+    (search for `hideCode ? '100%'` in the current render), just made
+    symmetric (either column can be the one that collapses, not only
+    ever `.cs-cell-code`) and one level more granular (per-column
+    computed from its own two quadrants' emptiness, not an explicit
+    author-set flag like `hideCode` is).
 
 - [ ] **4. Reconcile `SlideShow.tsx`'s `extraCodeAbove` (title-slide
   setup-cell composition) with quadrants.** This prop currently
@@ -294,12 +399,22 @@ as stated below, no further sign-off needed on these four points.
   row-height, since the two columns' horizontal dividers must be able
   to sit at different heights) — reusing the existing empty-quadrant
   collapse treatment (`.cs-cell-panel-empty`) symmetrically across all
-  4 quadrants, not just the 2 that have it today. Also needs the
-  narrow-screen stacking `@media` rule (mentioned in `Cell.tsx`'s own
-  existing comments, currently collapsing the 2-column layout to a
-  single column below some width) redesigned for a 4-quadrant grid,
-  since "stack 2 things vertically" doesn't generalize to "stack 4
-  things" without deciding an order.
+  4 quadrants, not just the 2 that have it today. **Also needs a
+  second, coarser collapse class for the whole-column case** (both of
+  a column's own quadrants empty — see "Design decisions" and item 3
+  above) — likely a new `.cs-cell-column-empty` (or similar) applied
+  to the whole `top-level left/right flex row`'s left or right child,
+  giving it the same "thin strip, fixed size, not a flex share"
+  treatment `.cs-cell-panel-empty` already gives one quadrant, just
+  one level up the tree; the top-level row's own flex-basis math
+  (today's `hideCode ? '100%' : ...` on `.cs-cell-side`, see `Cell.tsx`)
+  is the direct precedent for how the *other*, non-collapsed column
+  should claim the freed-up width. Also needs the narrow-screen
+  stacking `@media` rule (mentioned in `Cell.tsx`'s own existing
+  comments, currently collapsing the 2-column layout to a single
+  column below some width) redesigned for a 4-quadrant grid, since
+  "stack 2 things vertically" doesn't generalize to "stack 4 things"
+  without deciding an order.
 
 - [ ] **7. Migration path for existing saved layouts.** Every deck
   that has ever dragged a tab to the lower section or resized either
@@ -327,13 +442,21 @@ as stated below, no further sign-off needed on these four points.
   3-independent-dividers design from the rejected crosshair
   alternative, so it's the most important single thing to verify);
   an empty quadrant's collapse-and-still-droppable behavior in all 4
-  positions, not just 2; the code editor removed from every quadrant
-  entirely (a cell with zero visible code, distinct from
-  `hide_code=True`); the title-slide `extraCodeAbove` case (whichever
-  resolution item 4 reaches); Save + reload round-tripping a saved
-  layout exactly (all 4 quadrants' tab assignments, all 3 divider
-  positions, which tab is default); and an existing pre-this-feature
-  saved deck (e.g. `examples/marchingSquares.py`,
-  `Lectures/Chapters/chapter1.py`) loading with its old 2-section
-  layout correctly migrated per item 7, not reset to defaults or
-  crashing.
+  positions, not just 2; **whole-column collapse specifically** — drag
+  every tab out of one column's two quadrants and confirm that column
+  collapses to one thin strip (not two stacked thin quadrant strips),
+  the other column claims the freed width, and neither that column's
+  own internal horizontal divider nor (if both columns end up
+  collapsed at once) the vertical divider render as draggable while
+  collapsed; dragging a tab back into a whole-column-collapsed column
+  correctly re-expands it back to a normal 2-quadrant split; the code
+  editor removed from every quadrant entirely (a cell with zero
+  visible code, distinct from `hide_code=True`); the title-slide
+  `extraCodeAbove` case (whichever resolution item 4 reaches); Save +
+  reload round-tripping a saved layout exactly (all 4 quadrants' tab
+  assignments, all 3 divider positions, which tab is default, and
+  whichever column(s) were whole-column-collapsed at save time); and
+  an existing pre-this-feature saved deck (e.g.
+  `examples/marchingSquares.py`, `Lectures/Chapters/chapter1.py`)
+  loading with its old 2-section layout correctly migrated per item 7,
+  not reset to defaults or crashing.
