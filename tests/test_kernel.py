@@ -476,6 +476,118 @@ def test_input_also_works_inside_a_tests_element():
     assert result["status"] == "pass", result["message"]
 
 
+def test_input_reads_a_slider_element():
+    """input() can pull a value from a ui.slider, not just a
+    ui.text_input -- returned as a str, matching input()'s own real
+    contract, even though a slider's underlying value is a float."""
+    app = App()
+
+    @app.cell(elements=[ui.slider("speed", min=1, max=10, default=3)])
+    def show_speed():
+        speed_text = input("Speed: ")
+        return speed_text
+
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+
+    assert session.instances["show_speed"].status == "idle", session.instances["show_speed"].error
+    assert session.namespace["speed_text"] == "3"
+    assert isinstance(session.namespace["speed_text"], str)
+
+
+def test_input_from_a_slider_formats_a_whole_number_without_a_trailing_dot_zero():
+    """A slider's value is a JS Number -> Python float even when it's a
+    whole number (SliderWidget.tsx's own onChange(Number(...))) --
+    str(3.0) is "3.0", and int("3.0") raises ValueError (unlike
+    int(3.0), which works fine) -- exactly the kind of thing
+    `int(input(...))` around a slider-backed prompt would hit. Confirm
+    a whole-number slider value renders without the decimal, so
+    int(input(...)) still works the same way it would for a typed
+    whole number."""
+    app = App()
+
+    @app.cell(elements=[ui.slider("age", min=1, max=100, default=15)])
+    def parse_slider_age():
+        age = int(input("Age: "))
+        return age
+
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+
+    assert session.instances["parse_slider_age"].status == "idle", session.instances["parse_slider_age"].error
+    assert session.namespace["age"] == 15
+
+
+def test_input_from_a_slider_keeps_a_fractional_value_intact():
+    """A genuinely fractional slider value (not a whole number) must
+    still come through with its decimal part -- the whole-number
+    special case above must not truncate a real fraction."""
+    app = App()
+
+    @app.cell(elements=[ui.slider("rate", min=0, max=50, default=12.5)])
+    def parse_slider_rate():
+        rate = float(input("Rate: "))
+        return rate
+
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+
+    assert session.instances["parse_slider_rate"].status == "idle", session.instances["parse_slider_rate"].error
+    assert session.namespace["rate"] == 12.5
+
+
+def test_input_reads_a_mix_of_sliders_and_text_inputs_in_declaration_order():
+    """Sliders and text_inputs share ONE combined input() sequence, in
+    the order they're declared in elements=[...] -- not "drain all
+    text_inputs, then all sliders" or vice versa."""
+    app = App()
+
+    @app.cell(
+        elements=[
+            ui.slider("hours", min=1, max=40, default=20),
+            ui.text_input("name", default="Sam"),
+            ui.slider("rate", min=1, max=100, default=12.5),
+        ]
+    )
+    def pay():
+        hours = float(input("Hours: "))
+        name = input("Name: ")
+        rate = float(input("Rate: "))
+        return hours, name, rate
+
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+
+    assert session.instances["pay"].status == "idle", session.instances["pay"].error
+    assert session.namespace["hours"] == 20.0
+    assert session.namespace["name"] == "Sam"
+    assert session.namespace["rate"] == 12.5
+
+
+def test_input_still_ignores_button_elements():
+    """ui.button is deliberately still not readable via input() -- a
+    click count isn't text a student would type at a prompt. A cell
+    with only a button and no text_input/slider should still get the
+    clear "no readable elements" error, not silently read the button's
+    click count."""
+    app = App()
+
+    @app.cell(elements=[ui.button("go")])
+    def only_a_button():
+        return input("value: ")
+
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+
+    assert session.instances["only_a_button"].status == "error"
+    assert "only has 0 ui.text_input/ui.slider" in session.instances["only_a_button"].error
+
+
 def test_two_cells_with_unrelated_same_named_locals_both_load_and_run():
     """Regression guard for the exact examples/marchingSquares.py bug
     report: a cell with a `for x in range(...)` loop and an unrelated

@@ -237,18 +237,45 @@ def _find_turtle_canvas(elements: list[Element]) -> str | None:
     return canvases[0] if len(canvases) == 1 else None
 
 
+def _input_value_as_str(kind: str, raw: Any) -> str:
+    """Render one input element's current raw value as the `str`
+    `input()` must always return, regardless of the element kind that
+    actually produced it. A `text_input`'s value is already a `str`
+    (`raw or ""` just guards against `None` on an element that's never
+    been touched). A `slider`'s value is a JS `Number` -> Python `float`
+    (`SliderWidget.tsx`'s own `onChange(Number(...))`) -- `str()`ing a
+    float directly would turn a whole-number slider position like `15`
+    into `"15.0"`, and `int("15.0")` raises `ValueError` (unlike
+    `int(15.0)`, which is fine) -- exactly the kind of thing a student
+    writing `age = int(input(...))` around a slider-backed prompt would
+    hit and have no way to explain. Rendering a whole-number float
+    without the trailing `.0` sidesteps that: `int(input(...))` keeps
+    working the same way it would for a typed whole number, while a
+    genuinely fractional slider value (`15.5`) still comes through with
+    its decimal part intact."""
+    if kind == "slider":
+        value = float(raw or 0)
+        return str(int(value)) if value.is_integer() else str(value)
+    return str(raw or "")
+
+
 def _make_input_shim(cell_name: str, elements: list[Element], element_instances: dict[str, ElementInstance]):
     """Build a per-call replacement for the builtin `input()`, so a cell
     (or `tests` box) can write plain `input("prompt")` -- exactly the
     syntax the deck's own notes/fenced-code samples teach -- and have it
-    read from this cell's own `ui.text_input` elements instead of stdin
-    (which doesn't exist here; a real `input()` call would just hang/
-    error). Each successive call returns the next `text_input` element's
+    read from this cell's own `ui.text_input`/`ui.slider` elements
+    instead of stdin (which doesn't exist here; a real `input()` call
+    would just hang/error -- see `Kernel`'s own module docstring, or the
+    incident that led to this shim existing in the first place). Each
+    successive call returns the next `text_input`/`slider` element's
     current value, in the order they're declared in `elements=[...]` --
-    `ui.slider`/`ui.button` are deliberately not included, since the user
-    asked specifically for `ui.text_input` boxes to be readable this way,
-    and a slider/button's own "value" (a float position, a click count)
-    isn't text a student would ever type at an `input()` prompt.
+    the two kinds share one combined sequence (a cell with
+    `[slider("a"), text_input("b")]` reads `a` first, `b` second), not
+    "drain all text_inputs, then all sliders," so the reading order
+    always matches the order the elements themselves appear on the page.
+    `ui.button` is deliberately still excluded -- a click *count* isn't
+    a value a student would ever type at an `input()` prompt the way a
+    slider's numeric position or a text box's typed text both are.
 
     Bound into `session.namespace["input"]` for the duration of one call
     (see `execute_cell`'s own `finally` restoring it afterward, same
@@ -268,20 +295,22 @@ def _make_input_shim(cell_name: str, elements: list[Element], element_instances:
     multiple times still produces a readable, prompt-labeled stdout
     transcript instead of a bare unlabeled sequence of values.
     """
-    text_inputs = [e for e in elements if e.kind == "text_input"]
+    readable_kinds = ("text_input", "slider")
+    readable_elements = [e for e in elements if e.kind in readable_kinds]
     calls = {"count": 0}
 
     def shim(prompt: str = "") -> str:
         index = calls["count"]
         calls["count"] += 1
-        if index >= len(text_inputs):
+        if index >= len(readable_elements):
             raise EOFError(
-                f"input(): cell {cell_name!r} only has {len(text_inputs)} ui.text_input element(s), "
-                f"but input() was called a {index + 1}{'st' if index == 0 else 'th'} time -- "
-                "add another ui.text_input to this cell's elements=[...] for this call to read from."
+                f"input(): cell {cell_name!r} only has {len(readable_elements)} ui.text_input/ui.slider "
+                f"element(s), but input() was called a {index + 1}{'st' if index == 0 else 'th'} time -- "
+                "add another ui.text_input or ui.slider to this cell's elements=[...] for this call to read from."
             )
-        element = text_inputs[index]
-        value = str(element_instances.get(element.name, ElementInstance()).value or "")
+        element = readable_elements[index]
+        raw = element_instances.get(element.name, ElementInstance()).value
+        value = _input_value_as_str(element.kind, raw)
         print(f"{prompt}{value}")
         return value
 
@@ -380,8 +409,9 @@ def execute_cell(
         if is_main:
             session.namespace["__name__"] = "__main__"
         # Direct assignment, not setdefault like cs/turtle above -- each
-        # cell needs its OWN shim (bound to its own text_input elements in
-        # its own order), not whichever cell happened to run first's.
+        # cell needs its OWN shim (bound to its own text_input/slider
+        # elements in its own order), not whichever cell happened to run
+        # first's.
         # Restored (or removed) in the `finally` below, same reasoning and
         # same pattern as `__name__` just above: a per-call value that
         # must never leak into an unrelated cell's own run through the
@@ -692,7 +722,7 @@ def run_tests(
 
     `element_instances` (the owning cell's `CellInstance.elements`, if
     given) similarly seeds a per-call `input()` shim reading from this
-    cell's own `ui.text_input` elements in order -- see
+    cell's own `ui.text_input`/`ui.slider` elements in order -- see
     `_make_input_shim`'s own docstring for why this is a direct
     assignment, not `setdefault` like `cs`/`turtle` above, and restored
     afterward rather than left in `namespace` for whatever runs next."""
