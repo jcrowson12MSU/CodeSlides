@@ -720,7 +720,10 @@ export function Cell({
   }
 
   return (
-    <div className={`cs-cell ${collapsed ? 'cs-cell-collapsed' : ''} ${hideHeader ? 'cs-cell-no-header' : ''}`}>
+    <div
+      id={`cs-cell-${cellId}`}
+      className={`cs-cell ${collapsed ? 'cs-cell-collapsed' : ''} ${hideHeader ? 'cs-cell-no-header' : ''}`}
+    >
       {!hideHeader && (
         <div className="cs-cell-header">
           <button

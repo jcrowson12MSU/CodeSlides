@@ -242,6 +242,48 @@ function App() {
     return () => window.removeEventListener('scroll', handleScroll)
   }, [])
 
+  // Cmd+Control+Left/Right advances between cells in Cells view -- same
+  // modifier combo and same reasoning as SlideShow.tsx's own Slides-view
+  // shortcut (see its own comment): plain Cmd+Left/Right is the standard
+  // "move cursor to start/end of line" shortcut inside the code editor,
+  // so using it unmodified for cell navigation would fight with normal
+  // text editing every time a code editor has focus. Right advances
+  // (down the page, to the next cell); left goes back (up, to the
+  // previous cell) -- matching the user's own "right is down, left is
+  // up" framing, and SlideShow's forward/backward convention.
+  //
+  // Unlike Slides view (which shows exactly one slide and so needs an
+  // explicit `index` in state), Cells view is a single scrolling page --
+  // there's no persistent "current cell" selection to move relative to,
+  // so this finds whichever cell is nearest the top of the viewport
+  // *at the moment the shortcut fires* and scrolls to its neighbor. This
+  // stays correct even if the user free-scrolls the page by hand between
+  // presses, which a stored index could otherwise drift out of sync with.
+  useEffect(() => {
+    if (viewMode !== 'cells' || !deckCells) return
+    function handleKey(event: KeyboardEvent) {
+      if (!event.metaKey || !event.ctrlKey) return
+      if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
+      event.preventDefault()
+      const cellIds = Object.keys(deckCells ?? {})
+      if (cellIds.length === 0) return
+      const cellElements = cellIds.map((id) => document.getElementById(`cs-cell-${id}`)).filter((el): el is HTMLElement => el !== null)
+      if (cellElements.length === 0) return
+      // The topmost cell whose own top edge is still on-screen (or, if
+      // every cell has already scrolled past the top, the last one) --
+      // same "nearest to the top of the viewport" idea a reading-position
+      // indicator would use, without needing to track scroll position in
+      // React state.
+      let currentIndex = cellElements.findIndex((el) => el.getBoundingClientRect().bottom > 0)
+      if (currentIndex === -1) currentIndex = cellElements.length - 1
+      const delta = event.key === 'ArrowRight' ? 1 : -1
+      const targetIndex = Math.min(Math.max(currentIndex + delta, 0), cellElements.length - 1)
+      cellElements[targetIndex].scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [viewMode, deckCells])
+
   useEffect(() => {
     if (!helpOpen) return
     function handlePointerDown(event: PointerEvent) {
@@ -938,6 +980,8 @@ function App() {
                   <dd>Run every cell</dd>
                   <dt>Cmd+Control+Left/Right</dt>
                   <dd>Previous/next slide (Slides view)</dd>
+                  <dt>Cmd+Control+Left/Right</dt>
+                  <dd>Previous/next cell (Cells view)</dd>
                 </dl>
               </div>
             )}
