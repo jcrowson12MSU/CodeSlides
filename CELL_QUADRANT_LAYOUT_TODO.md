@@ -1,10 +1,13 @@
 # Cell 4-quadrant layout — TODO
 
-Scope: `frontend/src/widgets/Cell.tsx` (and its CSS in `App.css`), plus
-the `CellLayout` shape (`frontend/src/protocol.ts`) it persists through
-`set_cell_layout`/`Cell.layout` (`src/codeslides/deck.py`). No other
-file in the frontend or backend needs structural changes for this —
-see "Why this is almost entirely a `Cell.tsx` change" below.
+Scope: `frontend/src/widgets/Cell.tsx` (and its CSS in `App.css`), the
+`CellLayout` shape (`frontend/src/protocol.ts`) it persists through
+`set_cell_layout`/`Cell.layout` (`src/codeslides/deck.py`), plus one
+real exception: `Deck`/`Cell` (`deck.py`) and the element-mutation path
+need actual changes to support deleting/restoring a cell's body code
+when its primary editor is removed/added — see item 2b. See "Why this
+is almost entirely a `Cell.tsx` change" below for what does and does
+not stay contained.
 
 ## The request, restated precisely
 
@@ -85,13 +88,24 @@ special.
   needs explicit design attention (see the dedicated item below) but
   is still contained to the `Cell`/`SlideShow` boundary, not a
   server-side concern.
+- **Exception: item 2b is a real backend concern, not just a
+  `Cell.tsx` one.** Everything above is about *where a tab renders*,
+  which is pure layout/presentation — `Cell.layout`'s genericness
+  covers it fully. But "removing the primary editor deletes the
+  cell's body code" (confirmed in "Design decisions") is not a layout
+  change at all — it mutates `Cell.source`/`reads`/`writes` on the
+  Python side, i.e. the cell's actual content, not just how it's
+  displayed. This is the one place the "almost entirely a `Cell.tsx`
+  change" framing breaks down; budget real backend design time for it
+  rather than treating it as another layout key.
 
 ## Design decisions — confirmed by the user
 
 The four open questions from the first draft of this document, plus
-one confirmed follow-up (whole-column collapse), are all settled.
-These are decisions, not recommendations — implement exactly as
-stated below, no further sign-off needed on these five points.
+two confirmed follow-ups (whole-column collapse, and the primary/test
+editor model below), are all settled. These are decisions, not
+recommendations — implement exactly as stated below, no further
+sign-off needed on these points.
 
 - **Terminology**: `top-left` / `top-right` / `bottom-left` /
   `bottom-right`. Use these identifiers consistently in code, CSS
@@ -154,6 +168,53 @@ stated below, no further sign-off needed on these five points.
   — don't let "no minimum size" turn into "a quadrant with real
   content becomes completely inaccessible," but this is a smaller
   concern than clamping, not a reason to add clamping back.
+- **Primary editor and test editors are both just elements now —
+  cardinality and dependency rules confirmed by the user:**
+  - **The cell's primary code editor becomes an ordinary element/tab**,
+    exactly like `notes`, a viewer, or a `tests` element — no longer
+    structurally special, no longer always-present. This settles the
+    sentinel-vs-field sub-question from the first draft of this
+    section in favor of **Option A (sentinel tab id)**: the primary
+    editor is folded into the same `tab_quadrant` map and the same
+    `renderPanel`/drag/drop machinery every other element already
+    uses, not a parallel `code_quadrant` field. See item 2 below for
+    the mechanics.
+  - **A cell has at most one primary editor: zero or one, never
+    more.** This is a hard cardinality constraint, unlike ordinary
+    elements (which have no such limit today) — the UI must not allow
+    adding a second primary editor to a cell that already has one.
+  - **Zero primary editor means zero body code**, full stop — not "code
+    exists but isn't shown." Removing the primary-editor tab is
+    equivalent to deleting the cell's own Python function body
+    entirely; the cell becomes a pure container for its other elements
+    (notes, canvas, viewers, etc.), with nothing to execute, no reads/
+    writes derived from it. This is a materially bigger change than
+    "hide the tab" — it reaches into `Deck`/`Cell` on the Python side,
+    not just `Cell.tsx`'s render (see the new item 2b below).
+  - **A `tests` element requires the cell to already have a primary
+    editor.** A cell with no primary editor cannot have a test editor
+    added to it — enforced at add-time in the UI (the "add a test
+    editor" action is simply unavailable/disabled when there's no
+    primary editor present). This is an add-time-only rule: the
+    document does not need a cascading-delete behavior for existing
+    test editors if a primary editor is later removed, because removal
+    of a primary editor while test editors still exist is itself
+    disallowed (see item 2b) — the invariant holds by construction, not
+    by cleanup.
+  - **A cell can have zero, one, or multiple test editors** — no
+    upper-bound cardinality constraint, matching how `Element` already
+    imposes no limit on repeated `kind="tests"` entries in
+    `Cell.elements` today (confirmed by reading `deck.py` — `elements:
+    list[Element]`, no dedup/limit logic). This is unchanged from
+    today's actual behavior; only the *dependency on a primary editor
+    existing* is new.
+  - **Primary editor placement: fully draggable, no fixed quadrant.**
+    Matches the user's original "treat the cell's main code editor
+    like a view item that is able to be moved around" wording exactly
+    — the primary editor starts in a reasonable default quadrant (e.g.
+    `top-right`, matching today's fixed right-column position) but can
+    be dragged to any of the 4 quadrants exactly like `notes`/`tests`/
+    any other element tab, with no special pinning.
 
 ## Build-ordered checklist
 
@@ -163,7 +224,11 @@ stated below, no further sign-off needed on these five points.
   naming, a single empty quadrant collapses to a strip, an entire
   column with both its own quadrants empty collapses to one thin
   strip (not two stacked ones), 3 independent dividers (not a
-  crosshair), no minimum-quadrant-size clamping.
+  crosshair), no minimum-quadrant-size clamping, and the primary/test
+  editor cardinality and dependency model (primary editor is an
+  ordinary, fully-draggable, 0-or-1 element folded into the same
+  sentinel-tab-id scheme as elements; test editors require a primary
+  editor to exist at add-time; 0-to-many test editors allowed).
 
 - [ ] **2. Extend `CellLayout` with the new fields** (`protocol.ts` +
   `Cell.layout`'s own docstring in `deck.py`, documentation only — no
@@ -208,80 +273,80 @@ stated below, no further sign-off needed on these five points.
       (`right_panel_fraction`) default to the browser's own default
       (0.5, matching every other divider's un-saved default) rather
       than inventing a value with no real precedent to migrate from.
-  - **Open sub-question, elaborated: how does the code editor's own
-    quadrant get represented in `CellLayout`?** Two real options,
-    neither yet confirmed with the user:
+  - **Resolved: the primary code editor's own quadrant uses the
+    sentinel-tab-id approach (Option A), confirmed by the user** — see
+    "Design decisions" above. `tab_quadrant: Record<string, Quadrant>`
+    gains one more possible key, a reserved string like `'__code__'`,
+    alongside real element names like `'notes'`/`'canvas'`/`'tests'`.
+    `allTabs` (currently `meta.elements.map((e) => e.name)`) becomes
+    `[...meta.elements.map((e) => e.name), '__code__']` whenever the
+    cell has a primary editor at all (see item 2b — "has a primary
+    editor" is now itself a real yes/no state, not just a hidden/shown
+    toggle), so the code editor flows through `renderPanel`'s existing
+    drag-source/drop-target loop unmodified — no new code path for it,
+    it just shows up as one more draggable button, starting in
+    `top-right` by default (`panelOf`'s existing default-quadrant
+    fallback) until dragged elsewhere. When the cell has no primary
+    editor, `'__code__'` is simply absent from `allTabs` entirely (not
+    present-but-parked) — this is the same "no code" state as item 2b's
+    body-deletion behavior, not a positioning question.
+    - `'__code__'` must never collide with a real element name — the
+      same care the old, now-removed `'__output__'` sentinel needed.
+      Grep-check `ui.py`'s element constructors (`notes`, `tests`,
+      viewers, inputs) don't accept an author-chosen name of
+      `'__code__'` unchecked; reserve/reject it explicitly if they do.
+    - Every place that currently iterates `meta.elements` expecting
+      only real elements (`EditCellPanel`'s own tab list,
+      `renderTabContent`'s dispatch) needs an explicit check to skip or
+      special-case the sentinel, since it now appears in `allTabs`
+      without a corresponding `meta.elements` entry.
+    - `EditCellPanel`'s "add a test editor" affordance (see item 5)
+      must check for `'__code__'`'s presence in the cell's current
+      `allTabs`/element list to implement the add-time dependency rule
+      from "Design decisions" above — no primary editor present means
+      that affordance is disabled, not just unwired.
 
-    **Option A — sentinel tab id, folded into the same map as
-    elements.** `tab_quadrant: Record<string, Quadrant>` gains one
-    more possible key, a reserved string like `'__code__'`, alongside
-    real element names like `'notes'`/`'canvas'`. `allTabs` (currently
-    `meta.elements.map((e) => e.name)`) becomes `[...meta.elements.
-    map((e) => e.name), '__code__']` (when code isn't hidden), so the
-    code editor flows through `renderPanel`'s existing drag-source/
-    drop-target loop unmodified — no new code path for it, it just
-    shows up as one more draggable button. "Not currently shown"
-    (the user's own "or left out of the layout entirely" wording)
-    means `'__code__'` is simply absent from `allTabs` in the first
-    place (when `hide_code` is set) or has no entry in `tab_quadrant`
-    at all if the concept of "code exists as a tab but nobody's
-    dragged it anywhere yet" needs representing (falls back to a
-    default quadrant, same as any element tab defaults to `top-left`
-    today via `panelOf`). Risk: `'__code__'` must never collide with a
-    real element name — the exact same care the old, now-removed
-    `'__output__'` sentinel needed (confirm this by grep-checking
-    `ui.py`'s element constructors don't accept an author-chosen name
-    of `'__code__'` unchecked, or reserve/reject it explicitly if they
-    do) — and every place in the codebase that currently iterates
-    `meta.elements` expecting only real elements (e.g. `EditCellPanel`'s
-    own tab list, `renderTabContent`'s dispatch) needs an explicit
-    check to skip or special-case the sentinel, since it now appears
-    in `allTabs` without a corresponding `meta.elements` entry.
-
-    **Option B — separate `code_quadrant: Quadrant | null` field**,
-    kept out of `tab_quadrant` entirely. `null` means "not shown right
-    now" — directly matches the user's own wording with no sentinel-
-    string collision risk to manage. `Cell.tsx`'s render explicitly
-    checks `code_quadrant` alongside (not through) the element-tab
-    loop: each of the 4 quadrant-render calls needs to also ask "is
-    this the code editor's own quadrant?" and, if so, render the
-    `<CodeEditor>` either instead of or alongside that quadrant's
-    element tabs (a quadrant can hold both element tabs and the code
-    editor as separate tabs within it, or code could be modeled as
-    *the only* thing a quadrant holds if it's assigned there — this
-    itself needs deciding either way, but is naturally forced into the
-    open either way since Option A's `'__code__'`-as-a-tab shape
-    already answers it for free: code coexists with element tabs in
-    whatever quadrant it's dragged into, one more tab among others,
-    exactly like today's elements already do). Risk: this is a second,
-    parallel mechanism next to `tab_quadrant` that every render/drag/
-    drop code path touching tabs needs to remember to also check —
-    more explicit about the code editor's special status, but more
-    places in `Cell.tsx` need to know two systems exist instead of
-    one.
-
-    **Recommendation: Option A (sentinel tab id).** The user's own
-    request explicitly frames the code editor as something that
-    should be "able to be moved around" the same way view items
-    already are — "treat the cell's main code editor like a view item
-    that is able to be moved around." A sentinel folded into the exact
-    same map/drag/drop system elements already use is the most direct
-    reading of "treat it *like* a view item": one map, one drag
-    source, one drop target implementation, one `renderPanel` call
-    site, not two parallel systems that both need to stay in sync.
-    The collision risk is real but bounded and checkable (a handful of
-    grep-verifiable call sites, not an open-ended concern), and this
-    project already has direct, working precedent for exactly this
-    pattern (`'__output__'`) even though that specific sentinel was
-    later removed for unrelated reasons (the Output tab concept itself
-    went away, not the sentinel-tab-id *technique*). Option B remains
-    documented above as the fallback if, during implementation, the
-    "does a quadrant hold code AND elements, or code alone" question
-    turns out to need a real code-only-quadrant mode Option A can't
-    express — but start with Option A. **This recommendation itself
-    still needs the user's actual sign-off before implementation** —
-    it is not yet a confirmed decision the way the four items in
-    "Design decisions" above are.
+- [ ] **2b. Handle "zero primary editor means zero body code" —
+  this is the one piece of this feature that is NOT contained to
+  `Cell.tsx`, contrary to "Why this is almost entirely a `Cell.tsx`
+  change" above.** Per "Design decisions," removing the primary-editor
+  tab must delete the cell's actual Python function body, not just
+  hide a tab — this reaches into `Deck`/`Cell` (`deck.py`) and
+  whatever authoring-side mutation path backs "remove an element in
+  the running app" today (need to identify/confirm this path exists
+  already for ordinary elements, or whether element removal from the
+  UI is itself new — check `EditCellPanel.tsx` and its
+  `set_cell_layout`/mutation call sites before assuming). Specific
+  sub-problems to resolve here, not yet designed:
+  - What does "delete the cell's body" actually mean mechanically —
+    does `cell.source` get rewritten to an empty/stub function
+    (`def cell_name(): pass`, still parseable, still has a name bound
+    in the namespace per this project's existing "every cell name is
+    callable" behavior) or does the cell stop being a runnable node in
+    the dependency graph (`graph.py`) entirely while it exists? A stub
+    function is much less invasive to the rest of the kernel/graph
+    machinery and is the likely answer, but needs explicit confirmation
+    before implementation, not an assumption baked in silently.
+  - `reads`/`writes` (currently derived from parsing `cell.source`) go
+    to empty sets once the body is gone — confirm nothing downstream
+    (dependency graph edges, `EditCellPanel`'s reads/writes display)
+    breaks or shows stale data when a cell transitions from "has code"
+    to "has none."
+  - Symmetric direction: adding a primary editor back to a
+    body-less cell needs a real starting source (likely an empty/stub
+    function body, mirroring `@app.cell`'s own initial-authoring
+    default if one already exists — check `app.py`/CLI scaffolding for
+    precedent rather than inventing a new default from scratch).
+  - Enforce **"can't remove the primary editor while test editors
+    exist"** (the add-time-only dependency rule from "Design
+    decisions" means removal must be blocked, not cascaded) — the UI
+    action to remove the primary editor tab needs a guard/disabled
+    state when `tests`-kind elements are present on the cell, with
+    messaging that explains why (remove the test editor(s) first).
+  - This item should be scheduled early relative to item 3 (not done
+    last) since it changes what "the cell has a primary editor" even
+    means at the data-model level — item 3's quadrant render logic
+    depends on this being settled, not the other way around.
 
 - [ ] **3. Rewrite `Cell.tsx`'s layout render as 4 independent
   quadrants**
@@ -378,17 +443,29 @@ stated below, no further sign-off needed on these five points.
     reaches outside `Cell.tsx` itself.
 
 - [ ] **5. Update `EditCellPanel.tsx`'s tab-related UI for 4
-  quadrants.** "Default view item" (which tab shows first on load)
-  still needs to work regardless of which quadrant a tab currently
-  lives in — likely no change needed there beyond confirming it. More
-  importantly: if the code editor is now a removable/repositionable
-  tab, the edit panel needs a way to represent "the code editor is
-  currently not shown at all" distinctly from `hide_code=True`
-  (author-declared, permanent, not user-repositionable) — these are
-  two different concepts (`hide_code` removes the *option* to show
-  code at all; "not currently in any quadrant" is a repositionable
-  tab that happens to be parked nowhere right now) and the UI needs to
-  make that distinction legible, not conflate them.
+  quadrants, and for the new primary/test editor cardinality rules.**
+  - "Default view item" (which tab shows first on load) still needs
+    to work regardless of which quadrant a tab currently lives in —
+    likely no change needed there beyond confirming it.
+  - If the code editor is now a removable/repositionable tab, the
+    edit panel needs a way to represent "the code editor is currently
+    not shown at all" distinctly from `hide_code=True` (author-
+    declared, permanent, not user-repositionable) — these are two
+    different concepts (`hide_code` removes the *option* to show code
+    at all; "not currently in any quadrant" is a repositionable tab
+    that happens to be parked nowhere right now) and the UI needs to
+    make that distinction legible, not conflate them.
+  - **New: an explicit "add primary editor" / "remove primary editor"
+    affordance**, disabled/hidden for "add" when the cell already has
+    one (0-or-1 cardinality, per "Design decisions") and disabled for
+    "remove" when the cell has any `tests`-kind elements present (see
+    item 2b's add-time dependency guard) — with visible messaging for
+    why removal is blocked, not just a silently-disabled button.
+  - **New: an explicit "add test editor" affordance**, disabled when
+    the cell has no primary editor (the add-time dependency rule from
+    "Design decisions"), otherwise unlimited — no upper bound on how
+    many `tests` elements a cell can carry, matching today's actual
+    (unenforced-limit) behavior.
 
 - [ ] **6. CSS**: extend `App.css`'s existing panel/resize-handle rules
   (`.cs-cell-panels`, `.cs-cell-panel`, `.cs-cell-panel-empty`,
@@ -459,4 +536,16 @@ stated below, no further sign-off needed on these five points.
   an existing pre-this-feature saved deck (e.g.
   `examples/marchingSquares.py`, `Lectures/Chapters/chapter1.py`)
   loading with its old 2-section layout correctly migrated per item 7,
-  not reset to defaults or crashing.
+  not reset to defaults or crashing; **and the new cardinality/
+  dependency rules from "Design decisions" and item 2b** — confirm the
+  "add primary editor" affordance is unavailable once a cell already
+  has one, confirm removing a cell's primary editor actually clears
+  its body code (re-run the cell / check its bound namespace callable
+  is gone, not just that the tab disappeared), confirm re-adding a
+  primary editor to a body-less cell produces a sane starting stub,
+  confirm "remove primary editor" is blocked (with visible messaging)
+  while the cell has any test editors, confirm "add test editor" is
+  disabled on a cell with no primary editor and becomes available the
+  moment one is added, and confirm a cell can carry multiple test
+  editors simultaneously with each one's own pass/fail state and
+  source independently editable.
