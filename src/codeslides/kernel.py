@@ -35,7 +35,7 @@ from codeslides.graph import (
 )
 from codeslides.output import resolve_output, wire_safe_value
 from codeslides.serialization import reattach_decorator, set_notes_docstring, set_tests_default
-from codeslides.session import CellInstance, Session, _deck_asset_url
+from codeslides.session import CellInstance, ElementInstance, Session, _deck_asset_url
 
 # Extension for each image MIME type a browser's <input type="file"
 # accept="image/*"> can plausibly hand back via FileReader.readAsDataURL.
@@ -237,6 +237,57 @@ def _find_turtle_canvas(elements: list[Element]) -> str | None:
     return canvases[0] if len(canvases) == 1 else None
 
 
+def _make_input_shim(cell_name: str, elements: list[Element], element_instances: dict[str, ElementInstance]):
+    """Build a per-call replacement for the builtin `input()`, so a cell
+    (or `tests` box) can write plain `input("prompt")` -- exactly the
+    syntax the deck's own notes/fenced-code samples teach -- and have it
+    read from this cell's own `ui.text_input` elements instead of stdin
+    (which doesn't exist here; a real `input()` call would just hang/
+    error). Each successive call returns the next `text_input` element's
+    current value, in the order they're declared in `elements=[...]` --
+    `ui.slider`/`ui.button` are deliberately not included, since the user
+    asked specifically for `ui.text_input` boxes to be readable this way,
+    and a slider/button's own "value" (a float position, a click count)
+    isn't text a student would ever type at an `input()` prompt.
+
+    Bound into `session.namespace["input"]` for the duration of one call
+    (see `execute_cell`'s own `finally` restoring it afterward, same
+    save/restore pattern already used there for `__name__`) -- this
+    shadows the real builtin only for cells that actually reference
+    `input` by name (ordinary Python global lookup order: local ->
+    enclosing -> the cell's own `__globals__`, which *is*
+    `session.namespace` -- see `_compile_cell_function`'s own docstring
+    -- -> builtins), so it's never a global monkeypatch of
+    `builtins.input` itself.
+
+    Real `input()` echoes the prompt to stdout with no trailing newline,
+    then a real terminal echoes back whatever the user types; there's no
+    terminal here, so this writes the prompt AND the value together (a
+    plausible transcript of what that exchange would have looked like)
+    rather than just the value alone, so a cell that calls `input()`
+    multiple times still produces a readable, prompt-labeled stdout
+    transcript instead of a bare unlabeled sequence of values.
+    """
+    text_inputs = [e for e in elements if e.kind == "text_input"]
+    calls = {"count": 0}
+
+    def shim(prompt: str = "") -> str:
+        index = calls["count"]
+        calls["count"] += 1
+        if index >= len(text_inputs):
+            raise EOFError(
+                f"input(): cell {cell_name!r} only has {len(text_inputs)} ui.text_input element(s), "
+                f"but input() was called a {index + 1}{'st' if index == 0 else 'th'} time -- "
+                "add another ui.text_input to this cell's elements=[...] for this call to read from."
+            )
+        element = text_inputs[index]
+        value = str(element_instances.get(element.name, ElementInstance()).value or "")
+        print(f"{prompt}{value}")
+        return value
+
+    return shim
+
+
 def execute_cell(
     cell_name: str,
     source: str,
@@ -307,6 +358,8 @@ def execute_cell(
     turtle_element = _find_turtle_canvas(elements or [])
     _NO_PRIOR_NAME = object()
     prior_name = session.namespace.get("__name__", _NO_PRIOR_NAME)
+    _NO_PRIOR_INPUT = object()
+    prior_input = session.namespace.get("input", _NO_PRIOR_INPUT)
     try:
         # `cs`/`turtle` are framework-provided names every cell body can
         # call without its own import -- the compiled function's globals
@@ -326,6 +379,14 @@ def execute_cell(
             session.namespace.setdefault(name, value)
         if is_main:
             session.namespace["__name__"] = "__main__"
+        # Direct assignment, not setdefault like cs/turtle above -- each
+        # cell needs its OWN shim (bound to its own text_input elements in
+        # its own order), not whichever cell happened to run first's.
+        # Restored (or removed) in the `finally` below, same reasoning and
+        # same pattern as `__name__` just above: a per-call value that
+        # must never leak into an unrelated cell's own run through the
+        # shared `session.namespace`.
+        session.namespace["input"] = _make_input_shim(cell_name, elements or [], session.instances[cell_name].elements)
         fn, return_names = _compile_cell_function(source, session.namespace)
 
         # Only bind element values for elements that are also declared
@@ -362,6 +423,10 @@ def execute_cell(
                 session.namespace.pop("__name__", None)
             else:
                 session.namespace["__name__"] = prior_name
+        if prior_input is _NO_PRIOR_INPUT:
+            session.namespace.pop("input", None)
+        else:
+            session.namespace["input"] = prior_input
 
     if turtle_commands and turtle_element is not None:
         writes.append(cs.ElementWrite(element_name=turtle_element, kind="turtle", content=turtle_commands))
@@ -565,6 +630,7 @@ def run_tests(
     namespace: dict[str, object],
     elements: list[Element] | None = None,
     deck_imports: dict[str, object] | None = None,
+    element_instances: dict[str, ElementInstance] | None = None,
 ) -> dict[str, Any]:
     """Run a `tests` element's source (ARCHITECTURE.md section 3b) as
     plain Python statements -- ordinary `assert`s, not a
@@ -622,7 +688,14 @@ def run_tests(
     context is fresh for every test run (a clean `_TurtleState`,
     position reset to the origin) -- the test's drawing replaces
     whatever the cell's own last run drew, it never draws *on top of*
-    stale turtle state left over from the cell."""
+    stale turtle state left over from the cell.
+
+    `element_instances` (the owning cell's `CellInstance.elements`, if
+    given) similarly seeds a per-call `input()` shim reading from this
+    cell's own `ui.text_input` elements in order -- see
+    `_make_input_shim`'s own docstring for why this is a direct
+    assignment, not `setdefault` like `cs`/`turtle` above, and restored
+    afterward rather than left in `namespace` for whatever runs next."""
     turtle_element = _find_turtle_canvas(elements or [])
     result: dict[str, Any] = {"status": "pass", "message": "", "stdout": "", "stderr": ""}
     if turtle_element is not None:
@@ -633,6 +706,10 @@ def run_tests(
     stdout, stderr = io.StringIO(), io.StringIO()
     for name, value in {"cs": cs, "turtle": turtle, **(deck_imports or {})}.items():
         namespace.setdefault(name, value)
+    _NO_PRIOR_INPUT = object()
+    prior_input = namespace.get("input", _NO_PRIOR_INPUT)
+    if element_instances is not None:
+        namespace["input"] = _make_input_shim("<test>", elements or [], element_instances)
     test_globals = namespace
     try:
         with (
@@ -647,6 +724,12 @@ def run_tests(
     except Exception:  # noqa: BLE001 - any other exception is a test-runner-level error, not a pass/fail
         result["status"] = "error"
         result["message"] = traceback.format_exc()
+    finally:
+        if element_instances is not None:
+            if prior_input is _NO_PRIOR_INPUT:
+                namespace.pop("input", None)
+            else:
+                namespace["input"] = prior_input
 
     result["stdout"] = stdout.getvalue()
     result["stderr"] = stderr.getvalue()
@@ -682,7 +765,7 @@ def _run_and_apply_test(
     to reach the browser exactly like the cell's own output already
     does."""
     test_source = instance.elements[tests_element].value or ""
-    result = run_tests(test_source, namespace, elements, deck_imports=deck_imports)
+    result = run_tests(test_source, namespace, elements, deck_imports=deck_imports, element_instances=instance.elements)
     instance.elements[tests_element].content = {
         "status": result["status"],
         "message": result["message"],

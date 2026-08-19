@@ -320,6 +320,162 @@ def test_dunder_name_never_leaks_into_the_shared_namespace():
     assert "__name__" not in session.namespace
 
 
+def test_input_reads_a_single_text_input_element():
+    """Plain `input("prompt")` -- the exact syntax the chapter1 lecture
+    deck's own notes samples teach -- reads a ui.text_input element's
+    current value instead of hanging on real stdin (which doesn't exist
+    here)."""
+    app = App()
+
+    @app.cell(elements=[ui.text_input("name", default="Ada")])
+    def greet():
+        name = input("What is your name? ")
+        message = "Hello, " + name
+        return message
+
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+
+    assert session.instances["greet"].status == "idle", session.instances["greet"].error
+    assert session.namespace["message"] == "Hello, Ada"
+
+
+def test_input_reads_multiple_text_inputs_in_declaration_order():
+    """Two ui.text_input elements, two input() calls -- each call reads
+    the next one in the order they're declared in elements=[...], not
+    the order input() happens to be called relative to anything else."""
+    app = App()
+
+    @app.cell(
+        elements=[
+            ui.text_input("first_text", default="4"),
+            ui.text_input("second_text", default="9"),
+        ]
+    )
+    def add_two():
+        first = int(input("First number: "))
+        second = int(input("Second number: "))
+        total = first + second
+        return total
+
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+
+    assert session.instances["add_two"].status == "idle", session.instances["add_two"].error
+    assert session.namespace["total"] == 13
+
+
+def test_input_reflects_a_live_edited_text_input_value():
+    """Changing a text_input's value (the same on_element_changed path a
+    real textbox edit in the browser goes through) and re-running the
+    cell picks up the new value on the next input() call -- confirming
+    the shim reads the element's *current* value each run, not a value
+    captured once at cell-definition time."""
+    app = App()
+
+    @app.cell(elements=[ui.text_input("age_text", default="15")])
+    def parse_age():
+        age = int(input("Age: "))
+        return age
+
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+    assert session.namespace["age"] == 15
+
+    kernel.on_element_changed("parse_age", "age_text", "42", session)
+    assert session.namespace["age"] == 42
+    assert session.instances["parse_age"].status == "idle"
+
+
+def test_input_raises_a_clear_error_when_called_more_times_than_there_are_text_inputs():
+    """Calling input() a second time with only one ui.text_input element
+    declared should fail clearly -- not hang, not silently return an
+    empty string, not raise a bare unexplained EOFError."""
+    app = App()
+
+    @app.cell(elements=[ui.text_input("age_text", default="15")])
+    def parse_two():
+        first = input("First: ")
+        second = input("Second: ")  # no second text_input declared
+        return first, second
+
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+
+    assert session.instances["parse_two"].status == "error"
+    assert "only has 1 ui.text_input" in session.instances["parse_two"].error
+
+
+def test_input_shim_never_leaks_into_a_cell_with_no_text_inputs():
+    """Same "never leaks into the shared namespace" guarantee
+    __name__/is_main already has (see
+    test_dunder_name_never_leaks_into_the_shared_namespace above) --
+    input() must behave as the real builtin (raise, not silently
+    succeed with someone else's cached value) for a cell that never
+    declared any ui.text_input of its own, even after a different cell
+    with one has already run in the same Session."""
+    app = App()
+
+    @app.cell(elements=[ui.text_input("name", default="Ada")])
+    def with_input():
+        who = input("Name: ")
+        return who
+
+    @app.cell
+    def without_input():
+        # No ui.text_input declared on this cell at all -- input() here
+        # must behave like the real builtin (fail, since there's no
+        # stdin), never silently reuse with_input's own text_input.
+        try:
+            input("should not work here")
+            called_ok = True
+        except (EOFError, OSError):
+            called_ok = False
+        return called_ok
+
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+    kernel.run_all(session)
+
+    assert session.instances["with_input"].status == "idle", session.instances["with_input"].error
+    assert session.namespace["who"] == "Ada"
+    assert session.instances["without_input"].status == "idle", session.instances["without_input"].error
+    assert session.namespace["called_ok"] is False
+
+
+def test_input_also_works_inside_a_tests_element():
+    """`ui.tests` boxes run as ordinary Python against the owning cell's
+    own namespace (run_tests's own docstring) -- input() should be just
+    as readable there as inside the cell's own body, reading from the
+    same cell's text_input elements."""
+    from codeslides.deck import Cell, Deck
+
+    deck = Deck()
+    deck.add_cell(
+        Cell(
+            name="greet",
+            source=(
+                "def greet():\n"
+                "    name = input('Name: ')\n"
+                "    return name\n"
+            ),
+            elements=[ui.text_input("name", default="Ada"), ui.tests("unit", default="assert input('Name: ') == 'Ada'")],
+        )
+    )
+
+    kernel = Kernel(deck)
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    assert session.instances["greet"].status == "idle", session.instances["greet"].error
+    result = kernel.on_tests_edited("greet", "unit", "assert input('Name: ') == 'Ada'", session)
+    assert result["status"] == "pass", result["message"]
+
+
 def test_two_cells_with_unrelated_same_named_locals_both_load_and_run():
     """Regression guard for the exact examples/marchingSquares.py bug
     report: a cell with a `for x in range(...)` loop and an unrelated
