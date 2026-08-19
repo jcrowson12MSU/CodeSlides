@@ -86,97 +86,98 @@ special.
   is still contained to the `Cell`/`SlideShow` boundary, not a
   server-side concern.
 
-## Design decisions to make before implementing (flag to the user,
-## don't just pick silently — none of these have been confirmed with
-## the user yet; each entry below states this document's own
-## recommendation, not a decision anyone has signed off on)
+## Design decisions — confirmed by the user
 
-- **Terminology**: pick a name for the 4 sections up front and use it
-  consistently in code/CSS/ARIA labels — e.g. `top-left`/`top-right`/
-  `bottom-left`/`bottom-right`, or `q1`-`q4`, or keep `upper`/`lower`
-  and add `left`/`right` as an orthogonal axis
-  (`{row: 'upper'|'lower', col: 'left'|'right'}`). This document uses
-  "quadrant" generically; the actual identifiers should be decided
-  once, not drift between components. No recommendation here — purely
-  a naming call.
-- **What happens to a quadrant with zero tabs?** Today's empty-panel
-  behavior (`.cs-cell-panel-empty` — collapses to a thin header-only
-  strip, still a valid drop target, per an explicit prior scoping
-  decision) is the obvious precedent to extend to all 4 quadrants
-  symmetrically. *Recommendation*: do exactly that — same
-  collapse-to-strip treatment, same "still a valid drop target"
-  behavior, no new concept needed. Worth a screenshot check once
-  implemented that 3 empty quadrants collapsing to thin strips with
-  one quadrant claiming ~100% of the space still reads as intentional,
-  not broken, but no new design work should be needed to get there.
-- **What happens when every element AND the code editor end up in one
-  quadrant** (the user's own "or left out of the layout entirely"
-  implies a quadrant *can* end up empty, including — in principle —
-  every quadrant but one)? *Recommendation*: this should fall out of
-  the general 4-quadrant logic for free, landing on the same visual
-  result today's existing single-column states (all-hidden-code,
-  all-elements-empty) already produce — no new layout mode needed, but
-  worth an explicit check against those existing states during
-  verification (item 8) rather than assuming it just works.
-- **Two independent dividers, or one crosshair divider?** The request
-  says "the horizontal divider and vertical dividers are adjustable"
-  (plural "dividers", singular "divider" for horizontal) — read most
-  literally, this could mean either **one vertical divider (left/
-  right, spanning the full height) and one horizontal divider (top/
-  bottom, spanning the full width)**, i.e. a `+`-shaped crosshair,
-  *or* two independent horizontal dividers (one splitting the left
-  column, one splitting the right column, each at its own height) plus
-  one vertical divider between the columns. *Recommendation*: the
-  crosshair reading — it's simpler (one `panelFraction`-style value
-  for the horizontal split instead of two), and "the horizontal
-  divider" (singular) in the request reads more naturally as one
-  divider than two. This is a real behavior tradeoff either way:
-  crosshair means dragging the horizontal divider moves all 4 quadrant
-  boundaries' heights together (a tall canvas in one column forces the
-  same split height on unrelated content in the other column);
-  independent dividers avoid that coupling but cost a second stored
-  fraction and a second drag handle to build/maintain. **This is the
-  single highest-leverage question to confirm with the user before
-  writing any code** — it changes the CellLayout shape, the CSS
-  structure, and the drag-handle count.
-- **Minimum quadrant size / drag clamping**: today's `MIN_CODE_FRACTION`
-  (0.15) / `MAX_CODE_FRACTION` (0.85) constants clamp both existing
-  dividers. *Recommendation*: reuse these exact constants for both new
-  crosshair dividers too — simplest, and keeps the drag feel consistent
-  with today's two existing dividers. Low-stakes enough to decide
-  during implementation rather than needing separate sign-off.
+All four open questions from the first draft of this document are now
+settled. These are decisions, not recommendations — implement exactly
+as stated below, no further sign-off needed on these four points.
+
+- **Terminology**: `top-left` / `top-right` / `bottom-left` /
+  `bottom-right`. Use these identifiers consistently in code, CSS
+  class names, and ARIA labels — not `q1`-`q4`, not `upper`/`lower` +
+  `left`/`right` as a separate pair of axes.
+- **Empty quadrant**: collapses to a strip — same treatment
+  `.cs-cell-panel-empty` already gives an empty upper/lower section
+  today (a thin header-only row, still a valid drop target), extended
+  symmetrically to all 4 quadrants rather than just 2.
+- **Divider count and shape: 3 independent dividers, not a crosshair.**
+  - One vertical divider, full height, between the left column
+    (top-left + bottom-left) and the right column (top-right +
+    bottom-right).
+  - One horizontal divider, spanning only the left column's width,
+    between top-left and bottom-left.
+  - A second, independent horizontal divider, spanning only the right
+    column's width, between top-right and bottom-right.
+  - These do **not** need to sit at the same height — dragging the
+    left column's horizontal divider must not move the right column's
+    one, and vice versa. This is the opposite of a `+`-shaped
+    crosshair (which this document's first draft had recommended, but
+    the user explicitly rejected in favor of this): 3 independent
+    fractions/drag handles, not 2.
+- **Minimum quadrant size**: not a concern for this feature — no
+  clamping requirement to design around. `MIN_CODE_FRACTION`/
+  `MAX_CODE_FRACTION` (today's 0.15/0.85 constants) do not need to
+  carry over to the 3 new dividers; a quadrant collapsing to (or past)
+  zero width/height by dragging is acceptable and does not need
+  special-case handling beyond whatever an empty/near-empty flex
+  region already does naturally. If a dragged-to-nothing quadrant
+  still holds tabs (as opposed to genuinely empty, per the point
+  above), those tabs' own strip still needs to stay visible/reachable
+  — don't let "no minimum size" turn into "a quadrant with real
+  content becomes completely inaccessible," but this is a smaller
+  concern than clamping, not a reason to add clamping back.
 
 ## Build-ordered checklist
 
-- [ ] **1. Get explicit sign-off from the user on the quadrant
-  identifier scheme and the crosshair-vs-independent-dividers question**
-  (see "Design decisions" above) before writing any code — both are
-  foundational to every later step's naming/behavior, and the divider
-  question in particular is expensive to reverse once `CellLayout`'s
-  on-disk shape is chosen and saved decks start depending on it. This
-  document states a recommendation for each open question but nothing
-  has actually been confirmed with the user yet — don't treat the
-  recommendations above as decided.
+- [x] **1. Confirm the quadrant identifier scheme and divider design
+  with the user.** Done — see "Design decisions — confirmed by the
+  user" above: `top-left`/`top-right`/`bottom-left`/`bottom-right`
+  naming, empty quadrant collapses to a strip, 3 independent dividers
+  (not a crosshair), no minimum-quadrant-size clamping.
 
 - [ ] **2. Extend `CellLayout` with the new fields** (`protocol.ts` +
   `Cell.layout`'s own docstring in `deck.py`, documentation only — no
   runtime backend change needed, per "Why this is almost entirely a
   `Cell.tsx` change" above):
   - A quadrant-assignment map generalizing today's `tabPanel`/
-    `lower_tabs` (e.g. `tab_quadrant: Record<string, Quadrant>` instead
-    of the current boolean-ish `lower_tabs: string[]`) — needs a
-    migration/back-compat read path so an existing saved deck's
-    `lower_tabs` (list of tab names in the lower half) still loads
-    sensibly into whichever 2 of the 4 quadrants correspond to "lower"
-    under the new scheme, rather than silently discarding every
+    `lower_tabs` — e.g. `tab_quadrant: Record<string, Quadrant>` where
+    `Quadrant = 'top-left' | 'top-right' | 'bottom-left' |
+    'bottom-right'`, replacing the current boolean-ish
+    `lower_tabs: string[]`. Needs a migration/back-compat read path so
+    an existing saved deck's `lower_tabs` (list of tab names in the
+    lower half of the left-only column) still loads sensibly — under
+    the new scheme, everything previously "upper" maps to
+    `top-left`, everything previously "lower" maps to `bottom-left`
+    (today's layout only ever had a left column at all, so there's a
+    single unambiguous mapping — nothing needs to guess which decks'
+    tabs belong on the right instead), not silently discarding every
     deck's existing saved layout.
-  - Two new fraction fields for the crosshair divider positions
-    (vertical split, horizontal split) — `code_fraction`/
-    `panel_fraction` may be directly reusable if the quadrant scheme
-    keeps "code's own historical column" as one axis, or may need
-    renaming if the code editor becoming a tab makes "code_fraction"
-    a misleading name for what's now just "the vertical divider's
-    position" with no inherent tie to code at all.
+  - **Three** new fraction fields, one per independent divider (not
+    two, since the confirmed design is 3 independent dividers, not a
+    crosshair):
+    - The existing `code_fraction` is repurposed as the vertical
+      divider's own position (left column's width vs. right column's)
+      — still meaningful even though "code" is no longer tied to
+      either side specifically, but consider renaming to something
+      like `column_fraction` since "code_fraction" is misleading once
+      the code editor is just another draggable tab with no inherent
+      side.
+    - The existing `panel_fraction` becomes the **left column's own**
+      top/bottom divider position (`top-left` vs. `bottom-left`) —
+      keep this name, or rename to `left_panel_fraction` to
+      disambiguate from the new one below.
+    - A **new** field for the **right column's own** top/bottom
+      divider position (`top-right` vs. `bottom-right`) — e.g.
+      `right_panel_fraction`. This is the one genuinely new fraction;
+      the other two are renames/repurposings of existing fields.
+    - Migration note: an old saved layout only ever had one
+      `panel_fraction` (there was no right column to split at all) —
+      the migrated layout should apply that same saved value to the
+      left column's divider (`panel_fraction`/`left_panel_fraction`)
+      and let the right column's new divider
+      (`right_panel_fraction`) default to the browser's own default
+      (0.5, matching every other divider's un-saved default) rather
+      than inventing a value with no real precedent to migrate from.
   - A sentinel tab id for the code editor itself in the
     quadrant-assignment map (mirroring `'__output__'`'s own past
     precedent as a synthetic non-element tab id, now removed per the
@@ -195,9 +196,12 @@ special.
     only "tab" that isn't an `Element`, has no `meta.elements` entry,
     and needs its own removed/hidden semantics distinct from "no
     quadrant assigned" for every other tab, which by construction
-    always has *some* quadrant).
+    always has *some* quadrant). This one sub-question is still open
+    (not yet confirmed with the user) — everything else in this item
+    is settled.
 
-- [ ] **3. Rewrite `Cell.tsx`'s layout render as a true 2×2 grid**
+- [ ] **3. Rewrite `Cell.tsx`'s layout render as 4 independent
+  quadrants**
   (replacing today's `.cs-cell-side` / `.cs-resize-handle` /
   `.cs-cell-code` three-part row):
   - Four `renderPanel`-equivalent quadrants instead of two, each an
@@ -207,20 +211,34 @@ special.
     quadrant type, and its drop handler must accept a drag origin from
     any of the other 3, not just "the other one" the current 2-panel
     version assumes.
-  - One vertical crosshair divider (left/right, full height) and one
-    horizontal crosshair divider (top/bottom, full width), each
-    reusing the existing `startResizing`/`handleResizeMove`/
-    `stopResizing` pattern (a `useRef` for the drag flag, a
-    `pointermove`/`pointerup` `window` listener pair, `emitLayoutChange`
-    fired once on drag end) — this is the same shape `codeFraction`,
-    `panelFraction`, and `extraCodeFraction` each already independently
-    reimplement in the current file, so this step is a good moment to
-    also **extract that repeated pattern into one shared hook/helper**
+  - **Three independent dividers, confirmed by the user, not a
+    crosshair**: one vertical divider (left column vs. right column,
+    full height), one horizontal divider spanning only the left
+    column (`top-left` vs. `bottom-left`), and a separate horizontal
+    divider spanning only the right column (`top-right` vs.
+    `bottom-right`) — dragging either horizontal divider must not
+    move the other one or the vertical one. Each reuses the existing
+    `startResizing`/`handleResizeMove`/`stopResizing` pattern (a
+    `useRef` for the drag flag, a `pointermove`/`pointerup` `window`
+    listener pair, `emitLayoutChange` fired once on drag end) — this
+    is the same shape `codeFraction`, `panelFraction`, and
+    `extraCodeFraction` each already independently reimplement in the
+    current file, so with a 4th and (for the new right-column divider)
+    5th near-identical copy needed, this step is a good moment to
+    **extract that repeated pattern into one shared hook/helper**
     (e.g. `useDragDivider(axis, containerRef, onSettle)`) rather than
-    writing a 4th near-identical copy — not required for correctness,
-    but the current file already has 3 near-verbatim copies of this
-    exact drag machinery and a 4th makes the duplication cost of *not*
-    extracting it much harder to justify.
+    writing yet more copies — not required for correctness, but the
+    duplication cost of *not* extracting it is much harder to justify
+    once there are 5 near-verbatim copies instead of today's 3. The
+    user's "don't worry about a minimum quadrant size" instruction was
+    given in the context of these same 3 dividers (the vertical one
+    is the repurposed `codeFraction`, described in item 2 above) — so
+    no `MIN_CODE_FRACTION`/`MAX_CODE_FRACTION` clamping on any of the
+    3 left/right, top-left/bottom-left, top-right/bottom-right
+    dividers. `extraCodeFraction` (the title-slide-only setup/main
+    editor split, a 4th, separate divider unrelated to the quadrant
+    system — see item 4) is unaffected either way and keeps its own
+    existing clamping regardless of how item 4 resolves.
   - The code editor renders as one of the 4 quadrants' tab content
     (`renderTabContent`'s dispatch gains a case for the code-editor
     sentinel/field, returning a `<CodeEditor>` with the same props the
@@ -269,9 +287,12 @@ special.
 
 - [ ] **6. CSS**: extend `App.css`'s existing panel/resize-handle rules
   (`.cs-cell-panels`, `.cs-cell-panel`, `.cs-cell-panel-empty`,
-  `.cs-panel-resize-handle`, `.cs-resize-handle`) to a 2×2 CSS grid (or
-  nested flex, matching whichever the crosshair-divider implementation
-  in item 3 ends up using) — reusing the existing empty-quadrant
+  `.cs-panel-resize-handle`, `.cs-resize-handle`) to a nested-flex
+  layout matching the 3-independent-dividers design (a top-level
+  left/right flex row, each column independently a top/bottom flex
+  column with its own divider — NOT a single CSS grid with one shared
+  row-height, since the two columns' horizontal dividers must be able
+  to sit at different heights) — reusing the existing empty-quadrant
   collapse treatment (`.cs-cell-panel-empty`) symmetrically across all
   4 quadrants, not just the 2 that have it today. Also needs the
   narrow-screen stacking `@media` rule (mentioned in `Cell.tsx`'s own
@@ -298,14 +319,21 @@ special.
   established verification convention — a real running server +
   Playwright, not just a build/lint check) across: dragging every
   combination of element-tab and code-editor-tab into every one of the
-  4 quadrants; both crosshair dividers independently; an empty
-  quadrant's collapse-and-still-droppable behavior in all 4 positions,
-  not just 2; the code editor removed from every quadrant entirely (a
-  cell with zero visible code, distinct from `hide_code=True`); the
-  title-slide `extraCodeAbove` case (whichever resolution item 4
-  reaches); Save + reload round-tripping a saved layout exactly (all 4
-  quadrants' tab assignments, both divider positions, which tab is
-  default); and an existing pre-this-feature saved deck (e.g.
-  `examples/marchingSquares.py`, `Lectures/Chapters/chapter1.py`)
-  loading with its old 2-section layout correctly migrated per item 7,
-  not reset to defaults or crashing.
+  4 quadrants; all 3 dividers independently, specifically confirming
+  the left column's horizontal divider and the right column's
+  horizontal divider can be dragged to *different* heights without
+  affecting each other or the vertical divider (this is the one
+  behavior that most directly distinguishes the confirmed
+  3-independent-dividers design from the rejected crosshair
+  alternative, so it's the most important single thing to verify);
+  an empty quadrant's collapse-and-still-droppable behavior in all 4
+  positions, not just 2; the code editor removed from every quadrant
+  entirely (a cell with zero visible code, distinct from
+  `hide_code=True`); the title-slide `extraCodeAbove` case (whichever
+  resolution item 4 reaches); Save + reload round-tripping a saved
+  layout exactly (all 4 quadrants' tab assignments, all 3 divider
+  positions, which tab is default); and an existing pre-this-feature
+  saved deck (e.g. `examples/marchingSquares.py`,
+  `Lectures/Chapters/chapter1.py`) loading with its old 2-section
+  layout correctly migrated per item 7, not reset to defaults or
+  crashing.
