@@ -59,7 +59,14 @@ from codeslides import App, cs, ui
 app = App()
 
 
-@app.cell(hide_def=True, elements=[ui.notes("notes")])
+@app.cell(
+    instance='static',
+    elements=[
+        ui.notes('notes'),
+    ],
+    hide_def=True,
+    hide_code=True,
+)
 def intro():
     """# Introduction to Python
 
@@ -73,11 +80,13 @@ Use **Slides** to step through the lecture in order, or switch to
 
 
 @app.cell(
-    instance="editable",
+    instance='editable',
     elements=[
-        ui.notes("notes"),
-        ui.text_input("name", default="Ada"),
+        ui.notes('notes'),
+        ui.text_input('name', default='Ada'),
+        ui.tests('Input, Output, and Process', default=''),
     ],
+    hide_code=True,
 )
 def how_programs_work(name):
     """## How Programs Work: Input → Process → Output
