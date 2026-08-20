@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { CODE_TAB_ID } from '../protocol'
 import { isTestElement, type ElementMeta } from './elementMeta'
 
 // Every element kind an author can pick from the "add element" dropdown,
@@ -149,7 +150,10 @@ export function EditCellPanel({
   const [iframeHeightDrafts, setIframeHeightDrafts] = useState<Record<string, string>>({})
 
   const existingNames = new Set(elements.map((e) => e.name))
-  const canAdd = newElementName.trim().length > 0 && !existingNames.has(newElementName.trim())
+  const canAdd =
+    newElementName.trim().length > 0 &&
+    newElementName.trim() !== CODE_TAB_ID &&
+    !existingNames.has(newElementName.trim())
 
   function handleRenameSubmit(event: React.FormEvent) {
     event.preventDefault()
@@ -340,7 +344,7 @@ export function EditCellPanel({
                     if (event.target.checked) onSetDefaultTab(tab)
                   }}
                 />
-                {tab}
+                {tab === CODE_TAB_ID ? 'Code' : tab}
               </label>
             </li>
           ))}

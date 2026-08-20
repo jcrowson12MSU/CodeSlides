@@ -422,10 +422,57 @@ stated below, no further sign-off needed on these points.
     means at the data-model level — item 3's quadrant render logic
     depends on this being settled, not the other way around.
 
-- [ ] **3. Rewrite `Cell.tsx`'s layout render as 4 independent
+- [x] **3. Rewrite `Cell.tsx`'s layout render as 4 independent
   quadrants**
   (replacing today's `.cs-cell-side` / `.cs-resize-handle` /
-  `.cs-cell-code` three-part row):
+  `.cs-cell-code` three-part row). **Done**: `Cell.tsx` now renders two
+  `.cs-cell-column`s (left/right), each independently a top/bottom flex
+  column of 2 quadrants; `renderQuadrant` (was `renderPanel`) is a drop
+  target for a tab dragged from ANY of the other 3 quadrants, not just
+  "the other one"; the code editor is `CODE_TAB_ID` in the same
+  `tab_quadrant` pool as every element, defaulting to `top-right`,
+  entirely absent from `allTabs` when `hideCode` or "no primary editor"
+  (item 2b); a new `useDragDivider(axis, onMove, onSettle)` hook
+  replaces 2 of the 3 hand-rolled resize-handler copies (the 3rd,
+  `extraCodeFraction`'s, was deliberately left alone since item 4
+  deletes it outright); whole-column collapse (`leftColumnEmpty`/
+  `rightColumnEmpty`, both of a column's own quadrants empty) collapses
+  that column to a `.cs-cell-column-empty` thin strip and hides its own
+  internal divider, plus the vertical divider when either column is
+  collapsed; `extraCodeAbove` (pre-item-4 title slide composition) still
+  works, now composed into whichever quadrant the code tab currently
+  occupies via a `.cs-cell-extra-code-wrap`. Item 7's migration folded
+  in here (not deferred): `tab_quadrant` seeds from old `lower_tabs`
+  (upper→top-left, lower→bottom-left) when absent, `column_fraction`
+  seeds from `1 - code_fraction`, `left_panel_fraction` from
+  `panel_fraction`, `right_panel_fraction` has no old precedent and
+  defaults to 0.5 — a current client only ever writes the new-shape
+  fields from here on. Also fixed two real gaps found while implementing
+  this: `EditCellPanel.tsx`'s `canAdd` was missing the reserved-
+  `CODE_TAB_ID`-name guard item 2b's own writeup claimed was already
+  done (backend guard was present, frontend wasn't); the "Default view
+  item" list now shows "Code" instead of the raw `__code__` sentinel.
+  App.css updated to match (`.cs-cell-column`/`.cs-cell-column-empty`
+  replacing `.cs-cell-side`/`.cs-cell-code`, the Slides-view scroll-lock
+  rules generalized from a fixed code=right/elements=left assumption to
+  apply to either column, the narrow-screen `@media` stack redesigned
+  for 4 quadrants instead of 2). Verified in a real browser
+  (Playwright, `examples/live_demo.py`): dragging the code tab and
+  every element tab between all 4 quadrants works; an emptied quadrant
+  collapses to a droppable strip; emptying both of a column's own
+  quadrants collapses the whole column (confirmed via computed
+  bounding-box width ~0) and hides its own divider and the vertical
+  one; dragging a tab back into a collapsed column re-expands it and
+  restores both dividers; the left column's own horizontal divider and
+  the right column's own horizontal divider drag to different
+  fractions completely independently (measured as a fraction of each
+  column's own height, not raw pixel position, since `align-items:
+  stretch` reflows the row's total height as content moves around) —
+  this was the single most important behavior distinguishing the
+  confirmed 3-independent-dividers design from the rejected crosshair
+  alternative, and it holds. `tsc -b` + `npm run build` clean, all 566
+  backend tests pass unchanged (this item is frontend-only). Sub-details
+  below are the as-implemented reference, not still-open work:
   - Four `renderPanel`-equivalent quadrants instead of two, each an
     independent drag source and drop target for any tab (element or
     code editor) dragged from *any* other quadrant — `moveTabToPanel`
@@ -612,7 +659,7 @@ stated below, no further sign-off needed on these points.
     many `tests` elements a cell can carry, matching today's actual
     (unenforced-limit) behavior.
 
-- [ ] **6. CSS**: extend `App.css`'s existing panel/resize-handle rules
+- [x] **6. CSS**: extend `App.css`'s existing panel/resize-handle rules
   (`.cs-cell-panels`, `.cs-cell-panel`, `.cs-cell-panel-empty`,
   `.cs-panel-resize-handle`, `.cs-resize-handle`) to a nested-flex
   layout matching the 3-independent-dividers design (a top-level
@@ -636,9 +683,28 @@ stated below, no further sign-off needed on these points.
   comments, currently collapsing the 2-column layout to a single
   column below some width) redesigned for a 4-quadrant grid, since
   "stack 2 things vertically" doesn't generalize to "stack 4 things"
-  without deciding an order.
+  without deciding an order. **Done as part of item 3** (implemented
+  together since the new classes were needed for item 3's JSX to render
+  at all, not deferred separately): `.cs-cell-side`/`.cs-cell-code`
+  replaced by `.cs-cell-column` (used for both columns symmetrically);
+  `.cs-cell-column-empty` is the new whole-column collapse class
+  (`flex-basis: 0 !important`, `overflow: hidden`); `.cs-cell-panels`
+  deleted (quadrants render directly inside `.cs-cell-column`, which is
+  already the vertical flex container `.cs-cell-panels` used to be);
+  the Slides-view scroll-lock rules (`.cs-slides-locked .cs-slide
+  .cs-cell-code .cm-editor` etc.) generalized to `.cs-cell-column`
+  broadly instead of assuming code=right/elements=left, since the code
+  tab can now land in either column; the narrow-screen `@media
+  (max-width: 800px)` rule stacks the two `.cs-cell-column`s in DOM
+  order (top-left, bottom-left, top-right, bottom-right) rather than
+  hiding all dividers, since each column's own internal horizontal
+  divider is still meaningful once stacked (only the vertical one
+  becomes meaningless). Not independently re-verified beyond item 3's
+  own browser check (same commit, same verification pass) — no
+  narrow-viewport screenshot taken specifically; flag for item 8 if a
+  narrow-screen regression ever surfaces.
 
-- [ ] **7. Migration path for existing saved layouts.** Every deck
+- [x] **7. Migration path for existing saved layouts.** Every deck
   that has ever dragged a tab to the lower section or resized either
   existing divider has a `Cell.layout` dict on disk using the *old*
   field names (`code_fraction`, `panel_fraction`, `lower_tabs`,
@@ -650,7 +716,31 @@ stated below, no further sign-off needed on these points.
   confirm this reads sensibly rather than assuming) — this is
   functionally required, not optional polish, since `chapter1.py` and
   every other example deck in this repo already has saved layouts that
-  must not silently break or reset when this ships.
+  must not silently break or reset when this ships. **Done as part of
+  item 3's own `Cell.tsx` lazy-`useState` initializers** (not a
+  separate migration pass — the new fields' seed logic IS the
+  migration): `tab_quadrant` falls back to mapping old `lower_tabs`
+  entries to `bottom-left` (everything else implicitly `top-left`, via
+  `quadrantOf`'s own default) when `tab_quadrant` itself is absent;
+  `column_fraction` falls back to `1 - code_fraction` (inverted, since
+  the old field measured the right/code column's share and the new one
+  measures the left column's); `left_panel_fraction` falls back to the
+  old `panel_fraction` directly; `right_panel_fraction` has no old-shape
+  precedent and defaults to 0.5, same as every other never-saved
+  divider. **Verified against `examples/marchingSquares.py`'s real
+  on-disk old-shape layouts** (`markCorners`:
+  `{'code_fraction': 0.5, 'panel_fraction': 0.5, 'lower_tabs':
+  ['Canvas']}`; `cell_4`: same plus `'default_tab': 'Contents'`) in a
+  real browser: both cells' `Canvas`/`canvas` tab correctly lands in
+  `bottom-left`, every other element defaults to `top-left` (`cell_4`'s
+  saved `default_tab: 'Contents'` correctly still selects `Contents` as
+  the active tab there), and `Code` — which had no saved position under
+  the old shape at all — correctly defaults to `top-right` in both
+  cells. Whole deck (9 cells, including turtle-canvas viewers and
+  markdown notes) loads and renders with zero console errors. Item 8's
+  own broader verification pass can still re-check this alongside
+  everything else, but the specific migration-path risk this item was
+  scoped around is confirmed working, not just reasoned through.
 
 - [ ] **8. Verify in a real browser** (per this project's own
   established verification convention — a real running server +

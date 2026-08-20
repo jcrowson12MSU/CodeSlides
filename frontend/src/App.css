@@ -304,18 +304,17 @@ button.cs-save-button {
   padding: 0 0.35rem;
 }
 
-/* TODO.md #29: `align-items: stretch` (was `flex-start`) so the code
-   column always matches the elements column's own natural height,
-   rather than each capping independently -- previously a fixed
-   `max-height: 300px` on the code editor (below) left it looking
-   visibly short next to a much taller elements column (a turtle
-   canvas + slider + notes routinely runs 700px+), and vice versa for a
-   short cell where the code was the taller side. `.cs-cell-side` has
-   no height cap of its own in the flat Cells view, so it's the one
-   that ends up driving the row's height in practice; `.cs-cell-code`
-   stretching to match and using `height: 100%` (not `max-height`)
-   below is what makes the code editor track that instead of a fixed
-   number. */
+/* TODO.md #29: `align-items: stretch` so the two `.cs-cell-column`s
+   always match each other's tallest natural height, rather than each
+   capping independently -- a fixed `max-height: 300px` on the code
+   editor (below) would otherwise leave it looking visibly short next to
+   a much taller elements column (a turtle canvas + slider + notes
+   routinely runs 700px+), and vice versa for a short cell where the
+   code was the taller side. Neither column has a height cap of its own
+   in the flat Cells view, so whichever is taller ends up driving the
+   row's height in practice; the code editor stretching to match and
+   using `height: 100%` (not `max-height`) below is what makes it track
+   that instead of a fixed number. */
 .cs-cell-body {
   display: flex;
   align-items: stretch;
@@ -323,38 +322,64 @@ button.cs-save-button {
   margin: 0.5rem 0;
 }
 
-/* View items (input/viewer elements, output -- `.cs-cell-side`) render
-   in the left column; the code editor is the only thing in the right
-   column (per the user's request to swap the two) -- both the flat
-   Cells view and the Slides view render through this same Cell
-   component, so this layout applies to both. `flex-basis` is set inline
-   per-cell (Cell.tsx's codeFraction, TODO.md #20's resizable divider) --
-   flex-grow/shrink are 0 here so that inline basis is the actual
-   rendered width, not just a starting point flexbox is free to
-   redistribute. `codeFraction` still measures the *code* column's own
-   share of the row regardless of which visual side it's on -- only its
-   position (`.cs-cell-side` first, then `.cs-resize-handle`, then
-   `.cs-cell-code`, in Cell.tsx's own DOM order) changed, not its
-   fraction's meaning. */
-.cs-cell-code {
+/* CELL_QUADRANT_LAYOUT_TODO.md item 3/6 -- one top-level left/right flex
+   row (`.cs-cell-body`, above) of two `.cs-cell-column`s, each
+   independently a top/bottom flex column holding its own two quadrants
+   (Cell.tsx's `renderQuadrant`) plus its own draggable divider -- NOT a
+   single CSS grid with one shared row-height, since the left and right
+   columns' own horizontal dividers must be able to sit at different
+   heights (the confirmed 3-independent-dividers design, not a
+   crosshair). Both the flat Cells view and the Slides view render
+   through this same Cell component, so this layout applies to both.
+   `flex-basis` is set inline per-cell (Cell.tsx's `columnFraction`/
+   `1 - columnFraction`) -- flex-grow/shrink are 0 here so that inline
+   basis is the actual rendered width, not just a starting point flexbox
+   is free to redistribute. */
+.cs-cell-column {
   flex: 0 0 auto;
   min-width: 0;
   min-height: 0;
   display: flex;
-  /* Column, not the default row -- normally there's just one CodeEditor
-     here so direction never mattered, but the title slide's own
-     composition (Cell.tsx's `extraCodeAbove`, SlideShow.tsx) stacks a
-     second one above it, and both need to lay out top-to-bottom
-     sharing this column's width, not side-by-side squeezing it. */
   flex-direction: column;
   gap: 0.5rem;
 }
 
+/* Whole-column collapse (confirmed follow-up decision): a column with
+   zero tabs across BOTH of its own quadrants collapses to a single thin
+   strip and claims none of the row's width -- Cell.tsx omits the inline
+   `flexBasis` entirely when this class is applied, so this fixed
+   `flex-basis: 0` (with `overflow: hidden` so nothing inside it, e.g. a
+   lingering CodeMirror instance, forces the column wider than that)
+   takes over instead. Direct generalization of `hideCode`'s own
+   pre-existing `flexBasis: '100%'`-on-the-other-column precedent, made
+   symmetric (either column can be the one that collapses) and one level
+   more granular (computed from the column's own two quadrants'
+   emptiness, not an explicit author-set flag). */
+.cs-cell-column-empty {
+  flex: 0 0 0;
+  flex-basis: 0 !important;
+  min-width: 0;
+  overflow: hidden;
+  gap: 0;
+}
+
 /* Wraps `extraCodeAbove`/the main CodeEditor when both are present
-   (Cell.tsx) -- same "flex: 0 0 auto, explicit % basis, min-height: 0"
-   shape as `.cs-cell-panels`' own upper/lower sections, so each of the
-   two stacked editors respects `extraCodeFraction`'s drag-set share of
-   height instead of both just growing to fit their own content. */
+   (Cell.tsx, pre-item-4 title-slide composition) -- a plain column flex
+   container the two `.cs-cell-extra-code` halves and their own draggable
+   divider live in, filling whatever quadrant currently holds the code
+   tab. Deleted alongside `extraCodeAbove` itself when item 4 lands. */
+.cs-cell-extra-code-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 0.5rem;
+}
+
+/* Same "flex: 0 0 auto, explicit % basis, min-height: 0" shape as each
+   quadrant's own `.cs-cell-panel`, so each of the two stacked editors
+   respects `extraCodeFraction`'s drag-set share of height instead of
+   both just growing to fit their own content. */
 .cs-cell-extra-code {
   flex: 0 0 auto;
   min-width: 0;
@@ -362,17 +387,8 @@ button.cs-save-button {
   display: flex;
 }
 
-.cs-cell-side {
-  flex: 0 0 auto;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-/* The draggable divider between .cs-cell-code and .cs-cell-side. A
-   narrow visible strip (2px) with a much wider invisible hit area (the
+/* The draggable divider between the left and right columns. A narrow
+   visible strip (2px) with a much wider invisible hit area (the
    ::before pseudo-element, positioned via a negative inset) so it's
    actually easy to grab without needing pixel-perfect precision. */
 .cs-resize-handle {
@@ -427,23 +443,23 @@ body.cs-resizing {
   font-size: 18px;
 }
 
-/* `height: 100%` (not `max-height`) is what makes the editor track
-   `.cs-cell-side`'s natural height via the `stretch` chain above,
+/* `height: 100%` (not `max-height`) is what makes the editor track its
+   own `.cs-cell-column`'s natural height via the `stretch` chain above,
    instead of capping at an independent fixed number. `min-height: 0`
    on every flex ancestor down to here is required for a flex child to
    actually respect a height smaller than its content wants -- without
    it, `height: 100%` is silently ignored and the editor grows to fit
    all its lines regardless, same classic flexbox gotcha the resizable
-   divider (item 20) already had to work around for width -- and
-   turning both `.cs-code-editor` and `.cm-editor` themselves into flex
-   items (needed for that height-stretch to propagate) reintroduced
-   that exact width-side gotcha on top of it: without `min-width: 0`
-   here too, they refused to shrink below CodeMirror's unwrapped-line
-   content width and spilled ~200px into `.cs-cell-side` regardless of
-   the resizable divider's own width split (reported bug: code editors
-   overflowing into the right column). A 100px floor keeps a one-line
-   cell from being squashed illegibly thin next to an empty elements
-   column. */
+   dividers (item 20, and the 3 quadrant dividers item 3 added) already
+   had to work around for width -- and turning both `.cs-code-editor`
+   and `.cm-editor` themselves into flex items (needed for that
+   height-stretch to propagate) reintroduced that exact width-side
+   gotcha on top of it: without `min-width: 0` here too, they refused to
+   shrink below CodeMirror's unwrapped-line content width and spilled
+   ~200px into the neighboring column regardless of the resizable
+   divider's own width split (reported bug: code editors overflowing
+   into the right column). A 100px floor keeps a one-line cell from
+   being squashed illegibly thin next to an empty elements column. */
 .cs-code-editor .cm-editor {
   height: 100%;
   min-height: 100px;
@@ -511,21 +527,22 @@ body.cs-resizing {
 
 /* `min-height: 0` alone only lets this box be *sized* smaller than its
    content wants -- it does nothing to *clip* content that's still
-   taller than the box once the upper/lower divider (Cell.tsx's
-   `panelFraction`) is dragged past a view item's own natural size (a
-   400px turtle canvas, a tall image, a long notes block). Without
-   `overflow-y: auto` here, that oversized content just kept rendering
-   past this box's own bottom edge and visually bled into whichever
-   panel was drawn below it -- reported bug, reproduced by shrinking the
-   upper panel below a turtle canvas's height. Scoped to each panel's own
-   content independently (not just the outer `.cs-cell-side`, which
-   already scrolls as a whole in Slides view via a separate, coarser
-   rule further down) so a squeeze on one panel never affects the
-   other's own scroll position. `overflow-x: hidden` alongside it, not
-   `auto` -- a wide canvas's own width already resizes its *column*
-   (Cell.tsx's `codeFraction`, the other divider), so a horizontal
-   scrollbar here would just be a second, redundant way to reach content
-   the width-side divider already exists to reveal. */
+   taller than the box once its column's own horizontal divider
+   (Cell.tsx's `leftPanelFraction`/`rightPanelFraction`) is dragged past
+   a view item's own natural size (a 400px turtle canvas, a tall image, a
+   long notes block). Without `overflow-y: auto` here, that oversized
+   content just kept rendering past this box's own bottom edge and
+   visually bled into whichever quadrant was drawn below it -- reported
+   bug, reproduced by shrinking the upper panel below a turtle canvas's
+   height. Scoped to each quadrant's own content independently (not just
+   the outer `.cs-cell-column`, which already scrolls as a whole in
+   Slides view via a separate, coarser rule further down) so a squeeze on
+   one quadrant never affects another's own scroll position.
+   `overflow-x: hidden` alongside it, not `auto` -- a wide canvas's own
+   width already resizes its *column* (Cell.tsx's `columnFraction`, the
+   vertical divider), so a horizontal scrollbar here would just be a
+   second, redundant way to reach content the width-side divider already
+   exists to reveal. */
 .cs-cell-tab-content {
   display: flex;
   flex-direction: column;
@@ -536,25 +553,18 @@ body.cs-resizing {
   overscroll-behavior: contain;
 }
 
-/* Two independent, stacked sections within `.cs-cell-side` (per the
-   user's request) -- each is its own drop target a view-item tab can be
-   dragged into from the other, and each shows its own selected tab's
-   content simultaneously with the other's. `.cs-cell-panels` is the
-   vertical flex container the two `.cs-cell-panel`s and the draggable
-   divider between them all live in; `min-height: 0` (needed at every
-   flex-ancestor level for a child to shrink below its content's
-   intrinsic size, same gotcha `.cs-code-editor`'s own comment already
-   documents for the horizontal split) lets each panel's own scrollable
-   content actually respect the fraction it's been given instead of
-   forcing the whole column to grow to fit everything. */
-.cs-cell-panels {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 0;
-  gap: 0.5rem;
-}
-
+/* Each column's own two quadrants (top/bottom, e.g. top-left/bottom-left)
+   render directly inside `.cs-cell-column` (above) -- no separate
+   wrapper needed the way the old 2-section layout's `.cs-cell-panels`
+   had, since `.cs-cell-column` itself is already the vertical flex
+   container with its own `min-height: 0` (needed at every flex-ancestor
+   level for a child to shrink below its content's intrinsic size, same
+   gotcha `.cs-code-editor`'s own comment already documents for the
+   horizontal split) -- lets each quadrant's own scrollable content
+   actually respect the fraction it's been given instead of forcing the
+   whole column to grow to fit everything. Each quadrant is its own drop
+   target a tab can be dragged into from any of the other 3, and shows
+   its own selected tab's content simultaneously with the others'. */
 .cs-cell-panel {
   display: flex;
   flex-direction: column;
@@ -694,19 +704,32 @@ body.cs-resizing-vertical {
 }
 
 @media (max-width: 800px) {
+  /* 4 quadrants collapse to a single stacked column of up to 4 sections
+     on a narrow screen, in DOM order: top-left, bottom-left, top-right,
+     bottom-right (`.cs-cell-column`'s own internal top/bottom order is
+     preserved within each half, so this reads as "left column's own
+     stack, then right column's own stack" rather than an arbitrary
+     shuffle). `.cs-cell-body` stacking the two `.cs-cell-column`s
+     vertically is what produces this -- each column keeps its own
+     internal `flex-direction: column` unchanged. */
   .cs-cell-body {
     flex-direction: column;
   }
 
-  /* The resizable split (Cell.tsx's inline flex-basis, TODO.md #20) is a
+  /* The column-width resizable split (Cell.tsx's `columnFraction`) is a
      horizontal-width concept -- meaningless once the columns stack
      vertically, so it's overridden back to full width here, and the
-     drag handle (a horizontal cursor grab) is hidden rather than shown
-     sideways. */
-  .cs-cell-code,
-  .cs-cell-side {
+     vertical divider (a horizontal cursor grab) is hidden rather than
+     shown sideways. Each column's OWN internal top/bottom divider stays
+     meaningful and visible here (still a real vertical stack within
+     that column), unlike the vertical divider between the two columns. */
+  .cs-cell-column {
     flex-basis: auto !important;
     width: 100%;
+  }
+
+  .cs-cell-column-empty {
+    display: none;
   }
 
   .cs-resize-handle {
@@ -871,7 +894,7 @@ body.cs-resizing-vertical {
      content's intrinsic size. The canvas itself stays in normal flow
      (no `position: absolute`) -- this slot's own natural height is
      meant to be driven by the canvas the way `.cs-cell-body`'s comment
-     describes for `.cs-cell-side` generally, and taking it out of flow
+     describes for its own columns generally, and taking it out of flow
      broke that (confirmed by hand: the whole row collapsed to the code
      editor's own, usually much shorter, natural height instead). */
   flex: 1 1 auto;
@@ -1360,7 +1383,7 @@ button.cs-add-cell-button {
    column` on `.cs-cell` propagates the stretch down through
    `.cs-cell-header` (kept to its natural size) to `.cs-cell-body`,
    which is what item 29's existing `align-items: stretch` chain
-   ultimately sizes `.cs-cell-code`/`.cs-cell-side` from. */
+   ultimately sizes both `.cs-cell-column`s from. */
 .cs-slide {
   min-height: var(--cs-slide-available-height, 0);
 }
@@ -1387,7 +1410,7 @@ button.cs-add-cell-button {
 }
 
 /* TODO.md #29: no `max-height` override here anymore -- the base rule's
-   `height: 100%` (stretched to match `.cs-cell-side`) already applies
+   `height: 100%` (stretched to match the sibling column) already applies
    in Slides view too via the same `.cs-cell-body` flex-stretch. The
    `55vh` cap that keeps a locked Slides-view page from overflowing the
    viewport (TODO.md #28) is scoped to `.cs-slides-locked` specifically,
@@ -1402,16 +1425,20 @@ button.cs-add-cell-button {
 }
 
 /* TODO.md #28: in Slides view, the screen itself must not move -- only a
-   cell's own code editor / elements column scrolls internally. Confirmed
-   scope with the user: the whole window (header, slide toolbar, slide
-   title) stays fixed, and *each* cell on a multi-cell slide gets its own
+   cell's own quadrants scroll internally. Confirmed scope with the
+   user: the whole window (header, slide toolbar, slide title) stays
+   fixed, and *each* cell on a multi-cell slide gets its own
    independently-scrollable height rather than the slide's cells sharing
    one scroll region. `body.cs-slides-locked` (toggled in App.tsx,
    scoped to Slides view only -- Cells view is completely untouched)
    removes page-level scroll; `.cs-code-editor .cm-scroller` already
-   scrolls internally (TODO.md #7), so only `.cs-cell-side` (the
-   elements/output column, previously unbounded height) needed a
-   matching `max-height`/`overflow-y`. `vh`-based caps rather than a
+   scrolls internally (TODO.md #7), so only `.cs-cell-column` (previously
+   unbounded height) needed a matching `max-height`/`overflow-y`.
+   CELL_QUADRANT_LAYOUT_TODO.md item 3: since the code editor is now a
+   tab that can land in either column (not fixed to a "code" column on
+   the right), both `.cs-cell-column`s -- and any `.cm-editor` inside
+   either of them -- get this same cap, rather than one selector
+   assuming code=right/elements=left. `vh`-based caps rather than a
    precise "remaining space" calculation -- simpler, and conservative
    enough in practice that the header/toolbar/title above it aren't
    pushed off without their own scroll. */
@@ -1446,22 +1473,22 @@ body.cs-slides-locked {
    corrected). Already accounts for the slide title's height (if
    shown), the header-collapsed state, and all the cell's own
    padding/margin -- no further adjustment needed here. */
-.cs-slides-locked .cs-slide .cs-cell-code .cm-editor {
+.cs-slides-locked .cs-slide .cs-cell-column .cm-editor {
   max-height: var(--cs-cell-content-available-height, 55vh);
 }
 
 /* `overscroll-behavior: contain` on both scrollers stops scroll
    chaining -- without it, a wheel scroll that reaches an inner
-   scroller's own limit (start/end of the code, or the elements column)
-   still propagates the remaining delta to the page underneath, moving
-   it despite `overflow: hidden` above; caught this by hand (the page
-   visibly shifted a few dozen pixels once an internal scroll bottomed
-   out) before adding this. */
-.cs-slides-locked .cs-slide .cs-cell-code .cm-scroller {
+   scroller's own limit (start/end of the code, or a quadrant's own
+   content) still propagates the remaining delta to the page underneath,
+   moving it despite `overflow: hidden` above; caught this by hand (the
+   page visibly shifted a few dozen pixels once an internal scroll
+   bottomed out) before adding this. */
+.cs-slides-locked .cs-slide .cs-cell-column .cm-scroller {
   overscroll-behavior: contain;
 }
 
-.cs-slides-locked .cs-slide .cs-cell-side {
+.cs-slides-locked .cs-slide .cs-cell-column {
   max-height: var(--cs-cell-content-available-height, 55vh);
   overflow-y: auto;
   overscroll-behavior: contain;
