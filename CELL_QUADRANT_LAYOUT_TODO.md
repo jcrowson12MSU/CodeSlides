@@ -502,18 +502,46 @@ stated below, no further sign-off needed on these points.
     cell. Neither appears if that role doesn't exist in the deck. No
     general "add any cell as a tab" picker — exactly these two,
     conditionally.
-  - **New: table of contents design, not yet specified beyond "on the
-    left."** Needs its own follow-up decisions before implementation:
-    what each TOC entry shows (slide title? cell name? both?), whether
-    entries are clickable to jump to that slide (near-certainly yes,
-    but confirm), whether it's flat or reflects any grouping/hierarchy
-    the deck might have (check whether `Deck`/`Slide` has any
-    grouping concept beyond a flat `slides: list[Slide]` before
-    assuming), and whether the currently-active slide is visually
-    highlighted within it. **Flag this as a smaller, still-open
-    sub-question before implementation reaches item 4** — the
-    surrounding layout (TOC-left, tabs-right, one divider) is decided,
-    but the TOC's own internal content/behavior is not yet.
+  - **Confirmed, closing a real gap found on re-review: the main
+    cell's own notes/canvas/other elements no longer render on the
+    title slide.** Today's `SlideShow.tsx` (see the "Current
+    architecture" excerpt this item is replacing) renders the title
+    slide's `is_main` cell as a FULL `<Cell>`, not just its code editor
+    — its own comment says "there's only one view-items column on this
+    slide (the main cell's own notes/canvas/output)." Once the title
+    slide stops rendering through `Cell.tsx` at all, that view-items
+    column goes away too: the title slide becomes purely TOC + the
+    Setup/Main code tabs described above, nothing else. A main cell
+    that has notes/canvas/other elements still shows them normally on
+    its own dedicated slide (whichever slide the author lists it on
+    elsewhere in the deck) — they simply don't have a second, title-
+    slide-specific rendering anymore. This is a real, user-confirmed
+    behavior change from today, not an oversight to design around
+    further.
+  - **Table of contents: data source confirmed by re-reading the code,
+    smaller lift than it first looked.** `Slide` (`deck.py`) is
+    genuinely flat — `title`, `cell_names`, `reveal_code`, `notes`, no
+    grouping/hierarchy concept at all — so there's no "does the TOC
+    need to reflect nesting" question to design around; it's a flat
+    list, one entry per slide. The frontend already has everything
+    needed to build it with zero new backend/protocol work:
+    `SlideMeta[]` (`SlideShow.tsx`) already carries each slide's
+    `title`, and `SlideShow`'s existing `onIndexChange: (index:
+    number) => void` prop (already threaded from `App.tsx`'s
+    `setSlideIndex`) is exactly the click-to-navigate mechanism a TOC
+    entry needs — call `onIndexChange(i)` on click, no new message
+    type or field required. **Remaining open sub-question, narrowed to
+    presentation only** (not data availability, which is settled):
+    does each entry show just the slide title, or the title plus
+    something else (e.g. a cell-name subtitle when a slide's title is
+    empty/generic)? Is the actively-showing slide visually highlighted
+    in the list (near-certainly yes, but confirm the exact treatment)?
+    Does the title slide (index 0) itself appear as an entry in its
+    own TOC, or is it excluded since you're already looking at it?
+    These are copy/styling decisions, not architecture — safe to
+    default sensibly during implementation and adjust after a look in
+    the browser, unlike the earlier open questions in this document
+    which blocked starting work.
   - **Persistence**: which tabs are currently added (Setup present?
     Main present?), which one is active, and the column divider
     fraction need a small persisted-state shape of their own —
@@ -621,8 +649,11 @@ stated below, no further sign-off needed on these points.
   offered when that cell role exists in the deck (and confirm the
   inverse: neither is offered on a deck lacking that role), an added
   Setup/Main tab renders and can edit/run that cell's actual code,
-  removing a tab and reloading correctly drops it, and the title
-  slide's own divider position round-trips through Save + reload; Save +
+  removing a tab and reloading correctly drops it, the title slide's
+  own divider position round-trips through Save + reload, and (the
+  confirmed behavior change found on re-review) a main cell with
+  notes/canvas/other elements does NOT show them on the title slide
+  anymore, only on its own dedicated slide; Save +
   reload round-tripping a saved layout exactly (all 4 quadrants' tab
   assignments, all 3 divider positions, which tab is default, and
   whichever column(s) were whole-column-collapsed at save time); and
