@@ -241,10 +241,18 @@ stated below, no further sign-off needed on these points.
   the title slide's own bespoke layout (table of contents left, Setup/
   Main tabs right, replacing `extraCodeAbove` entirely — item 4).
 
-- [ ] **2. Extend `CellLayout` with the new fields** (`protocol.ts` +
+- [x] **2. Extend `CellLayout` with the new fields** (`protocol.ts` +
   `Cell.layout`'s own docstring in `deck.py`, documentation only — no
   runtime backend change needed, per "Why this is almost entirely a
-  `Cell.tsx` change" above):
+  `Cell.tsx` change" above). **Done** (commit `357497b`): added
+  `tab_quadrant`, `column_fraction`, `left_panel_fraction`,
+  `right_panel_fraction`, and the exported `CODE_TAB_ID = '__code__'`
+  sentinel constant; kept `code_fraction`/`panel_fraction`/
+  `lower_tabs`/`extra_code_fraction` as read-only fields for item 7's
+  migration and so `Cell.tsx` keeps compiling until items 3/4 remove
+  their usages. `tsc --noEmit` + `npm run build` clean, Python side
+  imports cleanly, all 16 layout backend tests pass. Sub-details below
+  are the as-implemented reference, not still-open work:
   - A quadrant-assignment map generalizing today's `tabPanel`/
     `lower_tabs` — e.g. `tab_quadrant: Record<string, Quadrant>` where
     `Quadrant = 'top-left' | 'top-right' | 'bottom-left' |
