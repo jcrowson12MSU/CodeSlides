@@ -412,7 +412,7 @@ function App() {
             source: msg.source,
             elements: msg.elements,
             layout: msg.layout,
-            // These four message types never touch is_main/is_setup/
+            // None of these message types touch is_main/is_setup/
             // hide_code (the backend preserves all three --
             // serialization.py's _detect_is_main/_detect_is_setup/
             // _detect_hide_code, same precedent as hide_def/layout) --
@@ -426,10 +426,36 @@ function App() {
             is_main: cells[msg.cell_id]?.is_main ?? false,
             is_setup: cells[msg.cell_id]?.is_setup ?? false,
             hide_code: cells[msg.cell_id]?.hide_code ?? false,
+            // Same carry-forward precedent -- none of these operations
+            // touch whether this cell has a primary editor either.
+            // Absent (a cell that's never been touched by
+            // remove_primary_editor) defaults `true`: every existing
+            // cell has a primary editor until this UI explicitly
+            // removes it (CELL_QUADRANT_LAYOUT_TODO.md item 2b).
+            has_primary_editor: cells[msg.cell_id]?.has_primary_editor ?? true,
+          }
+        } else if (msg.type === 'primary_editor_removed' || msg.type === 'primary_editor_added') {
+          if (!changed) cells = { ...cells }
+          changed = true
+          cells[msg.cell_id] = {
+            instance: msg.instance,
+            source: msg.source,
+            elements: msg.elements,
+            layout: msg.layout,
+            is_main: cells[msg.cell_id]?.is_main ?? false,
+            is_setup: cells[msg.cell_id]?.is_setup ?? false,
+            hide_code: cells[msg.cell_id]?.hide_code ?? false,
+            has_primary_editor: msg.type === 'primary_editor_added',
           }
         } else if (msg.type === 'cell_renamed') {
           if (!changed) cells = { ...cells }
           changed = true
+          // has_primary_editor isn't part of CellRenamed's own payload
+          // (unlike is_main/is_setup/hide_code, which rename_cell
+          // detects and returns directly) -- carry it forward from the
+          // pre-rename entry under its old key, same fallback-to-true
+          // precedent as the cell_added/element_added block above.
+          const hadPrimaryEditor = cells[msg.old_cell_id]?.has_primary_editor ?? true
           delete cells[msg.old_cell_id]
           cells[msg.cell_id] = {
             instance: msg.instance,
@@ -439,6 +465,7 @@ function App() {
             is_main: msg.is_main,
             is_setup: msg.is_setup,
             hide_code: msg.hide_code,
+            has_primary_editor: hadPrimaryEditor,
           }
         } else if (msg.type === 'main_cell_set') {
           if (!changed) cells = { ...cells }
@@ -719,6 +746,27 @@ function App() {
     if (!sessionId) return
     clearEditError(cellId)
     send({ type: 'remove_element', session_id: sessionId, cell_id: cellId, element_name: elementName })
+  }
+
+  // CELL_QUADRANT_LAYOUT_TODO.md item 2b: the primary code editor is
+  // now a removable/addable tab, not a fixed always-present column --
+  // same "write immediately, clear any stale edit error" shape as
+  // handleAddElement/handleRemoveElement above, but hits its own
+  // dedicated remove_primary_editor/add_primary_editor messages
+  // (Element itself can never represent the primary editor -- its
+  // `kind` has no matching entry in INPUT_KINDS/VIEWER_KINDS/
+  // TEST_KINDS -- so this isn't just add_element/remove_element with a
+  // synthetic kind).
+  function handleRemovePrimaryEditor(cellId: string) {
+    if (!sessionId) return
+    clearEditError(cellId)
+    send({ type: 'remove_primary_editor', session_id: sessionId, cell_id: cellId })
+  }
+
+  function handleAddPrimaryEditor(cellId: string) {
+    if (!sessionId) return
+    clearEditError(cellId)
+    send({ type: 'add_primary_editor', session_id: sessionId, cell_id: cellId })
   }
 
   function handleReorderElements(cellId: string, elementOrder: string[]) {
@@ -1015,6 +1063,8 @@ function App() {
               onSetMainCell={() => handleSetMainCell(cellId)}
               onSetSetupCell={() => handleSetSetupCell(cellId)}
               onSetHideCode={(hideCode) => handleSetHideCode(cellId, hideCode)}
+              onRemovePrimaryEditor={() => handleRemovePrimaryEditor(cellId)}
+              onAddPrimaryEditor={() => handleAddPrimaryEditor(cellId)}
               onAddElement={(name, kind, config) => handleAddElement(cellId, name, kind, config)}
               onRemoveElement={(elementName) => handleRemoveElement(cellId, elementName)}
               onReorderElements={(elementOrder) => handleReorderElements(cellId, elementOrder)}
@@ -1064,6 +1114,8 @@ function App() {
           onSetMainCell={handleSetMainCell}
           onSetSetupCell={handleSetSetupCell}
           onSetHideCode={handleSetHideCode}
+          onRemovePrimaryEditor={handleRemovePrimaryEditor}
+          onAddPrimaryEditor={handleAddPrimaryEditor}
           onAddElement={handleAddElement}
           onRemoveElement={handleRemoveElement}
           onReorderElements={handleReorderElements}

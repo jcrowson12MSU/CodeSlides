@@ -1482,6 +1482,67 @@ class Kernel:
         results = self._run_cells([cell_name], session)
         return cell, results[cell_name]
 
+    def remove_primary_editor(self, session: Session, cell_name: str) -> tuple[Cell, ExecutionResult]:
+        """Delete `cell_name`'s body code entirely, on disk, immediately,
+        then reload this Kernel's baseline synchronously --
+        CELL_QUADRANT_LAYOUT_TODO.md item 2b's confirmed "zero primary
+        editor means zero body code" decision. Same overall shape as
+        `remove_element` (reload, resync, re-run), but there is no
+        `ElementInstance` to drop -- the cell's own body is what changed,
+        not one of its elements -- so re-running it is what reflects the
+        change (a `pass`-bodied cell returns `None`, same as any other
+        cell whose body just returns nothing).
+
+        `serialization.remove_primary_editor` itself raises
+        `SaveConflictError` if `cell_name` still has a test editor (the
+        add-time-only dependency rule enforced here by blocking removal,
+        not by cascading a delete) -- this method doesn't duplicate that
+        check, it just lets the exception propagate, same as
+        `add_element`'s own duplicate-name `SaveConflictError` already
+        does."""
+        if self.deck_path is None:
+            raise ValueError("cannot remove the primary editor: this Kernel was not started from a deck file")
+        if cell_name not in self.deck.cells:
+            raise ValueError(f"cannot remove the primary editor from cell {cell_name!r}: it no longer exists")
+
+        from codeslides.serialization import remove_primary_editor as _remove_primary_editor_on_disk
+
+        _remove_primary_editor_on_disk(self.deck_path, cell_name)
+
+        from codeslides.loader import load_deck
+
+        self.reload_deck(load_deck(self.deck_path))
+        self._resync_stale_override(session, cell_name)
+
+        cell = self.deck.cells[cell_name]
+        session.seed_cell_instance(cell_name, cell)
+        results = self._run_cells([cell_name], session)
+        return cell, results[cell_name]
+
+    def add_primary_editor(self, session: Session, cell_name: str) -> tuple[Cell, ExecutionResult]:
+        """Restore `cell_name`'s body to a blank, editable starting
+        point, on disk, immediately, then reload this Kernel's baseline
+        synchronously -- the inverse of `remove_primary_editor`, same
+        overall shape as `add_element`."""
+        if self.deck_path is None:
+            raise ValueError("cannot add a primary editor: this Kernel was not started from a deck file")
+        if cell_name not in self.deck.cells:
+            raise ValueError(f"cannot add a primary editor to cell {cell_name!r}: it no longer exists")
+
+        from codeslides.serialization import add_primary_editor as _add_primary_editor_on_disk
+
+        _add_primary_editor_on_disk(self.deck_path, cell_name)
+
+        from codeslides.loader import load_deck
+
+        self.reload_deck(load_deck(self.deck_path))
+        self._resync_stale_override(session, cell_name)
+
+        cell = self.deck.cells[cell_name]
+        session.seed_cell_instance(cell_name, cell)
+        results = self._run_cells([cell_name], session)
+        return cell, results[cell_name]
+
     def reorder_elements(self, session: Session, cell_name: str, element_order: list[str]) -> Cell:
         """Reorder `cell_name`'s elements to match `element_order`, on
         disk, immediately (TODO.md #23's up/down reorder buttons), then

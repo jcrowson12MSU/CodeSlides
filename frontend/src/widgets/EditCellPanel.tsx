@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { ElementMeta } from './elementMeta'
+import { isTestElement, type ElementMeta } from './elementMeta'
 
 // Every element kind an author can pick from the "add element" dropdown,
 // with the config `Element.config` needs for a sensible default --
@@ -52,6 +52,26 @@ export interface EditCellPanelProps {
    * genuine two-way toggle -- no uniqueness constraint, so unchecking is
    * a real action, not a no-op. */
   onSetHideCode: (hideCode: boolean) => void
+  /** Whether this cell currently has a primary code editor at all
+   * (CELL_QUADRANT_LAYOUT_TODO.md item 2b) -- distinct from
+   * `isHideCode`: `hide_code=True` is an author-time declaration that
+   * removes the *option* to show code, while this being `false` means
+   * there is currently no code (the cell's body was rewritten to a
+   * blank stub) but the option to add one back still exists. A cell can
+   * have at most one primary editor, so this is a boolean, not a count.
+   */
+  hasPrimaryEditor: boolean
+  /** Delete this cell's body code entirely, on disk, immediately
+   * (`remove_primary_editor`) -- not a hide-the-tab toggle, a real
+   * source change. Blocked server-side (surfaced via `error`) while
+   * this cell still has a test editor; this button stays enabled
+   * either way so the rejection message is visible rather than a
+   * silently-disabled control with no explanation. */
+  onRemovePrimaryEditor: () => void
+  /** Restore this cell's body to a blank, editable stub, on disk,
+   * immediately (`add_primary_editor`) -- the inverse of
+   * `onRemovePrimaryEditor`. */
+  onAddPrimaryEditor: () => void
   /** Every tab this cell currently has that can be picked as the
    * default -- one per element, in declaration order (cells no longer
    * have a synthetic Output tab at all, per the user's own explicit
@@ -103,6 +123,9 @@ export function EditCellPanel({
   onSetSetupCell,
   isHideCode,
   onSetHideCode,
+  hasPrimaryEditor,
+  onRemovePrimaryEditor,
+  onAddPrimaryEditor,
   tabs,
   defaultTab,
   onSetDefaultTab,
@@ -277,6 +300,27 @@ export function EditCellPanel({
         />
         Hide code editor
       </label>
+
+      <div className="cs-edit-cell-primary-editor">
+        {hasPrimaryEditor ? (
+          <button
+            type="button"
+            onClick={onRemovePrimaryEditor}
+            disabled={elements.some((e) => isTestElement(e.kind))}
+            title={
+              elements.some((e) => isTestElement(e.kind))
+                ? 'Remove this cell’s test editor(s) first'
+                : 'Deletes this cell’s body code entirely, on disk, immediately'
+            }
+          >
+            Remove primary editor
+          </button>
+        ) : (
+          <button type="button" onClick={onAddPrimaryEditor}>
+            Add primary editor
+          </button>
+        )}
+      </div>
 
       <div className="cs-edit-cell-default-tab">
         <span className="cs-edit-cell-default-tab-label">Default view item</span>

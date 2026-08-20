@@ -17,6 +17,7 @@ from codeslides.output import resolve_output, wire_safe_value
 from codeslides.protocol import (
     AddCell,
     AddElement,
+    AddPrimaryEditor,
     AddSlide,
     AddTitleSlide,
     CellAdded,
@@ -38,8 +39,11 @@ from codeslides.protocol import (
     HideCodeSet,
     MainCellSet,
     NavigateSlide,
+    PrimaryEditorAdded,
+    PrimaryEditorRemoved,
     RemoveCell,
     RemoveElement,
+    RemovePrimaryEditor,
     RemoveSlide,
     RenameCell,
     ReorderCells,
@@ -105,8 +109,9 @@ def _effective_display_source(session: Session, cell) -> str:
     else the fresh on-disk truth -- same "session's effective source"
     preference `_run_cells`/`_effective_graph`/`on_cell_edited` already
     apply everywhere else. `RenameCell`/`AddElement`/`RemoveElement`/
-    `ReorderElements`/`SetElementConfig` all write straight to disk and
-    reload before building their response; without this, they'd
+    `RemovePrimaryEditor`/`AddPrimaryEditor`/`ReorderElements`/
+    `SetElementConfig` all write straight to disk and reload before
+    building their response; without this, they'd
     unconditionally send `cell.source` (the reloaded Deck's own text),
     silently discarding whatever unsaved edit this session had for the
     same cell from the browser's displayed view -- even though the
@@ -819,6 +824,54 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
         results = {cell.name: result}
         return [
             ElementRemoved(
+                session_id=message.session_id,
+                cell_id=cell.name,
+                instance=cell.instance,
+                source=_effective_display_source(session, cell),
+                elements=[
+                    {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
+                ],
+                layout=cell.layout,
+            ),
+            *_results_to_messages(message.session_id, results),
+            *_element_output_messages(session, results),
+        ]
+
+    if isinstance(message, RemovePrimaryEditor):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        try:
+            cell, result = registry.kernel.remove_primary_editor(session, message.cell_id)
+        except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
+            return [ErrorMessage(message=str(exc), session_id=message.session_id, cell_id=message.cell_id)]
+        results = {cell.name: result}
+        return [
+            PrimaryEditorRemoved(
+                session_id=message.session_id,
+                cell_id=cell.name,
+                instance=cell.instance,
+                source=_effective_display_source(session, cell),
+                elements=[
+                    {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
+                ],
+                layout=cell.layout,
+            ),
+            *_results_to_messages(message.session_id, results),
+            *_element_output_messages(session, results),
+        ]
+
+    if isinstance(message, AddPrimaryEditor):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        try:
+            cell, result = registry.kernel.add_primary_editor(session, message.cell_id)
+        except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
+            return [ErrorMessage(message=str(exc), session_id=message.session_id, cell_id=message.cell_id)]
+        results = {cell.name: result}
+        return [
+            PrimaryEditorAdded(
                 session_id=message.session_id,
                 cell_id=cell.name,
                 instance=cell.instance,

@@ -22,6 +22,14 @@ from typing import Any
 
 from codeslides.deck import Cell, Deck, Element
 
+# CELL_QUADRANT_LAYOUT_TODO.md item 2's sentinel tab id for a cell's own
+# primary code editor, now folded into the same tab pool as its elements
+# (frontend/src/protocol.ts's CODE_TAB_ID -- kept in sync by hand, same
+# as every other protocol constant). Reserved: never a legal
+# author-chosen element name (item 2b's collision guard) since it would
+# be indistinguishable from the primary-editor tab in `tab_quadrant`.
+RESERVED_ELEMENT_NAMES = frozenset({"__code__"})
+
 
 class SaveConflictError(ValueError):
     """Raised when the on-disk file no longer contains a cell a caller is
@@ -1591,12 +1599,16 @@ def add_element(deck_path: str, cell_name: str, element: Element) -> None:
     only its decorator is regenerated (via `rebuild_cell_source`) with
     the new element appended to whatever elements it already had.
 
-    Raises `SaveConflictError` if `cell_name` doesn't exist or already
-    has an element named `element.name`, or `InvalidSourceError` if the
+    Raises `SaveConflictError` if `cell_name` doesn't exist, already has
+    an element named `element.name`, or `element.name` is reserved
+    (`RESERVED_ELEMENT_NAMES` -- item 2b's collision guard against the
+    primary-editor sentinel tab id), or `InvalidSourceError` if the
     result doesn't parse.
     """
 
     def build(existing: list[Element]) -> list[Element]:
+        if element.name in RESERVED_ELEMENT_NAMES:
+            raise SaveConflictError(f"{element.name!r} is a reserved name and cannot be used for an element")
         if any(e.name == element.name for e in existing):
             raise SaveConflictError(f"cell {cell_name!r} already has an element named {element.name!r}")
         return [*existing, element]
@@ -1647,6 +1659,137 @@ def remove_element(deck_path: str, cell_name: str, element_name: str) -> None:
         return [e for e in existing if e.name != element_name]
 
     _replace_elements(deck_path, cell_name, build, "remove an element from")
+
+
+def _rewrite_cell_body(deck_path: str, cell_name: str, new_body_lines: list[str], error_context: str) -> Cell:
+    """Shared plumbing for `remove_primary_editor`/`add_primary_editor`
+    (CELL_QUADRANT_LAYOUT_TODO.md item 2b): locate `cell_name`'s current
+    source, keep its decorator (elements/layout/is_main/is_setup/
+    hide_code/instance, all detected fresh off disk, same precedent as
+    `_replace_elements`) untouched, but replace the function BODY with
+    `new_body_lines` instead of preserving it -- the inverse of
+    `_replace_elements`/`rebuild_cell_source`, which always keep the body
+    byte-identical and only regenerate the decorator. This is why item 2b
+    isn't just another `_replace_elements` caller: every existing
+    `elements=[...]`-rewriting operation is body-preserving by design,
+    and this operation's whole point is to replace the body.
+
+    `new_body_lines` must be plain source lines (no trailing cell-source
+    decorator/def line) -- typically a single `"    pass"` line
+    (`remove_primary_editor`) or `blank_cell_source`'s own body line,
+    reused verbatim (`add_primary_editor`)."""
+    path = Path(deck_path)
+    original = path.read_text()
+    spans = _cell_line_spans(original)
+    if cell_name not in spans:
+        raise SaveConflictError(f"cannot {error_context} {cell_name!r}: it no longer exists")
+
+    start, end = spans[cell_name]
+    lines = original.splitlines(keepends=True)
+    cell_source = "".join(lines[start - 1 : end])
+
+    tree = ast.parse(cell_source)
+    func = next(n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef))
+    existing_elements = _existing_elements(func)
+    is_editable = any(
+        isinstance(dec, ast.Call)
+        and any(kw.arg == "instance" and ast.literal_eval(kw.value) == "editable" for kw in dec.keywords)
+        for dec in func.decorator_list
+    )
+    hide_def = any(
+        isinstance(dec, ast.Call)
+        and any(kw.arg == "hide_def" and ast.literal_eval(kw.value) is True for kw in dec.keywords)
+        for dec in func.decorator_list
+    )
+    layout = _detect_layout(func)
+    is_main = _detect_is_main(func)
+    is_setup = _detect_is_setup(func)
+    hide_code = _detect_hide_code(func)
+
+    def_line, _old_body_lines = _split_cell_source(cell_source)
+    body_replaced_source = def_line + "\n" + "\n".join(new_body_lines) + "\n"
+
+    new_cell_source = rebuild_cell_source(
+        cell_name,
+        "editable" if is_editable else "static",
+        existing_elements,
+        body_replaced_source,
+        hide_def=hide_def,
+        layout=layout,
+        is_main=is_main,
+        is_setup=is_setup,
+        hide_code=hide_code,
+    )
+    updated_lines = list(lines)
+    updated_lines[start - 1 : end] = [new_cell_source]
+    updated = "".join(updated_lines)
+
+    try:
+        ast.parse(updated)
+    except SyntaxError as exc:
+        raise InvalidSourceError(
+            f"{error_context} {cell_name!r} would leave {deck_path!r} with invalid Python syntax, "
+            f"not saved: {exc}"
+        ) from exc
+
+    path.write_text(updated)
+    return Cell(
+        name=cell_name,
+        source=new_cell_source,
+        instance="editable" if is_editable else "static",
+        elements=existing_elements,
+        hide_def=hide_def,
+        layout=layout,
+        is_main=is_main,
+        is_setup=is_setup,
+        hide_code=hide_code,
+    )
+
+
+def remove_primary_editor(deck_path: str, cell_name: str) -> Cell:
+    """Delete `cell_name`'s body code entirely, on disk, immediately --
+    CELL_QUADRANT_LAYOUT_TODO.md item 2b's confirmed "zero primary
+    editor means zero body code" decision, not a hide-the-tab operation.
+    Rewrites the function body to a single `pass` statement (the same
+    shape `blank_cell_source` already uses for a brand-new cell) while
+    keeping the cell's elements/layout/is_main/is_setup/hide_code/
+    instance untouched -- only the code the author wrote is discarded.
+
+    Raises `SaveConflictError` if `cell_name` doesn't exist or still has
+    any `tests`-kind element (item 2b's "can't remove the primary editor
+    while test editors exist" guard -- a test editor with no primary
+    editor to test is a state this document's "Design decisions"
+    explicitly disallows by construction, not by cascading deletion), or
+    `InvalidSourceError` if the result doesn't parse."""
+    path = Path(deck_path)
+    original = path.read_text()
+    spans = _cell_line_spans(original)
+    if cell_name not in spans:
+        raise SaveConflictError(f"cannot remove the primary editor from {cell_name!r}: it no longer exists")
+    start, end = spans[cell_name]
+    lines = original.splitlines(keepends=True)
+    cell_source = "".join(lines[start - 1 : end])
+    tree = ast.parse(cell_source)
+    func = next(n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef))
+    if any(e.is_test for e in _existing_elements(func)):
+        raise SaveConflictError(
+            f"cannot remove the primary editor from {cell_name!r}: it still has a test editor "
+            "(remove the test editor(s) first)"
+        )
+    return _rewrite_cell_body(deck_path, cell_name, ["    pass"], "removing the primary editor from")
+
+
+def add_primary_editor(deck_path: str, cell_name: str) -> Cell:
+    """Restore `cell_name`'s body to a blank, editable starting point, on
+    disk, immediately -- the inverse of `remove_primary_editor`. Reuses
+    `blank_cell_source`'s own body line verbatim (a single `pass`
+    statement) rather than inventing a second "blank cell body" shape,
+    per item 2b's "no new default to design" note.
+
+    Raises `SaveConflictError` if `cell_name` doesn't exist, or
+    `InvalidSourceError` if the result doesn't parse."""
+    _blank_def_line, blank_body_lines = _split_cell_source(blank_cell_source(cell_name))
+    return _rewrite_cell_body(deck_path, cell_name, blank_body_lines, "adding a primary editor to")
 
 
 def reorder_elements(deck_path: str, cell_name: str, element_order: list[str]) -> None:

@@ -325,15 +325,37 @@ stated below, no further sign-off needed on these points.
       from "Design decisions" above — no primary editor present means
       that affordance is disabled, not just unwired.
 
-- [ ] **2b. Handle "zero primary editor means zero body code" —
+- [x] **2b. Handle "zero primary editor means zero body code" —
   this is the one piece of this feature that is NOT contained to
   `Cell.tsx`, contrary to "Why this is almost entirely a `Cell.tsx`
   change" above.** Per "Design decisions," removing the primary-editor
   tab must delete the cell's actual Python function body, not just
-  hide a tab — this reaches into `Deck`/`Cell` (`deck.py`). **Verified
-  against the actual current code (not left as an open question) —
-  the needed infrastructure already exists and this is smaller than it
-  first looked:**
+  hide a tab — this reaches into `Deck`/`Cell` (`deck.py`). **Done**
+  (commit follows this entry): new `serialization.remove_primary_editor`/
+  `add_primary_editor` (body rewritten to/from a `pass` stub via a new
+  `_rewrite_cell_body` helper, mirroring but not reusing
+  `_replace_elements`, since it's the body being replaced, not
+  `elements=[...]`), new `Kernel.remove_primary_editor`/
+  `add_primary_editor`, new `RemovePrimaryEditor`/`AddPrimaryEditor`
+  client messages and `PrimaryEditorRemoved`/`PrimaryEditorAdded`
+  server responses (Python + TS, `ws_handler.py` wired), the
+  reserved-name collision guard on `add_element` (both
+  `serialization.py` and `EditCellPanel.tsx`'s `canAdd`), and the
+  "can't remove while tests exist" guard (`SaveConflictError`,
+  surfaced to the UI as a disabled button with an explanatory
+  `title`). Wired end-to-end to a real, minimal UI trigger in
+  `EditCellPanel.tsx` ("Remove primary editor" / "Add primary editor"
+  button, next to "Hide code editor") — this is ahead of item 5's own
+  full UI-polish pass, but functional and verified live in a browser
+  (Playwright: clicking the button actually rewrites the cell's body
+  to `pass`, visible in the code editor immediately; the button
+  disables when a test element is present). 16 new backend tests
+  across `test_serialization.py`/`test_kernel.py`/`test_ws_handler.py`,
+  all 566 backend tests pass, frontend builds clean (`tsc -b` in real
+  build/project-reference mode — plain `tsc --noEmit` gave a false
+  clean result once from stale incremental build info, so use `-b`,
+  not `--noEmit`, to actually verify this codebase's frontend). Details
+  below are the as-implemented reference:
   - **A full add/remove-element mutation path already exists and is
     the direct precedent to extend**, not something to invent:
     `Kernel.add_element`/`Kernel.remove_element` (`kernel.py:1417`,

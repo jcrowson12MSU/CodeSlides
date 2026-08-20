@@ -1783,6 +1783,54 @@ def test_remove_element_raises_if_the_element_does_not_exist(tmp_path):
         kernel.remove_element(session, "live_demo", "does_not_exist")
 
 
+def test_remove_primary_editor_updates_disk_kernel_and_reruns(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    cell, result = kernel.remove_primary_editor(session, "live_demo")
+
+    assert "def live_demo(speed):\n    pass" in cell.source
+    assert "ui.slider('speed'" in cell.source  # element preserved
+    assert result.status == "idle"
+    assert "def live_demo(speed):\n    pass" in kernel.deck.cells["live_demo"].source
+    assert "result = speed * 2" not in path.read_text()
+
+
+def test_remove_primary_editor_raises_if_the_cell_has_a_test_element(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+    kernel.add_element(session, "live_demo", ui.tests("live_demo_tests"))
+
+    with pytest.raises(ValueError, match="test editor"):
+        kernel.remove_primary_editor(session, "live_demo")
+
+
+def test_add_primary_editor_restores_a_pass_stub_and_reruns(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+    kernel.remove_primary_editor(session, "live_demo")
+
+    cell, result = kernel.add_primary_editor(session, "live_demo")
+
+    assert "pass" in cell.source
+    assert result.status == "idle"
+
+
 def test_reorder_elements_updates_disk_and_kernel_baseline(tmp_path):
     from codeslides.loader import load_deck
 

@@ -52,6 +52,14 @@ export interface CellMeta {
   // directly by the render, same "?? false, not a required field"
   // precedent as `is_main`.
   hide_code?: boolean
+  // Whether this cell currently has a primary code editor at all
+  // (CELL_QUADRANT_LAYOUT_TODO.md item 2b -- "zero primary editor
+  // means zero body code," not a hide-the-tab toggle). Opposite default
+  // from is_main/is_setup/hide_code: absent means `true` (has one),
+  // since that's every cell's state until this UI explicitly removes
+  // one -- App.tsx sets this explicitly false only in response to a
+  // successful `PrimaryEditorRemoved`.
+  has_primary_editor?: boolean
 }
 
 export interface CellProps {
@@ -130,6 +138,13 @@ export interface CellProps {
    * is a genuine two-way toggle (no uniqueness constraint), so it takes
    * the value to set rather than always meaning "turn on". */
   onSetHideCode: (hideCode: boolean) => void
+  /** EditCellPanel's "Remove/Add primary editor" button
+   * (CELL_QUADRANT_LAYOUT_TODO.md item 2b). Removing deletes this
+   * cell's body code entirely, on disk, immediately -- not a
+   * layout/visibility toggle -- and is blocked server-side while the
+   * cell still has a test editor. */
+  onRemovePrimaryEditor: () => void
+  onAddPrimaryEditor: () => void
   onAddElement: (name: string, kind: string, config: Record<string, unknown>) => void
   onRemoveElement: (elementName: string) => void
   /** TODO.md #23: reorder this cell's elements (up/down arrows in the
@@ -220,6 +235,8 @@ export function Cell({
   onSetMainCell,
   onSetSetupCell,
   onSetHideCode,
+  onRemovePrimaryEditor,
+  onAddPrimaryEditor,
   onAddElement,
   onRemoveElement,
   onReorderElements,
@@ -819,6 +836,9 @@ export function Cell({
           onSetSetupCell={onSetSetupCell}
           isHideCode={meta.hide_code ?? false}
           onSetHideCode={onSetHideCode}
+          hasPrimaryEditor={meta.has_primary_editor ?? true}
+          onRemovePrimaryEditor={onRemovePrimaryEditor}
+          onAddPrimaryEditor={onAddPrimaryEditor}
           tabs={allTabs}
           defaultTab={defaultTab}
           onSetDefaultTab={handleSetDefaultTab}

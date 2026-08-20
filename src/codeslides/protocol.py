@@ -338,6 +338,34 @@ class RemoveElement:
 
 
 @dataclass
+class RemovePrimaryEditor:
+    """Delete a cell's body code entirely, on disk, immediately
+    (CELL_QUADRANT_LAYOUT_TODO.md item 2b's confirmed "zero primary
+    editor means zero body code" decision) -- the primary editor is now
+    just one more tab in the same pool as a cell's elements (reserved
+    sentinel id, `frontend/src/protocol.ts`'s `CODE_TAB_ID`), so this is
+    a sibling of `RemoveElement`, not a variant of it -- `Element`
+    itself never represents the primary editor (`Element.kind` has no
+    matching entry in `INPUT_KINDS`/`VIEWER_KINDS`/`TEST_KINDS`), so
+    this needs its own message rather than reusing `remove_element` with
+    a synthetic kind."""
+
+    type: ClassVar[str] = "remove_primary_editor"
+    session_id: str
+    cell_id: str
+
+
+@dataclass
+class AddPrimaryEditor:
+    """Restore a cell's body to a blank, editable starting point, on
+    disk, immediately -- the inverse of `RemovePrimaryEditor`."""
+
+    type: ClassVar[str] = "add_primary_editor"
+    session_id: str
+    cell_id: str
+
+
+@dataclass
 class ReorderElements:
     """Reorder a cell's elements to match `element_order` exactly
     (TODO.md #23's up/down reorder buttons), on disk, immediately.
@@ -636,6 +664,37 @@ class ElementRemoved:
 
 
 @dataclass
+class PrimaryEditorRemoved:
+    """Acknowledges a successful `remove_primary_editor` -- same shape
+    as `ElementAdded`/`ElementRemoved`, the owning cell's full updated
+    metadata. `source` now holds the cell's rewritten (blank) body --
+    the client should treat this exactly like any other source change
+    (it's not just a layout/tab-visibility toggle)."""
+
+    type: ClassVar[str] = "primary_editor_removed"
+    session_id: str
+    cell_id: str
+    instance: str
+    source: str
+    elements: list[dict[str, Any]]
+    layout: dict[str, Any] | None = None
+
+
+@dataclass
+class PrimaryEditorAdded:
+    """Acknowledges a successful `add_primary_editor` -- same shape as
+    `PrimaryEditorRemoved`, the inverse operation."""
+
+    type: ClassVar[str] = "primary_editor_added"
+    session_id: str
+    cell_id: str
+    instance: str
+    source: str
+    elements: list[dict[str, Any]]
+    layout: dict[str, Any] | None = None
+
+
+@dataclass
 class ElementsReordered:
     """Acknowledges a successful `reorder_elements` -- same shape as
     `ElementAdded`, the owning cell's full updated metadata (elements
@@ -711,6 +770,8 @@ ClientMessage = (
     | ReorderCells
     | AddElement
     | RemoveElement
+    | RemovePrimaryEditor
+    | AddPrimaryEditor
     | ReorderElements
     | SetElementConfig
 )
@@ -734,6 +795,8 @@ ServerMessage = (
     | CellsReordered
     | ElementAdded
     | ElementRemoved
+    | PrimaryEditorRemoved
+    | PrimaryEditorAdded
     | ElementsReordered
     | ElementConfigSet
     | ErrorMessage
@@ -764,6 +827,8 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
         ReorderCells,
         AddElement,
         RemoveElement,
+        RemovePrimaryEditor,
+        AddPrimaryEditor,
         ReorderElements,
         SetElementConfig,
     )

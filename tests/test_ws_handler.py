@@ -4,6 +4,7 @@ from codeslides.loader import load_deck
 from codeslides.protocol import (
     AddCell,
     AddElement,
+    AddPrimaryEditor,
     AddSlide,
     AddTitleSlide,
     CellAdded,
@@ -24,8 +25,11 @@ from codeslides.protocol import (
     HideCodeSet,
     MainCellSet,
     NavigateSlide,
+    PrimaryEditorAdded,
+    PrimaryEditorRemoved,
     RemoveCell,
     RemoveElement,
+    RemovePrimaryEditor,
     RemoveSlide,
     RenameCell,
     ReorderCells,
@@ -1615,6 +1619,85 @@ def test_remove_element_unknown_element_produces_error_not_crash(tmp_path):
 
     messages = handle_message(
         registry, RemoveElement(session_id=session.session_id, cell_id="live_demo", element_name="does_not_exist")
+    )
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+    assert path.read_text() == before
+
+
+def test_remove_primary_editor_emits_primary_editor_removed_and_writes_to_disk(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(registry, RemovePrimaryEditor(session_id=session.session_id, cell_id="setup"))
+
+    assert isinstance(messages[0], PrimaryEditorRemoved)
+    removed = messages[0]
+    assert removed.cell_id == "setup"
+    assert "pass" in path.read_text()
+    assert "base = 5" not in path.read_text()
+    # Regression guard: same decorator-free shape display_source already
+    # gives every other cell-source-carrying message.
+    assert "@app.cell" not in removed.source
+    assert removed.source == "def setup():\n    pass\n"
+
+
+def test_remove_primary_editor_unknown_session_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+
+    messages = handle_message(registry, RemovePrimaryEditor(session_id="does-not-exist", cell_id="setup"))
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_remove_primary_editor_blocked_by_test_element_produces_error_not_crash(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    handle_message(
+        registry,
+        AddElement(session_id=session.session_id, cell_id="setup", element_name="setup_tests", kind="tests", config={"default": ""}),
+    )
+    before = path.read_text()
+
+    messages = handle_message(registry, RemovePrimaryEditor(session_id=session.session_id, cell_id="setup"))
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+    assert path.read_text() == before
+
+
+def test_add_primary_editor_emits_primary_editor_added_and_writes_to_disk(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    handle_message(registry, RemovePrimaryEditor(session_id=session.session_id, cell_id="setup"))
+
+    messages = handle_message(registry, AddPrimaryEditor(session_id=session.session_id, cell_id="setup"))
+
+    assert isinstance(messages[0], PrimaryEditorAdded)
+    added = messages[0]
+    assert added.cell_id == "setup"
+    assert "pass" in path.read_text()
+
+
+def test_add_primary_editor_unknown_session_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+
+    messages = handle_message(registry, AddPrimaryEditor(session_id="does-not-exist", cell_id="setup"))
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_add_element_rejects_the_reserved_primary_editor_sentinel_name(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+    before = path.read_text()
+
+    messages = handle_message(
+        registry,
+        AddElement(session_id=session.session_id, cell_id="setup", element_name="__code__", kind="button", config={}),
     )
 
     assert len(messages) == 1

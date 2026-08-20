@@ -9,6 +9,7 @@ from codeslides.serialization import (
     InvalidSourceError,
     SaveConflictError,
     add_element,
+    add_primary_editor,
     append_cell,
     append_slide,
     append_title_slide,
@@ -23,6 +24,7 @@ from codeslides.serialization import (
     rebuild_cell_source,
     remove_cell,
     remove_element,
+    remove_primary_editor,
     rename_cell,
     reorder_cells,
     reorder_elements,
@@ -1147,6 +1149,15 @@ def test_add_element_raises_if_the_cell_does_not_exist(deck_file):
         add_element(str(deck_file), "does_not_exist", ui.button("go"))
 
 
+def test_add_element_raises_on_the_reserved_primary_editor_sentinel_name(deck_file):
+    """CELL_QUADRANT_LAYOUT_TODO.md item 2b's collision guard: '__code__'
+    (frontend/src/protocol.ts's CODE_TAB_ID) must never be usable as an
+    ordinary author-chosen element name, or it would be indistinguishable
+    from the primary-editor tab in tab_quadrant."""
+    with pytest.raises(SaveConflictError, match="reserved"):
+        add_element(str(deck_file), "live_demo", ui.button("__code__"))
+
+
 def test_remove_element_drops_it_from_the_elements_list(deck_file):
     remove_element(str(deck_file), "live_demo", "speed")
 
@@ -1163,6 +1174,57 @@ def test_remove_element_raises_if_the_element_does_not_exist(deck_file):
 def test_remove_element_raises_if_the_cell_does_not_exist(deck_file):
     with pytest.raises(SaveConflictError):
         remove_element(str(deck_file), "does_not_exist", "speed")
+
+
+def test_remove_primary_editor_rewrites_the_body_to_a_pass_stub(deck_file):
+    cell = remove_primary_editor(str(deck_file), "setup")
+
+    assert cell.source == '@app.cell\ndef setup():\n    pass\n'
+    deck = load_deck(str(deck_file))
+    assert deck.cells["setup"].source == '@app.cell\ndef setup():\n    pass\n'
+
+
+def test_remove_primary_editor_preserves_elements_and_decorator_kwargs(deck_file):
+    cell = remove_primary_editor(str(deck_file), "live_demo")
+
+    assert cell.instance == "editable"
+    assert [e.name for e in cell.elements] == ["speed"]
+    assert "def live_demo(speed):" in cell.source
+    assert "pass" in cell.source
+    # The body (everything that referenced `base`/`result`) is gone --
+    # only the decorator + a pass-bodied def line remain.
+    assert "result" not in cell.source
+
+
+def test_remove_primary_editor_raises_if_the_cell_does_not_exist(deck_file):
+    with pytest.raises(SaveConflictError):
+        remove_primary_editor(str(deck_file), "does_not_exist")
+
+
+def test_remove_primary_editor_raises_if_the_cell_has_a_test_element(deck_file):
+    add_element(str(deck_file), "live_demo", ui.tests("live_demo_tests"))
+
+    with pytest.raises(SaveConflictError, match="test editor"):
+        remove_primary_editor(str(deck_file), "live_demo")
+
+    # Confirmed not applied: the file is untouched by the rejected call.
+    deck = load_deck(str(deck_file))
+    assert "result = base * speed" in deck.cells["live_demo"].source
+
+
+def test_add_primary_editor_restores_a_pass_stub(deck_file):
+    remove_primary_editor(str(deck_file), "setup")
+
+    cell = add_primary_editor(str(deck_file), "setup")
+
+    assert cell.source == '@app.cell\ndef setup():\n    pass\n'
+    deck = load_deck(str(deck_file))
+    assert deck.cells["setup"].source == '@app.cell\ndef setup():\n    pass\n'
+
+
+def test_add_primary_editor_raises_if_the_cell_does_not_exist(deck_file):
+    with pytest.raises(SaveConflictError):
+        add_primary_editor(str(deck_file), "does_not_exist")
 
 
 def test_add_element_imports_ui_if_the_deck_never_needed_it_before(tmp_path):

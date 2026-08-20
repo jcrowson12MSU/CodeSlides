@@ -207,6 +207,23 @@ export interface RemoveElement {
   element_name: string
 }
 
+// CELL_QUADRANT_LAYOUT_TODO.md item 2b -- siblings of AddElement/
+// RemoveElement, not variants of them: Element itself can never
+// represent the primary editor (its `kind` has no matching
+// INPUT_KINDS/VIEWER_KINDS/TEST_KINDS entry), so this needs its own
+// pair of messages rather than a synthetic element kind.
+export interface RemovePrimaryEditor {
+  type: 'remove_primary_editor'
+  session_id: string
+  cell_id: string
+}
+
+export interface AddPrimaryEditor {
+  type: 'add_primary_editor'
+  session_id: string
+  cell_id: string
+}
+
 export interface ReorderElements {
   type: 'reorder_elements'
   session_id: string
@@ -245,6 +262,8 @@ export type ClientMessage =
   | ReorderCells
   | AddElement
   | RemoveElement
+  | RemovePrimaryEditor
+  | AddPrimaryEditor
   | ReorderElements
   | SetElementConfig
 
@@ -423,6 +442,30 @@ export interface ElementRemoved {
   layout: CellLayout | null
 }
 
+// CELL_QUADRANT_LAYOUT_TODO.md item 2b -- same shape as ElementAdded/
+// ElementRemoved, but for the primary code editor (never an Element
+// itself; see CODE_TAB_ID above). `source` holds the cell's rewritten
+// body -- a real source change, not just a layout/visibility toggle.
+export interface PrimaryEditorRemoved {
+  type: 'primary_editor_removed'
+  session_id: string
+  cell_id: string
+  instance: 'static' | 'editable'
+  source: string
+  elements: ElementMeta[]
+  layout: CellLayout | null
+}
+
+export interface PrimaryEditorAdded {
+  type: 'primary_editor_added'
+  session_id: string
+  cell_id: string
+  instance: 'static' | 'editable'
+  source: string
+  elements: ElementMeta[]
+  layout: CellLayout | null
+}
+
 export interface ElementsReordered {
   type: 'elements_reordered'
   session_id: string
@@ -470,6 +513,8 @@ export type ServerMessage =
   | CellsReordered
   | ElementAdded
   | ElementRemoved
+  | PrimaryEditorRemoved
+  | PrimaryEditorAdded
   | ElementsReordered
   | ElementConfigSet
   | ErrorMessage
