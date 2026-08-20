@@ -362,34 +362,6 @@ button.cs-save-button {
   min-height: 2.5rem;
 }
 
-/* Wraps `extraCodeAbove`/the main CodeEditor when both are present
-   (Cell.tsx's renderTabContent, composed into wherever the primary
-   editor tab currently renders) -- same "flex: 0 0 auto, explicit %
-   basis, min-height: 0" shape as `.cs-cell-panels`' own quadrant
-   sections, so each of the two stacked editors respects
-   `extraCodeFraction`'s drag-set share of height instead of both just
-   growing to fit their own content. */
-.cs-cell-extra-code {
-  flex: 0 0 auto;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-}
-
-/* The container `extraCodeAbove` and the main CodeEditor both live in
-   -- fills whatever quadrant/tab-content space it's rendered into
-   (Cell.tsx's renderTabContent), laid out top-to-bottom (`flex-
-   direction: column`) so the two stack sharing the available width
-   rather than squeezing side-by-side. */
-.cs-cell-code-with-extra {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 0;
-  min-width: 0;
-  gap: 0.5rem;
-}
-
 /* The draggable divider between the left and right columns. A
    narrow visible strip (2px) with a much wider invisible hit area (the
    ::before pseudo-element, positioned via a negative inset) so it's
@@ -1529,6 +1501,98 @@ body.cs-slides-locked {
 
 .cs-slide .cs-element-minimized .cs-minimize-toggle {
   color: #666;
+}
+
+/* CELL_QUADRANT_LAYOUT_TODO.md item 4: the title slide's own bespoke
+   layout (TitleSlide.tsx) -- a plain 2-column row (table of contents
+   left, Setup/Main tab strip right) with one adjustable divider,
+   deliberately NOT the 4-quadrant system's own nested-column shape
+   (Cell.tsx's `.cs-cell-column`/`.cs-cell-panels`) since there's no
+   further internal splitting of either side. Fills whatever height
+   `.cs-slide` gives it, same `align-items: stretch`/flex-row shape
+   `.cs-cell-body` already uses for its own two columns. */
+.cs-title-slide {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  height: 100%;
+  min-height: 0;
+}
+
+.cs-title-slide-toc {
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.cs-title-slide-toc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.cs-title-slide-toc-entry {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+  font-size: var(--cs-font-md);
+  color: #333;
+}
+
+.cs-title-slide-toc-entry:hover {
+  background: #f2f2f2;
+}
+
+/* The currently-showing slide's own entry -- same accent-color
+   precedent `.cs-cell-tab-active` already sets for "this is the
+   selected one" elsewhere in the app. */
+.cs-title-slide-toc-entry-active {
+  background: var(--accent-bg, #aa3bff1a);
+  color: var(--accent, #aa3bff);
+  font-weight: 600;
+}
+
+.cs-title-slide-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* A tab's own little "×" remove button, inline with its label -- same
+   dashed/dotted "small, quiet, only meaningful on hover" precedent
+   `.cs-minimize-toggle` sets elsewhere, not a separate full-size
+   button next to each tab. */
+.cs-title-slide-tab-remove {
+  margin-left: 0.4rem;
+  color: #999;
+  cursor: pointer;
+}
+
+.cs-title-slide-tab-remove:hover {
+  color: #c00;
+}
+
+.cs-title-slide-add-tab select {
+  border: 1px dashed #ccc;
+  border-radius: 3px;
+  background: none;
+  cursor: pointer;
+  font-size: var(--cs-font-sm);
+  color: #555;
+  padding: 0.15rem 0.4rem;
 }
 
 /* TODO.md #22's edit button: rename the cell's own identity, add/remove

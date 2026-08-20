@@ -58,6 +58,7 @@ from codeslides.protocol import (
     SetHideCode,
     SetMainCell,
     SetSetupCell,
+    SetSlideLayout,
     SetSlideOrder,
     SetTestSource,
     SetUiState,
@@ -404,6 +405,7 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
             not session.source_overrides
             and session.slide_order_override is None
             and not session.cell_layout_overrides
+            and session.slide_layout_override is None
         ):
             # Still export (TODO.md #59) even with nothing else pending --
             # Save is the trigger the user asked for, not "only if
@@ -471,6 +473,20 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                     return [ErrorMessage(message=str(exc), session_id=message.session_id, cell_id=cell_id)]
             session.cell_layout_overrides.clear()
 
+        saved_slide_layout = session.slide_layout_override
+        if saved_slide_layout is not None:
+            from codeslides.serialization import set_slide_layout
+
+            try:
+                set_slide_layout(deck_path, 0, saved_slide_layout)
+            except (SaveConflictError, InvalidSourceError) as exc:
+                # Same independent-commit precedent as the cell-layout
+                # loop above -- everything already written above stays
+                # written; only this pending override is left in place
+                # for a retried Save.
+                return [ErrorMessage(message=str(exc), session_id=message.session_id)]
+            session.slide_layout_override = None
+
         # Reload the Kernel's baseline synchronously here too, rather than
         # waiting on the CLI file-watcher's async debounce (TODO.md #10,
         # ~1.6s): otherwise the next cell run in *this* (or any other)
@@ -505,6 +521,7 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                     "cells": registry.kernel.deck.effective_cell_names(i),
                     "reveal_code": s.reveal_code,
                     "notes": s.notes,
+                    "layout": s.layout,
                 }
                 for i, s in enumerate(registry.kernel.deck.slides)
             ]
@@ -512,12 +529,16 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
             else None
         )
         cell_layouts_payload = saved_layouts if saved_layouts else None
+        slide_layout_payload = (
+            registry.kernel.deck.slides[0].layout if saved_slide_layout is not None else None
+        )
         return [
             DeckSaved(
                 session_id=message.session_id,
                 cells=saved,
                 slides=slides_payload,
                 cell_layouts=cell_layouts_payload,
+                slide_layout=slide_layout_payload,
             )
         ]
 
@@ -606,6 +627,7 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 "cells": registry.kernel.deck.effective_cell_names(i),
                 "reveal_code": s.reveal_code,
                 "notes": s.notes,
+                "layout": s.layout,
             }
             for i, s in enumerate(registry.kernel.deck.slides)
         ]
@@ -678,6 +700,17 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
         # display concern, not a graph edge). Only SaveDeck actually
         # writes it.
         session.cell_layout_overrides[message.cell_id] = dict(message.layout)
+        return []
+
+    if isinstance(message, SetSlideLayout):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if not (0 <= message.slide_index < len(registry.kernel.deck.slides)):
+            return [ErrorMessage(message="unknown slide", session_id=message.session_id)]
+        # Pure staged draft, same shape as SetCellLayout -- never touches
+        # disk here. Only SaveDeck actually writes it.
+        session.slide_layout_override = dict(message.layout)
         return []
 
     if isinstance(message, RenameCell):

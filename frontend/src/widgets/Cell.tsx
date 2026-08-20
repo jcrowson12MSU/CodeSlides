@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CellState } from '../deckState'
 import { CODE_TAB_ID, type CellLayout, type Quadrant } from '../protocol'
 import { CellOutputView } from './CellOutputView'
@@ -18,12 +18,6 @@ import { isInputElement, isTestElement, isTestResult, isViewerElement, type Elem
 // (also confirmed) -- DEFAULT_FRACTION is the only constant the 3 new
 // dividers need.
 const DEFAULT_FRACTION = 0.5
-// Kept only for `extraCodeAbove`'s own resize handlers below, which are
-// deliberately NOT part of this item's quadrant/divider rewrite (see
-// `useDragDivider`'s own comment) -- item 4 removes extraCodeAbove and
-// these two constants together, not before.
-const MIN_CODE_FRACTION = 0.15
-const MAX_CODE_FRACTION = 0.85
 
 export interface CellMeta {
   instance: 'static' | 'editable'
@@ -91,22 +85,6 @@ export interface CellProps {
    * it's ORed with `meta.hide_code` below so an author's `hide_code=True`
    * always wins regardless of what a caller passes. */
   hideCode?: boolean
-  /** Renders inside this Cell's own `.cs-cell-code` column, directly
-   * above its own `CodeEditor` -- sharing that column's `codeFraction`-
-   * driven width rather than getting an independent one. Used by
-   * SlideShow.tsx for the title slide only (see Deck.
-   * effective_title_slide_cells' own docstring): the setup cell's
-   * editor is composed INTO the main cell's own rendered `Cell` this
-   * way, rather than the two rendering as separate top-level `Cell`s
-   * each with their own view-items column and resize state -- there's
-   * only one `.cs-cell-side` (the main cell's own notes/canvas/output)
-   * and one shared code-column width on the title slide, and this is
-   * what makes the setup editor visually align to it instead of
-   * spanning the full row on its own. Purely presentational: the setup
-   * cell's own source/onRunCell/etc are whatever the caller wires up on
-   * the passed-in element, this Cell doesn't know or care it's a
-   * different cell's editor. */
-  extraCodeAbove?: ReactNode
   /** Hide the entire `.cs-cell-header` row (collapse toggle, cell name,
    * status/read-only badges, Edit button) -- Slides-view-only, per the
    * user's request: a slide has exactly one cell already framed by the
@@ -246,13 +224,9 @@ function migrateColumnFraction(layout: CellLayout | null | undefined): number | 
 // own 'don't worry about a minimum quadrant size' instruction, apply a
 // page-wide drag-lock class, report once on pointerup" shape that used
 // to be hand-copied 3 times (codeFraction/panelFraction/
-// extraCodeFraction) is now a 5th-and-6th near-verbatim copy once the
-// vertical column divider and the right column's own new divider are
-// added -- worth sharing one hook instead of writing yet more copies.
-// `extraCodeAbove`'s own resize trio is deliberately NOT migrated to
-// this hook -- it's being deleted wholesale by item 4, not touched
-// here, per this item's own scoping decision to keep it working as-is
-// during the item-3/item-4 transition.
+// extraCodeFraction, the last one since removed by item 4) is now
+// shared by all 3 of this component's own dividers instead of writing
+// yet more copies.
 //
 // `axis` picks which rect dimension/coordinate drives the fraction;
 // `invert` flips it (used for the column divider, since the dragged
@@ -337,7 +311,6 @@ export function Cell({
   testSourceValues,
   collapsed,
   hideCode: hideCodeProp = false,
-  extraCodeAbove,
   hideHeader = false,
   onRunCell,
   onRunAll,
@@ -391,19 +364,6 @@ export function Cell({
   // back to whatever was last saved.
   const [columnFraction, setColumnFraction] = useState(
     () => migrateColumnFraction(meta.layout) ?? DEFAULT_FRACTION,
-  )
-  // The title-slide-only split between `extraCodeAbove` (the setup
-  // cell's composed-in editor) and this cell's own -- only ever
-  // rendered/draggable when `extraCodeAbove` is actually provided (see
-  // the JSX below), but declared unconditionally same as every other
-  // layout fraction here, so its value survives across renders where
-  // `extraCodeAbove` might toggle (e.g. slide navigation away and back).
-  // Kept as-is per item 3's own scoping decision: extraCodeAbove keeps
-  // working exactly as before during the item-3/item-4 transition,
-  // layered onto whichever quadrant the primary editor tab lives in --
-  // item 4 deletes this together with extraCodeAbove itself, not before.
-  const [extraCodeFraction, setExtraCodeFraction] = useState(
-    () => meta.layout?.extra_code_fraction ?? DEFAULT_FRACTION,
   )
   // Presenter-only line highlighting: purely local, ephemeral state (not
   // sent over the websocket, not persisted to the deck's .py source) --
@@ -533,9 +493,9 @@ export function Cell({
   const [defaultTab, setDefaultTab] = useState(meta.layout?.default_tab)
 
   // Mirrors columnFraction/leftPanelFraction/rightPanelFraction/
-  // tabQuadrant/defaultTab/extraCodeFraction's *latest* values outside
-  // React state, so the pointerup handlers below (stable `useCallback`s,
-  // registered once per drag via `window.addEventListener` rather than
+  // tabQuadrant/defaultTab's *latest* values outside React state, so
+  // the pointerup handlers below (stable `useCallback`s, registered
+  // once per drag via `window.addEventListener` rather than
   // re-subscribed on every fraction change mid-drag) can read the
   // just-settled value without depending on state that would otherwise
   // force resubscribing the listener on every single pointermove of the
@@ -549,7 +509,6 @@ export function Cell({
     rightPanelFraction,
     tabQuadrant,
     defaultTab,
-    extraCodeFraction,
   })
   layoutRef.current = {
     columnFraction,
@@ -557,7 +516,6 @@ export function Cell({
     rightPanelFraction,
     tabQuadrant,
     defaultTab,
-    extraCodeFraction,
   }
 
   // Reports this cell's complete current layout up to App.tsx (per the
@@ -580,7 +538,6 @@ export function Cell({
       right_panel_fraction: current.rightPanelFraction,
       tab_quadrant: current.tabQuadrant,
       ...(current.defaultTab !== undefined ? { default_tab: current.defaultTab } : {}),
-      extra_code_fraction: current.extraCodeFraction,
     })
   }, [onLayoutChange])
 
@@ -657,7 +614,6 @@ export function Cell({
         right_panel_fraction: layoutRef.current.rightPanelFraction,
         tab_quadrant: next,
         ...(layoutRef.current.defaultTab !== undefined ? { default_tab: layoutRef.current.defaultTab } : {}),
-        extra_code_fraction: layoutRef.current.extraCodeFraction,
       })
       return next
     })
@@ -701,65 +657,21 @@ export function Cell({
     emitLayoutChange,
   )
 
-  // The setup/main editor split within `.cs-cell-code`, same mirror-of-
-  // `startResizing`/`handleResizeMove`/`stopResizing` shape as the
-  // panel-resize handlers just above -- a third, independent draggable
-  // divider (different axis/container/state again). Only ever rendered
-  // (and thus only ever dragged) when `extraCodeAbove` is provided --
-  // see the JSX below -- but declared unconditionally like every other
-  // handler here.
-  const extraCodeRef = useRef<HTMLDivElement | null>(null)
-  const extraCodeDraggingRef = useRef(false)
-
-  const handleExtraCodeResizeMove = useCallback((event: PointerEvent) => {
-    const container = extraCodeRef.current
-    if (!container) return
-    const rect = container.getBoundingClientRect()
-    if (rect.height === 0) return
-    const fraction = (event.clientY - rect.top) / rect.height
-    setExtraCodeFraction(Math.min(MAX_CODE_FRACTION, Math.max(MIN_CODE_FRACTION, fraction)))
-  }, [])
-
-  const stopExtraCodeResizing = useCallback(() => {
-    if (!extraCodeDraggingRef.current) return
-    extraCodeDraggingRef.current = false
-    document.body.classList.remove('cs-resizing-vertical')
-    window.removeEventListener('pointermove', handleExtraCodeResizeMove)
-    window.removeEventListener('pointerup', stopExtraCodeResizing)
-    emitLayoutChange()
-  }, [handleExtraCodeResizeMove, emitLayoutChange])
-
-  const startExtraCodeResizing = useCallback(
-    (event: React.PointerEvent) => {
-      event.preventDefault()
-      extraCodeDraggingRef.current = true
-      document.body.classList.add('cs-resizing-vertical')
-      window.addEventListener('pointermove', handleExtraCodeResizeMove)
-      window.addEventListener('pointerup', stopExtraCodeResizing)
-    },
-    [handleExtraCodeResizeMove, stopExtraCodeResizing],
-  )
-
   // A single tab's own view-item content -- extracted so all 4 quadrants
   // render it identically without duplicating this dispatch. Gains a
   // CODE_TAB_ID case (item 3): the primary editor is now one of the
   // dispatched tabs rather than its own always-present column, but its
   // props (source/onRunCell/readOnly/highlightedLines/lineOffset) are
   // otherwise unchanged from the old unconditional render -- a `static`
-  // cell's editor is still read-only, exactly as before.
-  //
-  // `extraCodeAbove` (the title-slide-only setup-cell composition) is
-  // composed in here, directly above this cell's own editor, wherever
-  // CODE_TAB_ID's tab content ends up rendering -- per item 3's own
-  // scoping decision, extraCodeAbove keeps working exactly as before
-  // during the item-3/item-4 transition (it's deleted wholesale by item
-  // 4, not touched here), just relocated from its own always-present
-  // column to wherever the primary editor tab currently lives in the
-  // quadrant system. Same `extraCodeFraction`-driven top/bottom split,
-  // draggable via the same handle, as before this item.
+  // cell's editor is still read-only, exactly as before. The old
+  // `extraCodeAbove` composition (the title-slide-only setup-cell
+  // editor stacked above this one) is gone entirely -- item 4 replaced
+  // it with a bespoke TitleSlide component that doesn't render through
+  // Cell.tsx at all, so this dispatch is now a plain, unconditional
+  // <CodeEditor>.
   function renderTabContent(tab: string) {
     if (tab === CODE_TAB_ID) {
-      const codeEditor = (
+      return (
         <CodeEditor
           source={meta.source}
           onRunCell={onRunCell}
@@ -770,24 +682,6 @@ export function Cell({
           lineOffset={lineOffset}
           onLineCountChange={onLineCountChange}
         />
-      )
-      if (!extraCodeAbove) return codeEditor
-      return (
-        <div className="cs-cell-code-with-extra" ref={extraCodeRef}>
-          <div className="cs-cell-extra-code" style={{ flexBasis: `${extraCodeFraction * 100}%` }}>
-            {extraCodeAbove}
-          </div>
-          <div
-            className="cs-panel-resize-handle"
-            onPointerDown={startExtraCodeResizing}
-            role="separator"
-            aria-orientation="horizontal"
-            aria-label={`Resize ${cellId}'s setup/main editor split`}
-          />
-          <div className="cs-cell-extra-code" style={{ flexBasis: `${(1 - extraCodeFraction) * 100}%` }}>
-            {codeEditor}
-          </div>
-        </div>
       )
     }
     const element = meta.elements.find((e) => e.name === tab)

@@ -1361,6 +1361,77 @@ def set_cell_layout(deck_path: str, cell_name: str, layout: dict[str, Any]) -> N
     path.write_text(updated)
 
 
+def set_slide_layout(deck_path: str, slide_index: int, layout: dict[str, Any]) -> None:
+    """Replace slide `slide_index`'s `layout={...}` kwarg wholesale, on
+    disk -- CELL_QUADRANT_LAYOUT_TODO.md item 4's title-slide layout
+    (`deck.Slide.layout`'s own docstring for its shape), written only
+    when the header's Save button runs, same "staged client-side, only
+    Save writes it" precedent `set_cell_layout` already sets for a
+    cell's own layout. Keyed by *position*, not title, same rationale
+    `_slide_line_spans`/`reorder_slides`/`remove_slide` already
+    document (two slides can share a title).
+
+    Preserves the slide's own `title`/`cells=[...]`/`reveal_code` and
+    its docstring (`Slide.notes`) byte-identical -- only the `layout=`
+    kwarg changes, same "regenerate the decorator, never touch the
+    body" shape `set_cell_layout`/`rebuild_cell_source` already have
+    for cells; a slide's own body is always just a docstring
+    (`app.py`'s own `@app.slide` docstring), so there's no executable
+    code to worry about disturbing here.
+
+    Raises `SaveConflictError` if `slide_index` is out of range, or
+    `InvalidSourceError` if the result doesn't parse."""
+    path = Path(deck_path)
+    original = path.read_text()
+    spans = _slide_line_spans(original)
+    if not (0 <= slide_index < len(spans)):
+        raise SaveConflictError(
+            f"cannot save layout for slide {slide_index}: the deck only has {len(spans)} slide(s)"
+        )
+
+    start, end = spans[slide_index]
+    lines = original.splitlines(keepends=True)
+    slide_source = "".join(lines[start - 1 : end])
+
+    tree = ast.parse(slide_source)
+    func = next(n for n in ast.iter_child_nodes(tree) if isinstance(n, ast.FunctionDef))
+    call = next(
+        dec
+        for dec in func.decorator_list
+        if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute) and dec.func.attr == "slide"
+    )
+    title = ast.literal_eval(call.args[0]) if call.args else ast.literal_eval(
+        next(kw.value for kw in call.keywords if kw.arg == "title")
+    )
+    cell_names = ast.literal_eval(next(kw.value for kw in call.keywords if kw.arg == "cells"))
+    reveal_code = any(
+        kw.arg == "reveal_code" and ast.literal_eval(kw.value) is True for kw in call.keywords
+    )
+
+    _def_line, body_lines = _split_cell_source(slide_source)
+    cells_repr = "[" + ", ".join(repr(name) for name in cell_names) + "]"
+    reveal_kwarg = ", reveal_code=True" if reveal_code else ""
+    layout_kwarg = f", layout={layout!r}" if layout else ""
+    new_slide_source = (
+        f"@app.slide({title!r}, cells={cells_repr}{reveal_kwarg}{layout_kwarg})\n"
+        f"{_def_line}\n" + "\n".join(body_lines) + "\n"
+    )
+
+    updated_lines = list(lines)
+    updated_lines[start - 1 : end] = [new_slide_source]
+    updated = "".join(updated_lines)
+
+    try:
+        ast.parse(updated)
+    except SyntaxError as exc:
+        raise InvalidSourceError(
+            f"saving layout for slide {slide_index} would leave {deck_path!r} with invalid "
+            f"Python syntax, not saved: {exc}"
+        ) from exc
+
+    path.write_text(updated)
+
+
 def set_main_cell(deck_path: str, cell_name: str) -> None:
     """Mark `cell_name` as the deck's one designated main cell
     (`deck.Cell.is_main`), on disk, immediately -- same

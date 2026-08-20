@@ -125,6 +125,14 @@ class Session:
     # never a partial patch), so applying it is always a plain
     # overwrite, never a merge.
     cell_layout_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Pending title-slide layout (table of contents/Setup-Main tab
+    # arrangement -- see `deck.Slide.layout`'s own docstring), staged
+    # client-side and only written to the deck's .py file when
+    # `save_deck` runs -- same "no disk write until Save" precedent
+    # `cell_layout_overrides` already sets, just a single value (not
+    # keyed by anything) since it only ever applies to the title slide
+    # (index 0, `CELL_QUADRANT_LAYOUT_TODO.md` item 4).
+    slide_layout_override: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         for name, cell in self.deck.cells.items():
@@ -209,6 +217,9 @@ class Session:
         new.cell_layout_overrides = {
             name: dict(layout) for name, layout in self.cell_layout_overrides.items()
         }
+        new.slide_layout_override = (
+            dict(self.slide_layout_override) if self.slide_layout_override is not None else None
+        )
         new.instances = {
             name: CellInstance(
                 status=inst.status,

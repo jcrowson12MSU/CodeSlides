@@ -35,6 +35,7 @@ from codeslides.serialization import (
     set_hide_code,
     set_main_cell,
     set_notes_docstring,
+    set_slide_layout,
     set_tests_default,
     title_slide_markdown,
     write_export,
@@ -901,6 +902,47 @@ def test_set_cell_layout_writes_the_layout_on_disk(deck_file):
     # untouched: the cell's own body and its existing elements
     assert "result = base * speed" in deck.cells["live_demo"].source
     assert [e.name for e in deck.cells["live_demo"].elements] == ["speed"]
+
+
+def test_set_slide_layout_writes_the_layout_on_disk(deck_file):
+    layout = {"column_fraction": 0.35, "tabs": ["setup", "main"], "active_tab": "main"}
+    set_slide_layout(str(deck_file), 0, layout)
+
+    deck = load_deck(str(deck_file))
+    assert deck.slides[0].layout == layout
+    # untouched: the slide's own title/cells/notes
+    assert deck.slides[0].title == "Live Coding"
+    assert deck.slides[0].cell_names == ["live_demo"]
+    assert deck.slides[0].notes == "Notes."
+
+
+def test_set_slide_layout_overwrites_a_previous_layout(deck_file):
+    set_slide_layout(str(deck_file), 0, {"column_fraction": 0.2})
+    set_slide_layout(str(deck_file), 0, {"column_fraction": 0.8, "tabs": ["setup"]})
+
+    deck = load_deck(str(deck_file))
+    assert deck.slides[0].layout == {"column_fraction": 0.8, "tabs": ["setup"]}
+
+
+def test_set_slide_layout_raises_on_an_out_of_range_index(deck_file):
+    with pytest.raises(SaveConflictError):
+        set_slide_layout(str(deck_file), 1, {"column_fraction": 0.5})
+
+
+def test_set_slide_layout_preserves_reveal_code(tmp_path):
+    path = tmp_path / "deck.py"
+    path.write_text(
+        "from codeslides import App\n\napp = App()\n\n"
+        '@app.cell\ndef setup():\n    pass\n\n'
+        '@app.slide("Title", cells=["setup"], reveal_code=True)\n'
+        "def slide_1():\n"
+        '    """"""\n'
+    )
+    set_slide_layout(str(path), 0, {"column_fraction": 0.4})
+
+    deck = load_deck(str(path))
+    assert deck.slides[0].reveal_code is True
+    assert deck.slides[0].layout == {"column_fraction": 0.4}
 
 
 def test_set_main_cell_marks_the_named_cell(deck_file):

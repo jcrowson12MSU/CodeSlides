@@ -225,6 +225,25 @@ class SetCellLayout:
 
 
 @dataclass
+class SetSlideLayout:
+    """Stage a new title-slide layout (table of contents/Setup-Main tab
+    arrangement -- see `deck.Slide.layout`'s own docstring) for
+    `session_id`'s slide `slide_index`, without touching disk -- same
+    "no disk write until Save" shape `SetCellLayout` already has for a
+    cell's own layout. `slide_index` is included (rather than assuming
+    index 0) for forward-compatibility only -- CELL_QUADRANT_LAYOUT_
+    TODO.md item 4 only ever sends 0 today, since only the title slide
+    renders through the component that produces this. `layout` is
+    always this slide's *complete* new layout dict, never a partial
+    patch, same convention `SetCellLayout.layout` already has."""
+
+    type: ClassVar[str] = "set_slide_layout"
+    session_id: str
+    slide_index: int
+    layout: dict[str, Any]
+
+
+@dataclass
 class RenameCell:
     """Rename a cell's identity -- its Deck-key/function name, not a
     separate cosmetic label (TODO.md #22's edit button). Same
@@ -464,13 +483,17 @@ class DeckSaved:
     cell name -> that cell's saved `layout` dict, for every cell whose
     pending layout override this save just flushed; `None` (not an empty
     dict) when nothing was pending, same "no change, nothing to splice
-    in" meaning `slides=None` already has."""
+    in" meaning `slides=None` already has. `slide_layout` is the same
+    ack for `SetSlideLayout` (CELL_QUADRANT_LAYOUT_TODO.md item 4): the
+    title slide's saved `layout` dict, or `None` when no title-slide
+    layout override was pending this save."""
 
     type: ClassVar[str] = "deck_saved"
     session_id: str
     cells: list[str]
     slides: list[dict[str, Any]] | None = None
     cell_layouts: dict[str, dict[str, Any]] | None = None
+    slide_layout: dict[str, Any] | None = None
 
 
 @dataclass
@@ -762,6 +785,7 @@ ClientMessage = (
     | SetSlideOrder
     | RemoveSlide
     | SetCellLayout
+    | SetSlideLayout
     | RenameCell
     | SetMainCell
     | SetSetupCell
@@ -819,6 +843,7 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
         SetSlideOrder,
         RemoveSlide,
         SetCellLayout,
+        SetSlideLayout,
         RenameCell,
         SetMainCell,
         SetSetupCell,

@@ -549,14 +549,43 @@ stated below, no further sign-off needed on these points.
     computed from its own two quadrants' emptiness, not an explicit
     author-set flag like `hideCode` is).
 
-- [ ] **4. Replace the title slide's `extraCodeAbove` composition with
+- [x] **4. Replace the title slide's `extraCodeAbove` composition with
   a bespoke title-slide layout: table of contents on the left, an
   ordinary tab strip on the right offering Setup/Main tabs when those
   cell roles exist.** Resolved by the user, decision confirmed below —
   **not** a case of reconciling `extraCodeAbove` with the 4-quadrant
   system; the title slide stops using the per-cell quadrant system
   (and stops using `extraCodeAbove`/`Cell.tsx` to render itself at
-  all) and gets its own dedicated component instead.
+  all) and gets its own dedicated component instead. **Done**: new
+  `TitleSlide.tsx` component (TOC left, tab strip right, one
+  `useDragDivider`-style adjustable divider between them, no further
+  internal splitting of either side); `extraCodeAbove`/
+  `extraCodeFraction` and their whole resize trio deleted from
+  `Cell.tsx` entirely, along with `.cs-cell-extra-code`/
+  `.cs-cell-code-with-extra` from `App.css`. Backend: new
+  `Slide.layout` field (`deck.py`, mirrors `Cell.layout` exactly),
+  `@app.slide(layout=...)` kwarg (`app.py`), `serialization.
+  set_slide_layout` (locates the slide via `_slide_line_spans`,
+  preserves title/cells/reveal_code/docstring, rewrites only the
+  `layout=` kwarg), `Session.slide_layout_override` (staged, only
+  written on Save — same shape as `cell_layout_overrides`), new
+  `SetSlideLayout` client message + `DeckSaved.slide_layout` ack
+  (Python + TS), `/api/deck`'s and every other slide-dict-building
+  site's `"layout"` key added. TOC entries navigate via the existing
+  `onIndexChange` (no new plumbing needed, confirmed by the earlier
+  review pass); Setup/Main tabs embed that cell's actual `<CodeEditor>`
+  with real edit/run semantics, gated on `is_setup`/`is_main` existing
+  in the deck (found by scanning `cellMeta` directly, not
+  `slide.cells`); the main cell's own notes/canvas/other elements
+  correctly no longer render on the title slide at all (confirmed
+  behavior change, verified — nothing else renders there now).
+  9 new backend tests (`test_serialization.py`/`test_ws_handler.py`),
+  577 backend tests pass; `tsc -b --force` and `npm run build` both
+  clean. Verified live in a real browser (Playwright): TOC navigation,
+  adding/removing/switching Setup and Main tabs, dragging the column
+  divider, and a full Save + reload round-trip persisting the exact
+  saved layout (`column_fraction`/`tabs`/`active_tab`) — confirmed by
+  reading the written `.py` file directly, not just the UI.
   - **Layout**: two columns. Left column: a table of contents (new —
     no existing TOC concept anywhere in the codebase today; needs its
     own design — see sub-bullet below). Right column: a tab strip,

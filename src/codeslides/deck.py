@@ -120,10 +120,11 @@ class Cell:
     # client: "code_fraction", "panel_fraction" (both superseded by
     # column_fraction/left_panel_fraction above), "lower_tabs" (list[str]
     # of element names in the old single lower section; superseded by
-    # tab_quadrant), "extra_code_fraction" (the title-slide-only
-    # `extraCodeAbove` setup/main editor split -- removed once item 4
-    # replaces the title slide with a layout that no longer renders
-    # through this cell layout system at all).
+    # tab_quadrant). The old "extra_code_fraction" key (the title-slide-
+    # only `extraCodeAbove` setup/main editor split) has been removed
+    # entirely -- item 4 replaced the title slide with a bespoke layout
+    # (Slide.layout below) that doesn't render through this cell layout
+    # system at all.
     layout: dict[str, Any] | None = None
     # `@app.cell(is_main=True)` -- marks this cell as the deck's single
     # designated entry point (e.g. a cell whose body is an
@@ -204,6 +205,23 @@ class Slide:
     cell_names: list[str]
     reveal_code: bool = False
     notes: str = ""
+    # `@app.slide(layout={...})` -- CELL_QUADRANT_LAYOUT_TODO.md item 4:
+    # the title slide's own bespoke layout (table of contents on the
+    # left, a Setup/Main tab strip on the right, one adjustable divider
+    # between them) -- meaningless for every slide except the title
+    # slide (index 0, `Deck.effective_cell_names`'s own override target)
+    # since only that slide renders through the dedicated TitleSlide
+    # component; every other slide ignores this field entirely. Same
+    # loose-typing/optional-keys precedent `Cell.layout` already sets:
+    # not validated or shaped beyond "a dict," every key optional,
+    # `None` means "no saved layout yet, use the browser's own
+    # defaults." Expected keys (all optional): "column_fraction" (float,
+    # 0-1 -- the table-of-contents column's own share of the row
+    # width), "tabs" (list[str] -- currently-added tab ids, a subset of
+    # "setup"/"main"; absent/empty means neither has been added yet),
+    # "active_tab" (str -- which of "tabs" is currently selected;
+    # absent means the first one).
+    layout: dict[str, Any] | None = None
 
 
 @dataclass

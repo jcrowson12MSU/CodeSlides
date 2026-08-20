@@ -26,11 +26,9 @@ import type { SlideMeta } from './widgets/SlideShow'
 // divider replacements (one vertical divider between the left and right
 // columns, plus each column's own independent top/bottom divider).
 // `extra_code_fraction` (the title-slide-only `extraCodeAbove` setup/main
-// editor split) is kept for now only because `Cell.tsx`/`SlideShow.tsx`
-// still read/write it -- item 4 replaces the title slide with a bespoke
-// layout that doesn't render through this cell layout system at all, at
-// which point `extra_code_fraction` and its last usages should be
-// deleted together, not before.
+// editor split) has been removed entirely, along with `extraCodeAbove`
+// itself -- item 4 replaced the title slide with a bespoke TitleSlide
+// component that doesn't render through this cell layout system at all.
 export type Quadrant = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
 
 // Reserved `tab_quadrant`/tab-id key for the cell's own primary code
@@ -54,10 +52,19 @@ export interface CellLayout {
   code_fraction?: number
   panel_fraction?: number
   lower_tabs?: string[]
-  // Title-slide-only `extraCodeAbove` split -- see the field-level note
-  // above `Quadrant`. Still actively read/written by `Cell.tsx` today;
-  // deleted alongside its last usage when item 4 lands, not before.
-  extra_code_fraction?: number
+}
+
+// CELL_QUADRANT_LAYOUT_TODO.md item 4's title-slide layout
+// (codeslides.deck.Slide.layout's own docstring for the exact shape) --
+// meaningless for any slide but the title slide (index 0). `tabs` is
+// which of 'setup'/'main' have been added (a subset, in no particular
+// required order); `active_tab` is which one is currently selected.
+export type TitleSlideTabId = 'setup' | 'main'
+
+export interface SlideLayout {
+  column_fraction?: number
+  tabs?: TitleSlideTabId[]
+  active_tab?: TitleSlideTabId
 }
 
 // -- Client -> server messages ----------------------------------------------
@@ -151,6 +158,13 @@ export interface SetCellLayout {
   session_id: string
   cell_id: string
   layout: CellLayout
+}
+
+export interface SetSlideLayout {
+  type: 'set_slide_layout'
+  session_id: string
+  slide_index: number
+  layout: SlideLayout
 }
 
 export interface RenameCell {
@@ -254,6 +268,7 @@ export type ClientMessage =
   | SetSlideOrder
   | RemoveSlide
   | SetCellLayout
+  | SetSlideLayout
   | RenameCell
   | SetMainCell
   | SetSetupCell
@@ -333,6 +348,9 @@ export interface DeckSaved {
   // SetCellLayout -- maps cell id -> that cell's saved layout, for
   // every cell whose layout override this save just wrote.
   cell_layouts: Record<string, CellLayout> | null
+  // Non-null only when this save flushed a pending SetSlideLayout --
+  // the title slide's saved layout (CELL_QUADRANT_LAYOUT_TODO.md item 4).
+  slide_layout: SlideLayout | null
 }
 
 export interface CellAdded {

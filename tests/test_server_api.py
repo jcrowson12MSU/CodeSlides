@@ -36,7 +36,9 @@ def test_deck_endpoint_reports_cell_instance_source_and_elements():
     # override -- computed from is_main/is_setup, not the literal
     # `cells=["live_demo"]` declared above. Neither cell here has either
     # flag set, so it comes back empty.
-    assert body["slides"] == [{"title": "Demo", "cells": [], "reveal_code": True, "notes": "Notes."}]
+    assert body["slides"] == [
+        {"title": "Demo", "cells": [], "reveal_code": True, "notes": "Notes.", "layout": None}
+    ]
     assert set(body["cells"].keys()) == {"setup", "live_demo"}
 
     assert body["cells"]["setup"]["instance"] == "static"

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { useDeckState } from './deckState'
-import type { CellLayout } from './protocol'
+import type { CellLayout, SlideLayout } from './protocol'
 import { useCodeSlidesSocket } from './useCodeSlidesSocket'
 import { Cell, type CellMeta } from './widgets/Cell'
 import { EditSlideDeckPanel } from './widgets/EditSlideDeckPanel'
@@ -349,10 +349,23 @@ function App() {
           return { ...prev, cells }
         })
       }
+      // Same defensive-sync shape as `last.cell_layouts` above, for
+      // `set_slide_layout` (CELL_QUADRANT_LAYOUT_TODO.md item 4) -- the
+      // title slide is always index 0.
+      if (last.slide_layout) {
+        const slideLayout = last.slide_layout
+        setDeck((prev) => {
+          if (!prev || prev.slides.length === 0) return prev
+          const slides = [...prev.slides]
+          slides[0] = { ...slides[0], layout: slideLayout }
+          return { ...prev, slides }
+        })
+      }
       const parts: string[] = []
       if (last.cells.length > 0) parts.push(`cells: ${last.cells.join(', ')}`)
       if (last.slides) parts.push('slide order')
       if (last.cell_layouts) parts.push('layout')
+      if (last.slide_layout) parts.push('title slide layout')
       setSaveStatus(
         parts.length > 0
           ? { kind: 'saved', text: `Saved: ${parts.join('; ')}` }
@@ -676,6 +689,18 @@ function App() {
     (cellId: string, layout: CellLayout) => {
       if (!sessionId) return
       send({ type: 'set_cell_layout', session_id: sessionId, cell_id: cellId, layout })
+    },
+    [sessionId, send],
+  )
+
+  // Same "stable identity, staged until Save" shape as `handleLayoutChange`
+  // above, for the title slide's own layout (CELL_QUADRANT_LAYOUT_TODO.md
+  // item 4) -- TitleSlide.tsx's own stopResizing depends on this the same
+  // way Cell.tsx's does on handleLayoutChange.
+  const handleSetSlideLayout = useCallback(
+    (slideIndex: number, layout: SlideLayout) => {
+      if (!sessionId) return
+      send({ type: 'set_slide_layout', session_id: sessionId, slide_index: slideIndex, layout })
     },
     [sessionId, send],
   )
@@ -1121,6 +1146,7 @@ function App() {
           onReorderElements={handleReorderElements}
           onSetElementConfig={handleSetElementConfig}
           onLayoutChange={handleLayoutChange}
+          onSetSlideLayout={handleSetSlideLayout}
           editErrors={editErrors}
         />
       )}
