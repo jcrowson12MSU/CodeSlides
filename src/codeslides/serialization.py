@@ -28,7 +28,9 @@ from codeslides.deck import Cell, Deck, Element
 # as every other protocol constant). Reserved: never a legal
 # author-chosen element name (item 2b's collision guard) since it would
 # be indistinguishable from the primary-editor tab in `tab_quadrant`.
-RESERVED_ELEMENT_NAMES = frozenset({"__code__"})
+# "__inputs__" (frontend/src/protocol.ts's INPUTS_TAB_ID) is the same
+# shape of sentinel for the merged slider/text_input "Inputs" tab.
+RESERVED_ELEMENT_NAMES = frozenset({"__code__", "__inputs__"})
 
 
 class SaveConflictError(ValueError):

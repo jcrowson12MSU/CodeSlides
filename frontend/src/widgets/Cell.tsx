@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { CellState } from '../deckState'
-import { CODE_TAB_ID, type CellLayout, type Quadrant } from '../protocol'
+import { CODE_TAB_ID, INPUTS_TAB_ID, type CellLayout, type Quadrant } from '../protocol'
 import { CellOutputView } from './CellOutputView'
 import { hasCellOutput } from './cellOutput'
 import { CodeEditor } from './CodeEditor'
@@ -8,7 +8,14 @@ import { EditCellPanel } from './EditCellPanel'
 import { ElementWidget } from './ElementWidget'
 import { TestsElementWidget } from './TestsElementWidget'
 import { ViewerElementWidget } from './ViewerElementWidget'
-import { isInputElement, isTestElement, isTestResult, isViewerElement, type ElementMeta } from './elementMeta'
+import {
+  isInputElement,
+  isMergeableInputElement,
+  isTestElement,
+  isTestResult,
+  isViewerElement,
+  type ElementMeta,
+} from './elementMeta'
 
 // CELL_QUADRANT_LAYOUT_TODO.md item 3: a cell's view is 4 independent
 // quadrants (top-left/top-right/bottom-left/bottom-right) instead of the
@@ -603,7 +610,29 @@ export function Cell({
   // CODE_TAB_ID in below, same as it already gated the old always-
   // present code column.
   const hasPrimaryEditorTab = !hideCode && (meta.has_primary_editor ?? true)
-  const allTabs = hasPrimaryEditorTab ? [...meta.elements.map((e) => e.name), CODE_TAB_ID] : meta.elements.map((e) => e.name)
+  // Every slider/text_input element (elementMeta.ts's
+  // `isMergeableInputElement` -- deliberately NOT `button`, confirmed
+  // with the user) collapses into one INPUTS_TAB_ID tab instead of each
+  // getting its own, stacked inside it in the same top-to-bottom order
+  // they appear in `meta.elements` (renderTabContent below). Non-
+  // mergeable elements (viewers, tests, button) are untouched, still one
+  // tab each. The merged tab takes the position of the FIRST mergeable
+  // input in the list, so a cell's overall tab order still roughly
+  // tracks its element order rather than always jumping to the end.
+  const mergeableInputNames = meta.elements.filter((e) => isMergeableInputElement(e.kind)).map((e) => e.name)
+  const elementTabIds: string[] = []
+  let insertedInputsTab = false
+  for (const element of meta.elements) {
+    if (isMergeableInputElement(element.kind)) {
+      if (!insertedInputsTab) {
+        elementTabIds.push(INPUTS_TAB_ID)
+        insertedInputsTab = true
+      }
+      continue
+    }
+    elementTabIds.push(element.name)
+  }
+  const allTabs = hasPrimaryEditorTab ? [...elementTabIds, CODE_TAB_ID] : elementTabIds
   const tabsByQuadrant: Record<Quadrant, string[]> = {
     'top-left': allTabs.filter((t) => quadrantOf(t) === 'top-left'),
     'top-right': allTabs.filter((t) => quadrantOf(t) === 'top-right'),
@@ -790,6 +819,29 @@ export function Cell({
         </div>
       )
     }
+    if (tab === INPUTS_TAB_ID) {
+      // Stacked in the same order as `mergeableInputNames` (built from
+      // `meta.elements` above, which is itself the author's own element
+      // order -- reordering via EditCellPanel's up/down controls changes
+      // this order too, same list both places read from). Numbered 1..N
+      // among just these mergeable inputs -- matching the same numbers
+      // EditCellPanel shows next to each one in its own list, so the two
+      // views visibly correspond per the user's request.
+      return (
+        <div className="cs-cell-inputs-stack">
+          {mergeableInputNames.map((name, index) => {
+            const element = meta.elements.find((e) => e.name === name)
+            if (!element) return null
+            return (
+              <div className="cs-cell-inputs-stack-item" key={name}>
+                <span className="cs-cell-inputs-stack-number">{index + 1}</span>
+                <ElementWidget element={element} value={elementValues[element.name]} onSetValue={onSetElementValue} />
+              </div>
+            )
+          })}
+        </div>
+      )
+    }
     const element = meta.elements.find((e) => e.name === tab)
     // Every non-CODE_TAB_ID tab in `allTabs` (below) comes directly from
     // `meta.elements` -- this should be unreachable, but returning null
@@ -889,7 +941,7 @@ export function Cell({
               }}
               onDragEnd={() => setDraggedTab(null)}
             >
-              {tab === CODE_TAB_ID ? 'Code' : tab}
+              {tab === CODE_TAB_ID ? 'Code' : tab === INPUTS_TAB_ID ? 'Inputs' : tab}
             </button>
           ))}
         </div>

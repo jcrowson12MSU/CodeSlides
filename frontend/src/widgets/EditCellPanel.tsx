@@ -1,13 +1,16 @@
 import { useState } from 'react'
-import { CODE_TAB_ID } from '../protocol'
-import { isTestElement, type ElementMeta } from './elementMeta'
+import { CODE_TAB_ID, INPUTS_TAB_ID } from '../protocol'
+import { isMergeableInputElement, isTestElement, type ElementMeta } from './elementMeta'
 
 // CELL_QUADRANT_LAYOUT_TODO.md item 3 -- `tabs` now includes the
 // primary editor's own sentinel id (CODE_TAB_ID) alongside real element
 // names, so this list needs a friendly display label for it rather than
-// leaking the raw `'__code__'` string into the UI.
+// leaking the raw `'__code__'` string into the UI. INPUTS_TAB_ID (the
+// merged slider/text_input tab) is the same shape of sentinel.
 function tabLabel(tab: string): string {
-  return tab === CODE_TAB_ID ? 'Code' : tab
+  if (tab === CODE_TAB_ID) return 'Code'
+  if (tab === INPUTS_TAB_ID) return 'Inputs'
+  return tab
 }
 
 // Every element kind an author can pick from the "add element" dropdown,
@@ -377,7 +380,17 @@ export function EditCellPanel({
         <span className="cs-edit-cell-elements-label">Elements</span>
         {elements.length === 0 && <span className="cs-edit-cell-no-elements">none</span>}
         <ul>
-          {elements.map((element, index) => (
+          {elements.map((element, index) => {
+            // Position among just the mergeable (slider/text_input)
+            // elements, ignoring every other kind interspersed in the
+            // list -- matches the same 1-based numbers shown next to
+            // each one inside the cell's merged "Inputs" tab
+            // (Cell.tsx's INPUTS_TAB_ID), per the user's request that
+            // the two views visibly correspond.
+            const inputNumber = isMergeableInputElement(element.kind)
+              ? elements.slice(0, index + 1).filter((e) => isMergeableInputElement(e.kind)).length
+              : null
+            return (
             <li key={element.name}>
               <div className="cs-edit-cell-element-row">
                 <div className="cs-edit-cell-reorder">
@@ -399,6 +412,7 @@ export function EditCellPanel({
                   </button>
                 </div>
                 <span>
+                  {inputNumber !== null && <span className="cs-edit-cell-input-number">{inputNumber}.</span>}{' '}
                   {element.name} <em>({element.kind})</em>
                 </span>
                 <button
@@ -480,7 +494,8 @@ export function EditCellPanel({
                 </form>
               )}
             </li>
-          ))}
+            )
+          })}
         </ul>
 
         <form className="cs-edit-cell-add-element" onSubmit={handleAddSubmit}>

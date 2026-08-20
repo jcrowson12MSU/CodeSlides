@@ -1246,6 +1246,40 @@ body.cs-resizing-vertical {
   min-height: 0;
 }
 
+/* The merged "Inputs" tab (Cell.tsx's INPUTS_TAB_ID): every slider/
+   text_input element stacked vertically in one tab instead of each
+   getting its own, in the same order EditCellPanel's element list shows
+   them. Scrollable (not just growing unbounded) since `.cs-cell-tab-
+   content` already caps its own height -- same "content scrolls inside
+   its container" precedent every other tab content area follows. */
+.cs-cell-inputs-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  overflow-y: auto;
+  min-height: 0;
+  width: 100%;
+}
+
+.cs-cell-inputs-stack-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+/* Same number shown next to this element's own entry in EditCellPanel's
+   list (`.cs-edit-cell-input-number`) -- counts only among sliders/
+   text_inputs, so the two views visibly correspond per the user's
+   request. */
+.cs-cell-inputs-stack-number {
+  flex: 0 0 auto;
+  color: #999;
+  font-size: var(--cs-font-sm);
+  font-variant-numeric: tabular-nums;
+  min-width: 1.2em;
+  text-align: right;
+}
+
 .cs-minimize-toggle {
   border: none;
   background: none;
@@ -1734,6 +1768,16 @@ body.cs-slides-locked {
 .cs-edit-cell-elements li em {
   color: #999;
   font-style: normal;
+}
+
+/* Same number shown next to this element's own stacked widget inside the
+   cell's merged "Inputs" tab (Cell.tsx's INPUTS_TAB_ID,
+   `.cs-cell-inputs-stack-number`) -- counts only among sliders/
+   text_inputs, ignoring every other element kind interspersed in the
+   list. */
+.cs-edit-cell-input-number {
+  color: #999;
+  font-variant-numeric: tabular-nums;
 }
 
 .cs-edit-cell-element-row > button,

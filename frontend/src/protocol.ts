@@ -41,6 +41,16 @@ export type Quadrant = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
 // at all, not merely "not positioned yet" -- see item 2b.
 export const CODE_TAB_ID = '__code__'
 
+// Reserved `tab_quadrant`/tab-id key for the cell's merged "Inputs" tab --
+// every slider/text_input element (elementMeta.ts's
+// `isMergeableInputElement`) collapses into this one tab, stacked in the
+// same order they appear in the cell's own element list, rather than each
+// getting its own separate tab. Same sentinel-id shape as CODE_TAB_ID
+// above (never a legal author-chosen element name, same reserved-name-
+// collision guard); absent from the tab list entirely when the cell has
+// no mergeable input elements at all, not "present but empty."
+export const INPUTS_TAB_ID = '__inputs__'
+
 export interface CellLayout {
   // New shape (3 independent dividers + 4-quadrant tab assignment).
   column_fraction?: number
