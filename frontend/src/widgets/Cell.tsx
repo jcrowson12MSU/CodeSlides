@@ -787,7 +787,35 @@ export function Cell({
             </button>
           ))}
         </div>
-        {!isEmpty && <div className="cs-cell-tab-content">{active && renderTabContent(active)}</div>}
+        {/* Keyed by `active` -- a quadrant's tab-content slot is otherwise
+            reused verbatim across different tabs on every render (same
+            JSX position), so a CodeEditor-backed tab (the primary Code
+            tab, or any `tests` element) switching to another CodeEditor-
+            backed tab reuses the same live, uncontrolled CodeMirror view
+            instead of getting a fresh one. That silently carried over
+            unsaved keystrokes into the newly-active tab's element and then
+            clobbered them with that element's actual saved source -- found
+            and fixed while verifying multiple simultaneous test editors
+            (CELL_QUADRANT_LAYOUT_TODO.md item 8) keep independent state.
+            Tradeoff, revisited and accepted 2026-08-19: remounting on every
+            active-tab change also discards any *unsaved* (not yet
+            Shift+Enter'd) text in a `tests` editor if you navigate away
+            from it and back, even to that same tab -- previously that
+            same-tab case preserved uncommitted keystrokes (uncontrolled
+            CodeMirror surviving re-renders), only the cross-tab case was
+            buggy. Decided to accept this: silent cross-element data bleed
+            (edits landing in, and being judged against, the wrong test)
+            is a correctness bug; losing an unsubmitted same-tab draft on
+            navigation is a visible, unsurprising reset, not corruption. If
+            this tradeoff ever needs revisiting, the fix would be adding
+            per-elementId draft state (e.g. a ref/map in this component)
+            that this tab-content slot restores from on remount, rather
+            than removing the key. */}
+        {!isEmpty && (
+          <div className="cs-cell-tab-content" key={active}>
+            {active && renderTabContent(active)}
+          </div>
+        )}
       </div>
     )
   }

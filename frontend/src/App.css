@@ -1697,6 +1697,25 @@ body.cs-slides-locked {
   cursor: pointer;
 }
 
+/* CELL_QUADRANT_LAYOUT_TODO.md item 2b/5: the "Remove/Add primary
+   editor" button and its explanatory note (shown only in the
+   no-primary-editor state -- see EditCellPanel.tsx's own comment).
+   `flex-wrap` lets the note drop to its own line below the button
+   rather than forcing the panel wider to fit both on one row. */
+.cs-edit-cell-primary-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.cs-edit-cell-no-primary-editor-note {
+  flex-basis: 100%;
+  color: #888;
+  font-size: var(--cs-font-sm);
+}
+
 .cs-edit-cell-default-tab {
   margin-bottom: 0.75rem;
 }
@@ -1859,8 +1878,25 @@ body.cs-slides-locked {
 
 .cs-edit-cell-add-element {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
+}
+
+/* CELL_QUADRANT_LAYOUT_TODO.md item 5's "add test editor" affordance:
+   explains why the "+ Add element" submit is disabled for the `tests`
+   kind specifically, rather than leaving a silently-disabled button
+   with no reason given -- same visible-messaging precedent the primary
+   editor's own "Remove primary editor" button already has via its
+   `title` tooltip, but as always-visible text here since this
+   condition depends on which kind is currently selected in the
+   dropdown, not just the cell's own state. `flex-basis: 100%` wraps it
+   onto its own line below the form's controls rather than squeezing
+   into the same row. */
+.cs-edit-cell-add-element-blocked {
+  flex-basis: 100%;
+  color: #a06a00;
+  font-size: var(--cs-font-sm);
 }
 
 /* Slides view "Edit slide deck" control (browser-driven counterpart to
