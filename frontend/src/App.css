@@ -1602,28 +1602,6 @@ body.cs-slides-locked {
   overscroll-behavior: contain;
 }
 
-/* A whole-column-collapsed strip must NOT stretch to match the above --
-   `.cs-cell-body`'s `align-items: stretch` (needed so a short populated
-   column still fills the slide's available height, TODO.md #34 follow-
-   up) stretches EVERY flex item to `.cs-cell-body`'s own cross-axis
-   size by default, not to its tallest sibling's actual rendered height.
-   An empty column has no content of its own to size from, so without
-   this override it stretched to the full slide height regardless of
-   how short its populated sibling actually rendered -- overflowing
-   past the visible cell content, past the viewport's own bottom edge
-   (reported: the "Drop a tab here" strip cut off on the right), and
-   visually unbalancing the row (reported: the cell reading as not
-   centered, the oversized empty side dragging the row's apparent
-   center off to one side). `align-self: flex-start` opts this one
-   column back out of the stretch, back to `.cs-cell-column-empty`'s
-   own `flex: 0 0 auto` content-sized height (App.css, same behavior
-   Cells view already has) -- Slides view specifically, since Cells
-   view's `.cs-cell-body` was never `flex: 1`-stretched to begin with
-   and never had this problem. */
-.cs-slides-locked .cs-slide .cs-cell-column-empty {
-  align-self: flex-start;
-}
-
 /* The per-element minimize toggle (`.cs-minimize-toggle`, above) is
    deliberately subtle in Cells view -- pale gray, no border, tucked at
    the edge of an already-busy row full of similar small controls. That
