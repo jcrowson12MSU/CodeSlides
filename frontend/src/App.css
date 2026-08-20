@@ -676,6 +676,17 @@ body.cs-resizing {
   flex: 1;
   min-height: 0;
   width: 100%;
+  /* Without this, `width: 100%` is content-box width by default (no
+     global box-sizing reset exists in this codebase) -- the inherited
+     `1px dashed` border from `.cs-cell-panel-empty` then adds on top of
+     that 100%, overflowing the parent's own `2.5rem`-wide column by 2px
+     each side. In a narrow (40px) column with no room to spare, that
+     overflow pushed the strip's right border completely outside the
+     parent's rendered/clipped bounds -- reported as the strip's right
+     edge being "cut off," confirmed via a screenshot showing a clean
+     left border and no right border at all, not an actual viewport-
+     edge clipping issue. */
+  box-sizing: border-box;
   align-items: stretch;
   justify-content: center;
 }

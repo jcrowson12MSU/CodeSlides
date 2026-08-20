@@ -17,9 +17,15 @@ app = App()
 @app.cell
 def last_updated():
     return cs.md(
-        "## Last updated: 2026-08-20 09:45 CDT\n\n"
+        "## Last updated: 2026-08-20 10:01 CDT\n\n"
         "If you don't see this exact timestamp, you're looking at an "
-        "old version of this file -- pull again and restart the server."
+        "old version of this file -- pull again and restart the server.\n\n"
+        "**This update fixes:** the whole-column-collapsed \"Drop a tab "
+        "here\" strip was missing its right-hand border entirely (a "
+        "box-sizing bug -- `width: 100%` plus a `1px` border overflowed "
+        "the strip's narrow parent column by 2px, pushing the right "
+        "edge outside the visible/clipped area). It now has a complete "
+        "border on all four sides."
     )
 
 
@@ -97,3 +103,23 @@ def empty_column_check(a, b):
     space.
     """
     return a + b
+
+
+@app.cell(instance="editable")
+def title_slide():
+    return cs.md('# verify_updates\n\n*One-line summary -- edit me.*\n\n## Contents\n\n1. [aaa](#slide-1)\n2. [dddd](#slide-2)')
+
+
+@app.slide('Title', cells=['title_slide'])
+def slide_title():
+    """"""
+
+
+@app.slide('aaa', cells=['inputs_merge_check'])
+def slide_aaa():
+    """"""
+
+
+@app.slide('dddd', cells=['output_position_check'])
+def slide_dddd():
+    """"""
