@@ -359,7 +359,8 @@ button.cs-save-button {
    case regardless. */
 .cs-cell-column-empty {
   flex: 0 0 auto;
-  min-height: 2.5rem;
+  width: 2.5rem;
+  display: flex;
 }
 
 /* The draggable divider between the left and right columns. A
@@ -602,6 +603,46 @@ body.cs-resizing {
    between the `{tabs.map(...)}` and the closing tag) -- a CSS
    pseudo-element rather than a real DOM node/prop threaded down from
    Cell.tsx just for this one label. */
+/* A whole-column-collapsed strip (Cell.tsx's `renderCollapsedColumn`,
+   left or right side entirely empty): the ordinary `.cs-cell-panel-empty`
+   shape above is a short/wide horizontal strip (built for a single empty
+   quadrant next to a populated one in the same column) -- reused here for
+   a tall/narrow *vertical* strip instead, so it needs the opposite
+   proportions. Width fixed to the same `2.5rem` "thickness" the
+   horizontal strips use for their own min-height, so a rotated column
+   strip and an empty top/bottom quadrant strip read as the same visual
+   weight; height instead stretches to fill nearly all of `.cs-cell-body`'s
+   own height (inherited via `.cs-cell-column-empty`'s `display: flex`
+   parent, `align-items: stretch` by default) rather than sizing to its
+   (now rotated, vertical) text content. */
+.cs-cell-panel-empty-vertical {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  align-items: stretch;
+  justify-content: center;
+}
+
+.cs-cell-panel-empty-vertical .cs-cell-tabs {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 0.5rem 0;
+}
+
+/* Rotated so the "Drop a tab here" label reads bottom-to-top along the
+   strip's long (vertical) axis instead of overflowing a 2.5rem-wide box
+   horizontally -- `writing-mode: vertical-rl` (not a `transform: rotate`
+   on the horizontal-mode text) so the text still lays out/wraps/centers
+   using its own natural block flow, just rotated, rather than needing a
+   separate transform-origin dance to re-center a rotated box inside its
+   unrotated parent. */
+.cs-cell-panel-empty-vertical .cs-cell-tabs:empty::before {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
 .cs-cell-panel-empty .cs-cell-tabs:empty::before {
   content: 'Drop a tab here';
   color: #999;

@@ -826,11 +826,16 @@ export function Cell({
   // sized wrapper -- this is the single collapsed strip itself, still a
   // real drop target (dropping a tab here assigns it to the column's
   // own top quadrant, same "top" default `quadrantOf` already falls
-  // back to elsewhere).
+  // back to elsewhere). `cs-cell-panel-empty-vertical` (on top of the
+  // ordinary `cs-cell-panel-empty`) distinguishes this tall/narrow
+  // column strip from a quadrant's own short/wide empty strip -- same
+  // underlying drop target, but its "thickness" runs along the opposite
+  // axis, so it needs its own width/height/rotated-text treatment
+  // (App.css).
   function renderCollapsedColumn(topQuadrant: Quadrant) {
     return (
       <div
-        className="cs-cell-panel cs-cell-panel-empty"
+        className="cs-cell-panel cs-cell-panel-empty cs-cell-panel-empty-vertical"
         onDragOver={(event) => {
           if (draggedTab === null) return
           event.preventDefault()
