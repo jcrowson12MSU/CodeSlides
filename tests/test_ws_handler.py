@@ -42,7 +42,6 @@ from codeslides.protocol import (
     SetElementValue,
     SetHideCode,
     SetMainCell,
-    SetSlideLayout,
     SetSlideOrder,
     SetTestSource,
     SetUiState,
@@ -773,8 +772,8 @@ def test_save_deck_flushes_a_pending_slide_order(tmp_path):
     # have neither flag set, so it comes back empty. "First", now slide
     # 1, is unaffected and still shows its own declared `["setup"]`.
     assert messages[0].slides == [
-        {"title": "Second", "cells": [], "reveal_code": False, "notes": "", "layout": None},
-        {"title": "First", "cells": ["setup"], "reveal_code": False, "notes": "", "layout": None},
+        {"title": "Second", "cells": [], "reveal_code": False, "notes": ""},
+        {"title": "First", "cells": ["setup"], "reveal_code": False, "notes": ""},
     ]
     # written to disk immediately -- and the Kernel's own baseline
     # picked it up synchronously, same as every other SaveDeck path
@@ -915,73 +914,6 @@ def test_save_deck_flushes_layouts_for_multiple_cells(tmp_path):
     text = path.read_text()
     assert "code_fraction': 0.4" in text
     assert "code_fraction': 0.7" in text
-
-
-def test_set_slide_layout_stages_without_writing_to_disk(tmp_path):
-    registry, path = _build_file_backed_registry_with_slides(tmp_path)
-    session = registry.create()
-    before = path.read_text()
-    layout = {"column_fraction": 0.3, "tabs": ["setup"]}
-
-    messages = handle_message(registry, SetSlideLayout(session_id=session.session_id, slide_index=0, layout=layout))
-
-    assert messages == []
-    assert session.slide_layout_override == layout
-    # nothing written yet -- staged only, same as SetCellLayout
-    assert path.read_text() == before
-    assert registry.kernel.deck.slides[0].layout is None
-
-
-def test_set_slide_layout_unknown_slide_produces_error_not_crash(tmp_path):
-    registry, _ = _build_file_backed_registry_with_slides(tmp_path)
-    session = registry.create()
-
-    messages = handle_message(
-        registry, SetSlideLayout(session_id=session.session_id, slide_index=99, layout={"column_fraction": 0.5})
-    )
-
-    assert len(messages) == 1
-    assert isinstance(messages[0], ErrorMessage)
-    assert session.slide_layout_override is None
-
-
-def test_set_slide_layout_unknown_session_produces_error_not_crash(tmp_path):
-    registry, _ = _build_file_backed_registry_with_slides(tmp_path)
-
-    messages = handle_message(
-        registry, SetSlideLayout(session_id="does-not-exist", slide_index=0, layout={"column_fraction": 0.5})
-    )
-
-    assert len(messages) == 1
-    assert isinstance(messages[0], ErrorMessage)
-
-
-def test_save_deck_flushes_a_pending_slide_layout(tmp_path):
-    registry, path = _build_file_backed_registry_with_slides(tmp_path)
-    session = registry.create()
-    layout = {"column_fraction": 0.25, "tabs": ["setup", "main"], "active_tab": "setup"}
-    handle_message(registry, SetSlideLayout(session_id=session.session_id, slide_index=0, layout=layout))
-
-    messages = handle_message(registry, SaveDeck(session_id=session.session_id))
-
-    assert len(messages) == 1
-    assert isinstance(messages[0], DeckSaved)
-    assert messages[0].slide_layout == layout
-    # written to disk immediately -- and the Kernel's own baseline
-    # picked it up synchronously, same as every other SaveDeck path
-    assert registry.kernel.deck.slides[0].layout == layout
-    assert "layout=" in path.read_text()
-    # the pending override is cleared, same as cell_layout_overrides after a save
-    assert session.slide_layout_override is None
-
-
-def test_save_deck_with_no_slide_layout_pending_omits_it_from_the_ack(tmp_path):
-    registry, _ = _build_file_backed_registry_with_slides(tmp_path)
-    session = registry.create()
-
-    messages = handle_message(registry, SaveDeck(session_id=session.session_id))
-
-    assert messages[0].slide_layout is None
 
 
 def test_add_cell_emits_cell_added_and_writes_to_disk(tmp_path):

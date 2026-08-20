@@ -1,20 +1,15 @@
 import { useEffect, useMemo, useRef } from 'react'
 import type { CellState } from '../deckState'
-import type { CellLayout, SlideLayout } from '../protocol'
+import type { CellLayout } from '../protocol'
 import { Cell, type CellMeta } from './Cell'
+import { CodeEditor } from './CodeEditor'
 import { computeLineOffsets } from './lineOffsets'
-import { TitleSlide } from './TitleSlide'
 
 export interface SlideMeta {
   title: string
   cells: string[]
   reveal_code: boolean
   notes: string
-  // CELL_QUADRANT_LAYOUT_TODO.md item 4 -- meaningless for any slide
-  // but the title slide (index 0), which is the only one TitleSlide
-  // reads this from. Optional/nullable same as CellMeta.layout: absent
-  // means "never saved, use TitleSlide's own defaults."
-  layout?: SlideLayout | null
 }
 
 export interface SlideShowProps {
@@ -60,12 +55,6 @@ export interface SlideShowProps {
   onReorderElements: (cellId: string, elementOrder: string[]) => void
   onSetElementConfig: (cellId: string, elementId: string, config: Record<string, unknown>) => void
   onLayoutChange: (cellId: string, layout: CellLayout) => void
-  /** TitleSlide's own layout (table of contents/tab-strip column split,
-   * which Setup/Main tabs are added, which is active) -- staged client-
-   * side, only written to disk on the next Save, same shape
-   * `onLayoutChange` already has for a cell's own layout
-   * (CELL_QUADRANT_LAYOUT_TODO.md item 4). */
-  onSetSlideLayout: (slideIndex: number, layout: SlideLayout) => void
   editErrors: Record<string, string>
 }
 
@@ -111,7 +100,6 @@ export function SlideShow({
   onReorderElements,
   onSetElementConfig,
   onLayoutChange,
-  onSetSlideLayout,
   editErrors,
 }: SlideShowProps) {
   const slideRef = useRef<HTMLDivElement | null>(null)
@@ -227,53 +215,52 @@ export function SlideShow({
     )
   }
 
-  // CELL_QUADRANT_LAYOUT_TODO.md item 4: the title slide (index 0) no
-  // longer renders through Cell.tsx at all -- TitleSlide replaces the
-  // old extraCodeAbove composition entirely. Found by scanning
-  // `cellMeta` directly for whichever cell has `is_setup`/`is_main` set
-  // (there's at most one of each, `Deck.add_cell`'s own uniqueness
-  // check), rather than `slide.cells` (which is server-computed to be
-  // exactly this pair already, via `effective_cell_names`, but scanning
-  // `cellMeta` directly is the more robust source of truth and matches
-  // what TitleSlide itself expects: "does this role exist in the deck
-  // at all," not "is it on this particular slide").
-  if (index === 0) {
-    const setupCellId = Object.keys(cellMeta).find((id) => cellMeta[id]?.is_setup)
-    const mainCellId = Object.keys(cellMeta).find((id) => cellMeta[id]?.is_main)
-    return (
-      <div className="cs-slideshow">
-        <div className="cs-slide" ref={slideRef}>
-          <TitleSlide
-            slides={slides}
-            activeIndex={index}
-            onIndexChange={onIndexChange}
-            layout={slide.layout}
-            onLayoutChange={(layout) => onSetSlideLayout(index, layout)}
-            setupCellId={setupCellId}
-            setupMeta={setupCellId ? cellMeta[setupCellId] : undefined}
-            mainCellId={mainCellId}
-            mainMeta={mainCellId ? cellMeta[mainCellId] : undefined}
-            lineOffsets={cellLineOffsets}
-            onRunCell={onRunCell}
-            onRunAll={onRunAll}
-            onLineCountChange={onLineCountChange}
-          />
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="cs-slideshow">
       <div className="cs-slide" ref={slideRef}>
         {slide.cells.map((cellId) => {
           const meta = cellMeta[cellId]
           if (!meta) return null
+          // The title slide (index 0, Deck.effective_title_slide_cells
+          // server-side) composes the setup cell's editor directly INTO
+          // the main cell's own rendered Cell (via extraCodeAbove)
+          // rather than rendering it as an independent top-level Cell --
+          // there's only one view-items column on this slide (the main
+          // cell's own notes/canvas/output), and the setup editor needs
+          // to share that Cell's own codeFraction-driven width to align
+          // with the main editor below it, not size itself
+          // independently. So the setup cell is skipped here entirely;
+          // see the `extraCodeAbove` prop below, on the main cell's own
+          // <Cell>, for where it actually renders. Elsewhere (Cells
+          // view, or the setup cell's own dedicated "Setup" slide) it
+          // still renders as a normal, independent Cell.
+          if (index === 0 && meta.is_setup) return null
+          // Only injected onto the main cell specifically (not just
+          // "whichever cell isn't setup") -- effective_title_slide_cells
+          // only ever puts setup/main on this slide today, but scoping
+          // to `meta.is_main` keeps this correct even if that ever
+          // changes, rather than assuming every other cell here wants
+          // the setup editor stacked above it.
+          const setupCellId =
+            index === 0 && meta.is_main ? slide.cells.find((id) => cellMeta[id]?.is_setup) : undefined
+          const setupMeta = setupCellId ? cellMeta[setupCellId] : undefined
           return (
             <Cell
               key={cellId}
               cellId={cellId}
               meta={meta}
+              extraCodeAbove={
+                setupCellId && setupMeta ? (
+                  <CodeEditor
+                    source={setupMeta.source}
+                    onRunCell={(source) => onRunCell(setupCellId, source)}
+                    onRunAll={onRunAll}
+                    readOnly={setupMeta.instance === 'static'}
+                    lineOffset={cellLineOffsets[setupCellId] ?? 0}
+                    onLineCountChange={(count) => onLineCountChange(setupCellId, count)}
+                  />
+                ) : undefined
+              }
               lineOffset={cellLineOffsets[cellId] ?? 0}
               onLineCountChange={(count) => onLineCountChange(cellId, count)}
               state={cellState[cellId]}

@@ -549,43 +549,14 @@ stated below, no further sign-off needed on these points.
     computed from its own two quadrants' emptiness, not an explicit
     author-set flag like `hideCode` is).
 
-- [x] **4. Replace the title slide's `extraCodeAbove` composition with
+- [ ] **4. Replace the title slide's `extraCodeAbove` composition with
   a bespoke title-slide layout: table of contents on the left, an
   ordinary tab strip on the right offering Setup/Main tabs when those
   cell roles exist.** Resolved by the user, decision confirmed below —
   **not** a case of reconciling `extraCodeAbove` with the 4-quadrant
   system; the title slide stops using the per-cell quadrant system
   (and stops using `extraCodeAbove`/`Cell.tsx` to render itself at
-  all) and gets its own dedicated component instead. **Done**: new
-  `TitleSlide.tsx` component (TOC left, tab strip right, one
-  `useDragDivider`-style adjustable divider between them, no further
-  internal splitting of either side); `extraCodeAbove`/
-  `extraCodeFraction` and their whole resize trio deleted from
-  `Cell.tsx` entirely, along with `.cs-cell-extra-code`/
-  `.cs-cell-code-with-extra` from `App.css`. Backend: new
-  `Slide.layout` field (`deck.py`, mirrors `Cell.layout` exactly),
-  `@app.slide(layout=...)` kwarg (`app.py`), `serialization.
-  set_slide_layout` (locates the slide via `_slide_line_spans`,
-  preserves title/cells/reveal_code/docstring, rewrites only the
-  `layout=` kwarg), `Session.slide_layout_override` (staged, only
-  written on Save — same shape as `cell_layout_overrides`), new
-  `SetSlideLayout` client message + `DeckSaved.slide_layout` ack
-  (Python + TS), `/api/deck`'s and every other slide-dict-building
-  site's `"layout"` key added. TOC entries navigate via the existing
-  `onIndexChange` (no new plumbing needed, confirmed by the earlier
-  review pass); Setup/Main tabs embed that cell's actual `<CodeEditor>`
-  with real edit/run semantics, gated on `is_setup`/`is_main` existing
-  in the deck (found by scanning `cellMeta` directly, not
-  `slide.cells`); the main cell's own notes/canvas/other elements
-  correctly no longer render on the title slide at all (confirmed
-  behavior change, verified — nothing else renders there now).
-  9 new backend tests (`test_serialization.py`/`test_ws_handler.py`),
-  577 backend tests pass; `tsc -b --force` and `npm run build` both
-  clean. Verified live in a real browser (Playwright): TOC navigation,
-  adding/removing/switching Setup and Main tabs, dragging the column
-  divider, and a full Save + reload round-trip persisting the exact
-  saved layout (`column_fraction`/`tabs`/`active_tab`) — confirmed by
-  reading the written `.py` file directly, not just the UI.
+  all) and gets its own dedicated component instead.
   - **Layout**: two columns. Left column: a table of contents (new —
     no existing TOC concept anywhere in the codebase today; needs its
     own design — see sub-bullet below). Right column: a tab strip,
@@ -670,72 +641,72 @@ stated below, no further sign-off needed on these points.
     confirm nothing else reads `extra_code_fraction` before deleting it
     (grep before removing, don't assume it's single-purpose).
 
-- [x] **5. Update `EditCellPanel.tsx`'s tab-related UI for 4
+- [ ] **5. Update `EditCellPanel.tsx`'s tab-related UI for 4
   quadrants, and for the new primary/test editor cardinality rules.**
-  **Done**:
-  - "Default view item" — confirmed correct with no change needed:
-    `Cell.tsx`'s `allTabs` (passed as `tabs`) is already a flat list of
-    every tab regardless of which quadrant it's currently in, so this
-    was quadrant-agnostic by construction from item 3 onward.
-  - "Add primary editor"/"Remove primary editor" — already fully built
-    in item 2b (correct enable/disable logic, `title` tooltip
-    explaining why removal is blocked). This item added the missing
-    piece: an explanatory note (`.cs-edit-cell-no-primary-editor-note`)
-    shown only in the no-primary-editor state, making the distinction
-    from `hide_code=True` (which now has its own clarifying `title`
-    tooltip) legible rather than just two adjacent controls with no
-    stated relationship.
-  - **New: the "add test editor" affordance** — implemented as a
-    guard on the existing generic "+ Add element" form (not a
-    duplicate/parallel button) rather than inventing a second
-    element-adding UI: the submit button disables specifically when
-    `tests` is the selected kind AND the cell has no primary editor
-    (every other kind is unaffected), with a visible amber message
-    explaining why, matching the confirmed "visible messaging, not a
-    silently-disabled button" requirement. Server-side enforcement
-    deliberately NOT added — confirmed with the user that "has a
-    primary editor" has no real backend representation today (a
-    `pass`-bodied stub written by an author is indistinguishable on
-    disk from one whose primary editor was removed), so this is a
-    frontend-only guard, same trust level every other author-facing
-    control in this app already has. No upper bound on test-editor
-    count — unchanged, matching today's actual behavior.
-  - Verified live in a real browser (Playwright): the note appears
-    only when there's no primary editor, the add-test-editor guard
-    correctly blocks only the `tests` kind (confirmed `slider` stays
-    enabled), and re-adding the primary editor correctly re-enables
-    adding a test element.
+  - "Default view item" (which tab shows first on load) still needs
+    to work regardless of which quadrant a tab currently lives in —
+    likely no change needed there beyond confirming it.
+  - If the code editor is now a removable/repositionable tab, the
+    edit panel needs a way to represent "the code editor is currently
+    not shown at all" distinctly from `hide_code=True` (author-
+    declared, permanent, not user-repositionable) — these are two
+    different concepts (`hide_code` removes the *option* to show code
+    at all; "not currently in any quadrant" is a repositionable tab
+    that happens to be parked nowhere right now) and the UI needs to
+    make that distinction legible, not conflate them.
+  - **New: an explicit "add primary editor" / "remove primary editor"
+    affordance**, disabled/hidden for "add" when the cell already has
+    one (0-or-1 cardinality, per "Design decisions") and disabled for
+    "remove" when the cell has any `tests`-kind elements present (see
+    item 2b's add-time dependency guard) — with visible messaging for
+    why removal is blocked, not just a silently-disabled button.
+  - **New: an explicit "add test editor" affordance**, disabled when
+    the cell has no primary editor (the add-time dependency rule from
+    "Design decisions"), otherwise unlimited — no upper bound on how
+    many `tests` elements a cell can carry, matching today's actual
+    (unenforced-limit) behavior.
 
-- [x] **6. CSS**: extend `App.css`'s existing panel/resize-handle rules
-  to a nested-flex layout matching the 3-independent-dividers design,
-  with a whole-column collapse class and a redesigned narrow-screen
-  stacking rule. **Confirmed already fully done as part of item 3**,
-  not separate work: `.cs-cell-column` (nested flex, not a CSS grid —
-  each column independently contains its own `.cs-cell-panels`, so the
-  two columns' horizontal dividers already sit at different heights,
-  verified live during item 3), `.cs-cell-column-empty` (the exact
-  whole-column collapse class this item asked for), and the
-  `@media (max-width: 800px)` rule already generalized to
-  `.cs-cell-column` for both columns. No further CSS work needed.
+- [ ] **6. CSS**: extend `App.css`'s existing panel/resize-handle rules
+  (`.cs-cell-panels`, `.cs-cell-panel`, `.cs-cell-panel-empty`,
+  `.cs-panel-resize-handle`, `.cs-resize-handle`) to a nested-flex
+  layout matching the 3-independent-dividers design (a top-level
+  left/right flex row, each column independently a top/bottom flex
+  column with its own divider — NOT a single CSS grid with one shared
+  row-height, since the two columns' horizontal dividers must be able
+  to sit at different heights) — reusing the existing empty-quadrant
+  collapse treatment (`.cs-cell-panel-empty`) symmetrically across all
+  4 quadrants, not just the 2 that have it today. **Also needs a
+  second, coarser collapse class for the whole-column case** (both of
+  a column's own quadrants empty — see "Design decisions" and item 3
+  above) — likely a new `.cs-cell-column-empty` (or similar) applied
+  to the whole `top-level left/right flex row`'s left or right child,
+  giving it the same "thin strip, fixed size, not a flex share"
+  treatment `.cs-cell-panel-empty` already gives one quadrant, just
+  one level up the tree; the top-level row's own flex-basis math
+  (today's `hideCode ? '100%' : ...` on `.cs-cell-side`, see `Cell.tsx`)
+  is the direct precedent for how the *other*, non-collapsed column
+  should claim the freed-up width. Also needs the narrow-screen
+  stacking `@media` rule (mentioned in `Cell.tsx`'s own existing
+  comments, currently collapsing the 2-column layout to a single
+  column below some width) redesigned for a 4-quadrant grid, since
+  "stack 2 things vertically" doesn't generalize to "stack 4 things"
+  without deciding an order.
 
-- [x] **7. Migration path for existing saved layouts.** **Confirmed
-  already fully done as part of item 3, not separate work**:
-  `Cell.tsx`'s `migrateTabQuadrant`/`migrateLeftPanelFraction`/
-  `migrateColumnFraction` read the old `lower_tabs`/`panel_fraction`/
-  `code_fraction` shape when the new one isn't saved yet, exactly the
-  precedence rule this item asked for (old `lower_tabs` → `bottom-left`,
-  everything else → `top-left`, old `code_fraction` → the left column's
-  new `columnFraction`). Verified live in a browser against a synthetic
-  old-shape saved layout (`code_fraction: 0.7, panel_fraction: 0.3,
-  lower_tabs: ["speed"], default_tab: "speed"`): loaded with `speed`
-  correctly in `bottom-left`, `Code` correctly in `top-left` (never was
-  in the old `lower_tabs`), the left column's width correctly reading
-  ~70% (matching the old `code_fraction`), and `default_tab: "speed"`
-  correctly carrying over unchanged — confirms this "reads sensibly,"
-  not just assumed. No reset/silent-break for an existing deck's saved
-  layout.
+- [ ] **7. Migration path for existing saved layouts.** Every deck
+  that has ever dragged a tab to the lower section or resized either
+  existing divider has a `Cell.layout` dict on disk using the *old*
+  field names (`code_fraction`, `panel_fraction`, `lower_tabs`,
+  `default_tab`). Decide and implement a clear precedence rule for a
+  layout dict that has old-shape keys but not new-shape ones (most
+  likely: interpret old keys as "everything currently lower goes into
+  bottom-left, everything currently upper goes into top-left, code
+  editor defaults to top-right or wherever it rendered before" — but
+  confirm this reads sensibly rather than assuming) — this is
+  functionally required, not optional polish, since `chapter1.py` and
+  every other example deck in this repo already has saved layouts that
+  must not silently break or reset when this ships.
 
-- [x] **8. Verify in a real browser** (per this project's own
+- [ ] **8. Verify in a real browser** (per this project's own
   established verification convention — a real running server +
   Playwright, not just a build/lint check) across: dragging every
   combination of element-tab and code-editor-tab into every one of the
@@ -786,70 +757,3 @@ stated below, no further sign-off needed on these points.
   moment one is added, and confirm a cell can carry multiple test
   editors simultaneously with each one's own pass/fail state and
   source independently editable.
-
-  **Done.** Verified across two live-browser (Playwright) passes on
-  `examples/live_demo.py`, plus re-confirming (by re-reading the source,
-  not re-testing from scratch) which sub-bullets prior items already
-  covered live:
-  - **4-quadrant drag combinations**: all 4 element/code tabs dragged
-    into 4 distinct quadrants simultaneously; renders and tracks
-    correctly (`col0Panels`/`col1Panels` each holding the right tab).
-  - **Whole-column collapse/re-expand, specifically**: dragging the
-    right column's only tab out collapses it to one `.cs-cell-column-empty`
-    strip (`col1Empty: true`, `col1Tabs: []`); dragging a tab back in
-    re-expands it (`col1Empty: false`) with the tab correctly present.
-    Confirmed both directions with a result-checked script (logging
-    `dragover`/`drop` ok-status so a missing drop target — expected once
-    a column's both quadrants are already populated, since
-    `.cs-cell-panel-empty` only exists for genuinely empty quadrants —
-    is distinguishable from a real failure).
-  - **3 independent dividers / empty-quadrant collapse in all 4
-    positions / code editor removable from any quadrant / title-slide
-    layout (TOC nav, Setup/Main gating, divider persistence, main-cell-
-    elements-no-longer-duplicate) / Save+reload round-trip / migration
-    of a pre-existing saved deck**: all already verified live in a real
-    browser as part of items 3, 4, and 7's own verification passes (see
-    those entries above for the specific evidence) — re-confirmed here
-    by re-reading the actual current source (not just trusting the
-    prior write-ups) that nothing regressed: `.cs-cell-column`/
-    `.cs-cell-column-empty`/the narrow-screen media query, the 3
-    `migrate*` helpers, and `SlideShow`'s TOC/tab-gating code are all
-    still present and unchanged in shape.
-  - **Primary/test-editor cardinality rules**: "add primary editor"
-    unavailable once one exists is structurally guaranteed (a plain
-    `hasPrimaryEditor ? <remove-button> : <add-button>` conditional in
-    `EditCellPanel.tsx`, not two buttons with one merely disabled) and
-    was already verified live as part of item 2b, along with "remove
-    clears body to `pass`", "re-add produces a sane stub", and "remove
-    blocked with messaging while tests exist." This pass additionally
-    verified, fresh: **multiple simultaneous test editors each maintain
-    independent pass/fail state and independently editable source** —
-    added two `tests` elements to a live cell, gave each a different
-    assertion, submitted both (Shift+Enter), and confirmed distinct
-    badges (`test_one` → `fail`, `test_two` → `pass`) plus each editor's
-    submitted source correctly persisting across tab navigation.
-  - **Real bug found and fixed by this last check**: switching the
-    *active* tab within one quadrant reused the same live, uncontrolled
-    CodeMirror `EditorView` across different tab contents (no `key` on
-    the tab-content wrapper in `Cell.tsx`), so *unsaved* keystrokes in
-    one `tests` element leaked into whichever tab was opened next and
-    were then silently clobbered by that tab's actual source — a real
-    correctness bug for the "each test editor has independent state"
-    requirement this bullet exists to check. Fixed by keying the
-    tab-content wrapper on `active` (`Cell.tsx`, forces a genuine
-    remount, and therefore a fresh `EditorView` sourced from the newly-
-    active tab's own data, on every tab switch) and re-verified the fix
-    directly: switching tabs before submitting no longer bleeds text
-    across elements, and the submitted-state check above (fail/pass
-    badges, persisted sources) passed cleanly against the fixed build.
-    Traded off, consciously: this also means an *unsaved* draft in a
-    test editor is now discarded if you navigate away and back to that
-    same tab before Shift+Enter, whereas before only the cross-tab case
-    was buggy and the same-tab case incidentally preserved unsaved
-    text. Decided (2026-08-19) to accept this — silent cross-element
-    data corruption is worse than a visible, unsurprising reset of an
-    unsubmitted draft — see the code comment at the `key={active}`
-    wrapper in `Cell.tsx` for the full reasoning and the lower-effort
-    alternative (per-elementId draft state) if this is ever revisited.
-  - `tsc -b --force` clean, `npm run build` clean, full backend test
-    suite still green (see final check before commit).

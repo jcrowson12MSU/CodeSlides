@@ -359,8 +359,35 @@ button.cs-save-button {
    case regardless. */
 .cs-cell-column-empty {
   flex: 0 0 auto;
-  width: 2.5rem;
+  min-height: 2.5rem;
+}
+
+/* Wraps `extraCodeAbove`/the main CodeEditor when both are present
+   (Cell.tsx's renderTabContent, composed into wherever the primary
+   editor tab currently renders) -- same "flex: 0 0 auto, explicit %
+   basis, min-height: 0" shape as `.cs-cell-panels`' own quadrant
+   sections, so each of the two stacked editors respects
+   `extraCodeFraction`'s drag-set share of height instead of both just
+   growing to fit their own content. */
+.cs-cell-extra-code {
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 0;
   display: flex;
+}
+
+/* The container `extraCodeAbove` and the main CodeEditor both live in
+   -- fills whatever quadrant/tab-content space it's rendered into
+   (Cell.tsx's renderTabContent), laid out top-to-bottom (`flex-
+   direction: column`) so the two stack sharing the available width
+   rather than squeezing side-by-side. */
+.cs-cell-code-with-extra {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  gap: 0.5rem;
 }
 
 /* The draggable divider between the left and right columns. A
@@ -603,46 +630,6 @@ body.cs-resizing {
    between the `{tabs.map(...)}` and the closing tag) -- a CSS
    pseudo-element rather than a real DOM node/prop threaded down from
    Cell.tsx just for this one label. */
-/* A whole-column-collapsed strip (Cell.tsx's `renderCollapsedColumn`,
-   left or right side entirely empty): the ordinary `.cs-cell-panel-empty`
-   shape above is a short/wide horizontal strip (built for a single empty
-   quadrant next to a populated one in the same column) -- reused here for
-   a tall/narrow *vertical* strip instead, so it needs the opposite
-   proportions. Width fixed to the same `2.5rem` "thickness" the
-   horizontal strips use for their own min-height, so a rotated column
-   strip and an empty top/bottom quadrant strip read as the same visual
-   weight; height instead stretches to fill nearly all of `.cs-cell-body`'s
-   own height (inherited via `.cs-cell-column-empty`'s `display: flex`
-   parent, `align-items: stretch` by default) rather than sizing to its
-   (now rotated, vertical) text content. */
-.cs-cell-panel-empty-vertical {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  align-items: stretch;
-  justify-content: center;
-}
-
-.cs-cell-panel-empty-vertical .cs-cell-tabs {
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 0;
-  padding: 0.5rem 0;
-}
-
-/* Rotated so the "Drop a tab here" label reads bottom-to-top along the
-   strip's long (vertical) axis instead of overflowing a 2.5rem-wide box
-   horizontally -- `writing-mode: vertical-rl` (not a `transform: rotate`
-   on the horizontal-mode text) so the text still lays out/wraps/centers
-   using its own natural block flow, just rotated, rather than needing a
-   separate transform-origin dance to re-center a rotated box inside its
-   unrotated parent. */
-.cs-cell-panel-empty-vertical .cs-cell-tabs:empty::before {
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
-}
-
 .cs-cell-panel-empty .cs-cell-tabs:empty::before {
   content: 'Drop a tab here';
   color: #999;
@@ -1544,98 +1531,6 @@ body.cs-slides-locked {
   color: #666;
 }
 
-/* CELL_QUADRANT_LAYOUT_TODO.md item 4: the title slide's own bespoke
-   layout (TitleSlide.tsx) -- a plain 2-column row (table of contents
-   left, Setup/Main tab strip right) with one adjustable divider,
-   deliberately NOT the 4-quadrant system's own nested-column shape
-   (Cell.tsx's `.cs-cell-column`/`.cs-cell-panels`) since there's no
-   further internal splitting of either side. Fills whatever height
-   `.cs-slide` gives it, same `align-items: stretch`/flex-row shape
-   `.cs-cell-body` already uses for its own two columns. */
-.cs-title-slide {
-  display: flex;
-  align-items: stretch;
-  gap: 0.5rem;
-  height: 100%;
-  min-height: 0;
-}
-
-.cs-title-slide-toc {
-  flex: 0 0 auto;
-  min-width: 0;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.cs-title-slide-toc-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-
-.cs-title-slide-toc-entry {
-  display: block;
-  width: 100%;
-  text-align: left;
-  border: none;
-  background: none;
-  cursor: pointer;
-  padding: 0.4rem 0.6rem;
-  border-radius: 4px;
-  font-size: var(--cs-font-md);
-  color: #333;
-}
-
-.cs-title-slide-toc-entry:hover {
-  background: #f2f2f2;
-}
-
-/* The currently-showing slide's own entry -- same accent-color
-   precedent `.cs-cell-tab-active` already sets for "this is the
-   selected one" elsewhere in the app. */
-.cs-title-slide-toc-entry-active {
-  background: var(--accent-bg, #aa3bff1a);
-  color: var(--accent, #aa3bff);
-  font-weight: 600;
-}
-
-.cs-title-slide-tabs {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-/* A tab's own little "×" remove button, inline with its label -- same
-   dashed/dotted "small, quiet, only meaningful on hover" precedent
-   `.cs-minimize-toggle` sets elsewhere, not a separate full-size
-   button next to each tab. */
-.cs-title-slide-tab-remove {
-  margin-left: 0.4rem;
-  color: #999;
-  cursor: pointer;
-}
-
-.cs-title-slide-tab-remove:hover {
-  color: #c00;
-}
-
-.cs-title-slide-add-tab select {
-  border: 1px dashed #ccc;
-  border-radius: 3px;
-  background: none;
-  cursor: pointer;
-  font-size: var(--cs-font-sm);
-  color: #555;
-  padding: 0.15rem 0.4rem;
-}
-
 /* TODO.md #22's edit button: rename the cell's own identity, add/remove
    attached elements. */
 .cs-edit-cell-toggle {
@@ -1736,25 +1631,6 @@ body.cs-slides-locked {
   color: #666;
   margin-bottom: 0.75rem;
   cursor: pointer;
-}
-
-/* CELL_QUADRANT_LAYOUT_TODO.md item 2b/5: the "Remove/Add primary
-   editor" button and its explanatory note (shown only in the
-   no-primary-editor state -- see EditCellPanel.tsx's own comment).
-   `flex-wrap` lets the note drop to its own line below the button
-   rather than forcing the panel wider to fit both on one row. */
-.cs-edit-cell-primary-editor {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.4rem;
-  margin-bottom: 0.75rem;
-}
-
-.cs-edit-cell-no-primary-editor-note {
-  flex-basis: 100%;
-  color: #888;
-  font-size: var(--cs-font-sm);
 }
 
 .cs-edit-cell-default-tab {
@@ -1919,25 +1795,8 @@ body.cs-slides-locked {
 
 .cs-edit-cell-add-element {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
-}
-
-/* CELL_QUADRANT_LAYOUT_TODO.md item 5's "add test editor" affordance:
-   explains why the "+ Add element" submit is disabled for the `tests`
-   kind specifically, rather than leaving a silently-disabled button
-   with no reason given -- same visible-messaging precedent the primary
-   editor's own "Remove primary editor" button already has via its
-   `title` tooltip, but as always-visible text here since this
-   condition depends on which kind is currently selected in the
-   dropdown, not just the cell's own state. `flex-basis: 100%` wraps it
-   onto its own line below the form's controls rather than squeezing
-   into the same row. */
-.cs-edit-cell-add-element-blocked {
-  flex-basis: 100%;
-  color: #a06a00;
-  font-size: var(--cs-font-sm);
 }
 
 /* Slides view "Edit slide deck" control (browser-driven counterpart to

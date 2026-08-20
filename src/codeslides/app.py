@@ -102,25 +102,8 @@ class App:
             return register(func)
         return register
 
-    def slide(
-        self,
-        title: str,
-        *,
-        cells: list[str],
-        reveal_code: bool = False,
-        layout: dict[str, Any] | None = None,
-    ):
-        """Register a function's docstring as a Slide grouping existing
-        cells.
-
-        `layout` is the title slide's own saved table-of-contents/Setup-
-        Main-tab arrangement (see `deck.Slide.layout`'s own docstring for
-        its shape) -- meaningless for any slide but the title slide
-        (index 0), written by Save, never meant to be hand-authored, same
-        "accepted here like any other decorator keyword since that's what
-        a saved file round-trips through" precedent `@app.cell(layout=
-        ...)` already sets.
-        """
+    def slide(self, title: str, *, cells: list[str], reveal_code: bool = False):
+        """Register a function's docstring as a Slide grouping existing cells."""
 
         def register(fn):
             self.deck.add_slide(
@@ -129,7 +112,6 @@ class App:
                     cell_names=list(cells),
                     reveal_code=reveal_code,
                     notes=fn.__doc__ or "",
-                    layout=layout,
                 )
             )
             return fn
