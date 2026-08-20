@@ -1486,20 +1486,30 @@ class Kernel:
         """Delete `cell_name`'s body code entirely, on disk, immediately,
         then reload this Kernel's baseline synchronously --
         CELL_QUADRANT_LAYOUT_TODO.md item 2b's confirmed "zero primary
-        editor means zero body code" decision. Same overall shape as
-        `remove_element` (reload, resync, re-run), but there is no
-        `ElementInstance` to drop -- the cell's own body is what changed,
-        not one of its elements -- so re-running it is what reflects the
-        change (a `pass`-bodied cell returns `None`, same as any other
-        cell whose body just returns nothing).
+        editor means zero body code" decision. Similar overall shape to
+        `remove_element` (reload, then re-run) but NOT `_resync_stale_
+        override`: that helper's whole job is to keep a pending, unsaved
+        source_overrides entry's *body* byte-identical while only
+        regenerating its decorator -- exactly wrong here, since this
+        operation's entire point is to replace the body. Calling it
+        would silently keep the session showing (and a later Save
+        re-writing) the pre-removal body forever, even though the
+        on-disk cell is already a pass-bodied stub -- this was a real
+        bug, caught via a live browser session, not just reasoning about
+        the code: `session.source_overrides[cell_name]` must be dropped
+        entirely instead, so the freshly-reloaded `cell.source` (the new
+        stub) is what the browser is shown and what a later Save writes.
+        No `ElementInstance` to drop either -- the cell's own body is
+        what changed, not one of its elements -- so re-running it is
+        what reflects the change (a `pass`-bodied cell returns `None`,
+        same as any other cell whose body just returns nothing).
 
         `serialization.remove_primary_editor` itself raises
         `SaveConflictError` if `cell_name` still has a test editor (the
         add-time-only dependency rule enforced here by blocking removal,
         not by cascading a delete) -- this method doesn't duplicate that
         check, it just lets the exception propagate, same as
-        `add_element`'s own duplicate-name `SaveConflictError` already
-        does."""
+        `add_element`'s own duplicate-name `SaveConflictError` does."""
         if self.deck_path is None:
             raise ValueError("cannot remove the primary editor: this Kernel was not started from a deck file")
         if cell_name not in self.deck.cells:
@@ -1512,7 +1522,7 @@ class Kernel:
         from codeslides.loader import load_deck
 
         self.reload_deck(load_deck(self.deck_path))
-        self._resync_stale_override(session, cell_name)
+        session.source_overrides.pop(cell_name, None)
 
         cell = self.deck.cells[cell_name]
         session.seed_cell_instance(cell_name, cell)
@@ -1523,7 +1533,12 @@ class Kernel:
         """Restore `cell_name`'s body to a blank, editable starting
         point, on disk, immediately, then reload this Kernel's baseline
         synchronously -- the inverse of `remove_primary_editor`, same
-        overall shape as `add_element`."""
+        overall shape as `add_element`. Also drops any pending
+        `session.source_overrides` entry for this cell rather than
+        resyncing it, same reasoning as `remove_primary_editor` above:
+        the body just changed underneath whatever unsaved edit the
+        override held, so there is nothing meaningful left to preserve
+        from it."""
         if self.deck_path is None:
             raise ValueError("cannot add a primary editor: this Kernel was not started from a deck file")
         if cell_name not in self.deck.cells:
@@ -1536,7 +1551,7 @@ class Kernel:
         from codeslides.loader import load_deck
 
         self.reload_deck(load_deck(self.deck_path))
-        self._resync_stale_override(session, cell_name)
+        session.source_overrides.pop(cell_name, None)
 
         cell = self.deck.cells[cell_name]
         session.seed_cell_instance(cell_name, cell)

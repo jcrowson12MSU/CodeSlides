@@ -354,8 +354,28 @@ stated below, no further sign-off needed on these points.
   all 566 backend tests pass, frontend builds clean (`tsc -b` in real
   build/project-reference mode — plain `tsc --noEmit` gave a false
   clean result once from stale incremental build info, so use `-b`,
-  not `--noEmit`, to actually verify this codebase's frontend). Details
-  below are the as-implemented reference:
+  not `--noEmit`, to actually verify this codebase's frontend).
+  **Follow-up fix (found via the user's own real usage, not caught by
+  the initial test pass): `Kernel.remove_primary_editor`/
+  `add_primary_editor` originally called `_resync_stale_override` after
+  the on-disk rewrite, same as `add_element`/`remove_element` do — but
+  that helper deliberately keeps a pending, unsaved
+  `session.source_overrides` entry's *body* byte-identical while only
+  regenerating its decorator, which is exactly backwards for an
+  operation whose entire point is to replace the body. A cell with any
+  pending unsaved edit in the session (e.g. from a notes/`set_ui_state`
+  round trip) kept showing — and a later Save kept re-writing — the
+  pre-removal body forever, even though the on-disk cell was already a
+  `pass`-bodied stub; the button toggled correctly but the code editor
+  itself never visibly changed. Fixed by dropping
+  `session.source_overrides[cell_name]` entirely instead of resyncing
+  it in both methods, with 2 new regression tests reproducing the exact
+  scenario (`test_remove_primary_editor_drops_a_stale_pending_source_
+  override`/`test_add_primary_editor_drops_a_stale_pending_source_
+  override`, `test_kernel.py`) — 568 backend tests pass, re-verified
+  live against `examples/marchingSquares.py`'s `config` cell (which has
+  a `notes` element, the exact real-world case that surfaced this).**
+  Details below are the as-implemented reference:
   - **A full add/remove-element mutation path already exists and is
     the direct precedent to extend**, not something to invent:
     `Kernel.add_element`/`Kernel.remove_element` (`kernel.py:1417`,

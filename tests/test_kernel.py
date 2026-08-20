@@ -1831,6 +1831,68 @@ def test_add_primary_editor_restores_a_pass_stub_and_reruns(tmp_path):
     assert result.status == "idle"
 
 
+def test_remove_primary_editor_drops_a_stale_pending_source_override(tmp_path):
+    """Regression test for a real bug caught in a live browser session
+    (not just reasoning about the code): if this session has a pending,
+    unsaved code edit for the cell (session.source_overrides), removing
+    the primary editor must DROP that override entirely, not resync it
+    the way add_element/remove_element do -- _resync_stale_override
+    deliberately keeps an override's own body byte-identical while only
+    regenerating its decorator, which is exactly backwards here since
+    this operation's whole point is to replace the body. Left broken,
+    the browser kept showing (and a later Save kept re-writing) the
+    pre-removal body forever, even though the on-disk cell was already a
+    pass-bodied stub."""
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    # Simulate a pending, unsaved edit sitting in this session for the
+    # same cell -- e.g. from a notes/ui-state round trip, or an in-flight
+    # code edit that never got Saved.
+    kernel.on_cell_edited(
+        "live_demo",
+        'def live_demo(speed):\n    result = speed * 99\n    return result\n',
+        session,
+    )
+    assert "speed * 99" in session.source_overrides["live_demo"]
+
+    cell, _ = kernel.remove_primary_editor(session, "live_demo")
+
+    assert "live_demo" not in session.source_overrides
+    assert "pass" in cell.source
+    assert "speed * 99" not in cell.source
+
+
+def test_add_primary_editor_drops_a_stale_pending_source_override(tmp_path):
+    """Same regression guard as remove_primary_editor's own test above,
+    for the inverse operation."""
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+    kernel.remove_primary_editor(session, "live_demo")
+
+    kernel.on_cell_edited(
+        "live_demo",
+        'def live_demo(speed):\n    pass\n    # a stale in-progress edit\n',
+        session,
+    )
+    assert "live_demo" in session.source_overrides
+
+    cell, _ = kernel.add_primary_editor(session, "live_demo")
+
+    assert "live_demo" not in session.source_overrides
+    assert "stale in-progress edit" not in cell.source
+
+
 def test_reorder_elements_updates_disk_and_kernel_baseline(tmp_path):
     from codeslides.loader import load_deck
 
