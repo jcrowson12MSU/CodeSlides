@@ -788,17 +788,37 @@ export function Cell({
   // draggable via the same handle, as before this item.
   function renderTabContent(tab: string) {
     if (tab === CODE_TAB_ID) {
+      // The cell's own execution error/returned-value output
+      // (ARCHITECTURE.md section 6) render directly below the code
+      // editor itself now, wherever its quadrant currently is -- moved
+      // out of Cell's own fixed always-above-.cs-cell-body position
+      // (which made sense when the editor was a permanent fixed column,
+      // but reads as detached from the code once the editor can live in
+      // any of the 4 quadrants). Same "error wins, never both" and
+      // "gated on hasCellOutput so a side-effect-only cell renders no
+      // block at all" rules as before, just relocated.
+      const outputBelowEditor = !collapsed && (
+        <>
+          {state?.error && <pre className="cs-cell-error">{state.error}</pre>}
+          {!state?.error && hasCellOutput(state?.kind ?? null, state?.data, state?.value) && (
+            <CellOutputView kind={state?.kind ?? null} data={state?.data} value={state?.value} />
+          )}
+        </>
+      )
       const codeEditor = (
-        <CodeEditor
-          source={meta.source}
-          onRunCell={onRunCell}
-          onRunAll={onRunAll}
-          readOnly={meta.instance === 'static'}
-          highlightedLines={highlightedLines}
-          onToggleLineHighlight={toggleLineHighlight}
-          lineOffset={lineOffset}
-          onLineCountChange={onLineCountChange}
-        />
+        <div className="cs-cell-code-and-output">
+          <CodeEditor
+            source={meta.source}
+            onRunCell={onRunCell}
+            onRunAll={onRunAll}
+            readOnly={meta.instance === 'static'}
+            highlightedLines={highlightedLines}
+            onToggleLineHighlight={toggleLineHighlight}
+            lineOffset={lineOffset}
+            onLineCountChange={onLineCountChange}
+          />
+          {outputBelowEditor}
+        </div>
       )
       if (!extraCodeAbove) return codeEditor
       return (
@@ -1083,28 +1103,26 @@ export function Cell({
         </div>
       )}
 
-      {/* The cell's own Python execution error (a real crash --
-          NameError, SyntaxError, etc. -- distinct from a `tests`
-          element's own pass/fail result, which has its own separate
-          box under its editor). Always shown here, directly under the
-          header -- no tab, same "no tab, always there" shape a test's
-          own result box already has -- otherwise the "error" status
-          badge above would be the only signal, with no way to see why. */}
-      {!collapsed && state?.error && <pre className="cs-cell-error">{state.error}</pre>}
-
-      {/* The cell's own returned value (ARCHITECTURE.md section 6,
-          codeslides.output.resolve_output) -- text, cs.md() markdown,
-          an image, or a DataFrame. Same always-visible-block shape as
-          the error above (there's no Output tab anymore, per the
-          user's own explicit request), gated on hasCellOutput so a
-          side-effect-only cell with nothing to show renders no block
-          at all rather than an empty one. Never shown alongside an
-          error -- a crashed cell's last-successful value is stale and
-          would be confusing next to the traceback explaining why it's
-          no longer current. */}
-      {!collapsed && !state?.error && hasCellOutput(state?.kind ?? null, state?.data, state?.value) && (
-        <CellOutputView kind={state?.kind ?? null} data={state?.data} value={state?.value} />
-      )}
+      {/* The cell's own Python execution error/returned-value output
+          (ARCHITECTURE.md section 6) now render directly below the code
+          editor itself, inside `renderTabContent`'s CODE_TAB_ID branch,
+          wherever that editor's quadrant currently is -- moved out of
+          this fixed always-above-`.cs-cell-body` position (which read
+          as detached from the code once the editor could live in any of
+          the 4 quadrants; the user reported it rendering "above the
+          left and right sides"). Kept here ONLY as the fallback for a
+          cell with no primary editor at all (`hide_code=True`, or
+          `has_primary_editor=false`) -- there's no editor's quadrant to
+          render below in that case, so this is the only place left to
+          show it. Same "error wins, never both" / "gated on
+          hasCellOutput" rules as always. */}
+      {!hasPrimaryEditorTab && !collapsed && state?.error && <pre className="cs-cell-error">{state.error}</pre>}
+      {!hasPrimaryEditorTab &&
+        !collapsed &&
+        !state?.error &&
+        hasCellOutput(state?.kind ?? null, state?.data, state?.value) && (
+          <CellOutputView kind={state?.kind ?? null} data={state?.data} value={state?.value} />
+        )}
 
       {!hideHeader && !collapsed && editing && (
         <EditCellPanel

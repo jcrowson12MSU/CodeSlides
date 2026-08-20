@@ -391,6 +391,35 @@ button.cs-save-button {
   gap: 0.5rem;
 }
 
+/* Wraps the primary CodeEditor and its own execution error/output block
+   together, stacked (Cell.tsx's renderTabContent) -- moved here from a
+   fixed position always above the whole `.cs-cell-body` row, so output
+   now renders immediately below its own editor wherever that editor's
+   quadrant currently is, per the user's report that it read as detached
+   once the editor could live in any of the 4 quadrants. `overflow-y:
+   auto` (not the editor's own scroller) is what lets a long output
+   block scroll within whatever height this quadrant has, rather than
+   pushing the row taller -- same "scrolls inside its own container"
+   shape every other tab-content area already follows. The editor keeps
+   `flex: 1 1 auto` (App.css's own `.cs-code-editor`) so IT claims
+   whatever space is left after the output's own natural (`flex: 0 0
+   auto`) height is subtracted, not the reverse -- an editor squeezed to
+   zero height while a long output claimed everything would be far more
+   disruptive than a long output needing to scroll. */
+.cs-cell-code-and-output {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.cs-cell-code-and-output .cs-cell-error,
+.cs-cell-code-and-output .cs-cell-output {
+  flex: 0 0 auto;
+}
+
 /* The draggable divider between the left and right columns. A
    narrow visible strip (2px) with a much wider invisible hit area (the
    ::before pseudo-element, positioned via a negative inset) so it's
