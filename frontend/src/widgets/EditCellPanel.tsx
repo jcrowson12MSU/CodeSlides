@@ -158,7 +158,15 @@ export function EditCellPanel({
   const [iframeHeightDrafts, setIframeHeightDrafts] = useState<Record<string, string>>({})
 
   const existingNames = new Set(elements.map((e) => e.name))
-  const canAdd = newElementName.trim().length > 0 && !existingNames.has(newElementName.trim())
+  // CELL_QUADRANT_LAYOUT_TODO.md item 5's "add test editor" affordance,
+  // confirmed disabled -- not hidden -- when the cell has no primary
+  // editor (the add-time-only dependency rule from "Design decisions":
+  // a test editor tests the primary editor's own code, so it's
+  // meaningless without one). Only blocks the `tests` kind specifically
+  // -- every other element kind is unaffected by this rule.
+  const blockedByMissingPrimaryEditor = newElementKind === 'tests' && !hasPrimaryEditor
+  const canAdd =
+    newElementName.trim().length > 0 && !existingNames.has(newElementName.trim()) && !blockedByMissingPrimaryEditor
 
   function handleRenameSubmit(event: React.FormEvent) {
     event.preventDefault()
@@ -301,7 +309,10 @@ export function EditCellPanel({
         Setup cell
       </label>
 
-      <label className="cs-edit-cell-hide-code">
+      <label
+        className="cs-edit-cell-hide-code"
+        title="A permanent, author-declared choice -- there is no option to show code at all, regardless of which tab is added/removed below."
+      >
         <input
           type="checkbox"
           checked={isHideCode}
@@ -325,9 +336,15 @@ export function EditCellPanel({
             Remove primary editor
           </button>
         ) : (
-          <button type="button" onClick={onAddPrimaryEditor}>
-            Add primary editor
-          </button>
+          <>
+            <button type="button" onClick={onAddPrimaryEditor}>
+              Add primary editor
+            </button>
+            <span className="cs-edit-cell-no-primary-editor-note">
+              This cell currently has no code (its body was cleared) -- distinct from "Hide code editor" above, which
+              is a permanent choice with no undo here.
+            </span>
+          </>
         )}
       </div>
 
@@ -480,9 +497,18 @@ export function EditCellPanel({
             value={newElementName}
             onChange={(event) => setNewElementName(event.target.value)}
           />
-          <button type="submit" disabled={!canAdd}>
+          <button
+            type="submit"
+            disabled={!canAdd}
+            title={blockedByMissingPrimaryEditor ? 'A test editor needs this cell to have a primary editor first.' : undefined}
+          >
             + Add element
           </button>
+          {blockedByMissingPrimaryEditor && (
+            <span className="cs-edit-cell-add-element-blocked">
+              A test editor needs this cell to have a primary editor first.
+            </span>
+          )}
         </form>
       </div>
     </div>

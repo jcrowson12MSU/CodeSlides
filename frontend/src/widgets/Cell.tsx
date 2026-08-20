@@ -893,7 +893,35 @@ export function Cell({
             </button>
           ))}
         </div>
-        {!isEmpty && <div className="cs-cell-tab-content">{active && renderTabContent(active)}</div>}
+        {/* Keyed by `active` -- a quadrant's tab-content slot is otherwise
+            reused verbatim across different tabs on every render (same
+            JSX position), so a CodeEditor-backed tab (the primary Code
+            tab, or any `tests` element) switching to another CodeEditor-
+            backed tab reuses the same live, uncontrolled CodeMirror view
+            instead of getting a fresh one. That silently carried over
+            unsaved keystrokes into the newly-active tab's element and then
+            clobbered them with that element's actual saved source -- found
+            and fixed while verifying multiple simultaneous test editors
+            (CELL_QUADRANT_LAYOUT_TODO.md item 8) keep independent state.
+            Tradeoff, revisited and accepted 2026-08-19: remounting on every
+            active-tab change also discards any *unsaved* (not yet
+            Shift+Enter'd) text in a `tests` editor if you navigate away
+            from it and back, even to that same tab -- previously that
+            same-tab case preserved uncommitted keystrokes (uncontrolled
+            CodeMirror surviving re-renders), only the cross-tab case was
+            buggy. Decided to accept this: silent cross-element data bleed
+            (edits landing in, and being judged against, the wrong test)
+            is a correctness bug; losing an unsubmitted same-tab draft on
+            navigation is a visible, unsurprising reset, not corruption. If
+            this tradeoff ever needs revisiting, the fix would be adding
+            per-elementId draft state (e.g. a ref/map in this component)
+            that this tab-content slot restores from on remount, rather
+            than removing the key. */}
+        {!isEmpty && (
+          <div className="cs-cell-tab-content" key={active}>
+            {active && renderTabContent(active)}
+          </div>
+        )}
       </div>
     )
   }
@@ -904,11 +932,16 @@ export function Cell({
   // sized wrapper -- this is the single collapsed strip itself, still a
   // real drop target (dropping a tab here assigns it to the column's
   // own top quadrant, same "top" default `quadrantOf` already falls
-  // back to elsewhere).
+  // back to elsewhere). `cs-cell-panel-empty-vertical` (on top of the
+  // ordinary `cs-cell-panel-empty`) distinguishes this tall/narrow
+  // column strip from a quadrant's own short/wide empty strip -- same
+  // underlying drop target, but its "thickness" runs along the opposite
+  // axis, so it needs its own width/height/rotated-text treatment
+  // (App.css).
   function renderCollapsedColumn(topQuadrant: Quadrant) {
     return (
       <div
-        className="cs-cell-panel cs-cell-panel-empty"
+        className="cs-cell-panel cs-cell-panel-empty cs-cell-panel-empty-vertical"
         onDragOver={(event) => {
           if (draggedTab === null) return
           event.preventDefault()
@@ -1058,10 +1091,22 @@ export function Cell({
               `hideCode ? '100%' : ...` line already had (a long
               unbroken string in a tab's content has no wrap points and
               would otherwise blow the row out to thousands of pixels
-              wide -- see the regression this precedent was fixing). */}
+              wide -- see the regression this precedent was fixing).
+              When the RIGHT column is the one collapsed instead, this
+              column must claim the width it frees rather than staying
+              pinned at its own saved fraction -- `flex: 1` (not a
+              flex-basis share) grows to fill the row, same
+              "otherIsEmpty" precedent `renderQuadrant` already uses one
+              level down for a lone quadrant claiming its whole column. */}
           <div
             className={`cs-cell-column ${leftColumnEmpty ? 'cs-cell-column-empty' : ''}`}
-            style={!leftColumnEmpty ? { flexBasis: `${columnFraction * 100}%` } : undefined}
+            style={
+              leftColumnEmpty
+                ? undefined
+                : rightColumnEmpty
+                  ? { flex: 1 }
+                  : { flexBasis: `${columnFraction * 100}%` }
+            }
             ref={leftPanelDividerRef}
           >
             {leftColumnEmpty
@@ -1102,10 +1147,19 @@ export function Cell({
 
           {/* Right column (top-right + bottom-right) -- same shape as
               the left column above, its own independent
-              rightPanelFraction/whole-column-collapse state. */}
+              rightPanelFraction/whole-column-collapse state, and the
+              same "claim the freed width when the LEFT column is the
+              one collapsed" fix (`flex: 1` instead of its own saved
+              fraction). */}
           <div
             className={`cs-cell-column ${rightColumnEmpty ? 'cs-cell-column-empty' : ''}`}
-            style={!rightColumnEmpty ? { flexBasis: `${(1 - columnFraction) * 100}%` } : undefined}
+            style={
+              rightColumnEmpty
+                ? undefined
+                : leftColumnEmpty
+                  ? { flex: 1 }
+                  : { flexBasis: `${(1 - columnFraction) * 100}%` }
+            }
             ref={rightPanelDividerRef}
           >
             {rightColumnEmpty
