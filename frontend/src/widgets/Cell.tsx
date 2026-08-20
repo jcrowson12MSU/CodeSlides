@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { CellState } from '../deckState'
-import type { CellLayout } from '../protocol'
+import { CODE_TAB_ID, type CellLayout, type Quadrant } from '../protocol'
 import { CellOutputView } from './CellOutputView'
 import { hasCellOutput } from './cellOutput'
 import { CodeEditor } from './CodeEditor'
@@ -10,12 +10,20 @@ import { TestsElementWidget } from './TestsElementWidget'
 import { ViewerElementWidget } from './ViewerElementWidget'
 import { isInputElement, isTestElement, isTestResult, isViewerElement, type ElementMeta } from './elementMeta'
 
-// How much of `.cs-cell-body`'s width the code column gets, as a fraction
-// (the elements column gets the rest). Clamped well short of 0/1 so
-// neither column can be dragged down to nothing -- both stay usable.
+// CELL_QUADRANT_LAYOUT_TODO.md item 3: a cell's view is 4 independent
+// quadrants (top-left/top-right/bottom-left/bottom-right) instead of the
+// old 2-section upper/lower split, with 3 independent draggable dividers
+// (not a crosshair) -- confirmed by the user, see the todo doc's "Design
+// decisions". No minimum-quadrant-size clamping on any of the 3
+// (also confirmed) -- DEFAULT_FRACTION is the only constant the 3 new
+// dividers need.
+const DEFAULT_FRACTION = 0.5
+// Kept only for `extraCodeAbove`'s own resize handlers below, which are
+// deliberately NOT part of this item's quadrant/divider rewrite (see
+// `useDragDivider`'s own comment) -- item 4 removes extraCodeAbove and
+// these two constants together, not before.
 const MIN_CODE_FRACTION = 0.15
 const MAX_CODE_FRACTION = 0.85
-const DEFAULT_CODE_FRACTION = 0.5
 
 export interface CellMeta {
   instance: 'static' | 'editable'
@@ -204,6 +212,112 @@ function firstLine(source: string): string {
   return line.length > 60 ? `${line.slice(0, 60)}...` : line
 }
 
+// CELL_QUADRANT_LAYOUT_TODO.md item 7's migration path, done as part of
+// item 3 (not deferred) so an existing saved deck's old-shape layout
+// doesn't silently reset to defaults the moment this ships. New-shape
+// fields win when present; otherwise every tab named in the old
+// `lower_tabs` (the pre-quadrant "lower half of the single left column"
+// list) maps to `bottom-left` -- today's layout only ever had a left
+// column at all, so there's a single unambiguous mapping, nothing needs
+// to guess which tabs belong on the right instead. Everything else
+// (every tab not in `lower_tabs`) defaults to `top-left`, same "absent
+// means top-left" fallback `quadrantOf` already applies elsewhere.
+function migrateTabQuadrant(layout: CellLayout | null | undefined): Record<string, Quadrant> {
+  if (layout?.tab_quadrant) return layout.tab_quadrant
+  if (!layout?.lower_tabs) return {}
+  return Object.fromEntries(layout.lower_tabs.map((tab) => [tab, 'bottom-left' as const]))
+}
+
+// Old `panel_fraction` only ever split a single left column -- migrates
+// straight across to the left column's own new divider. The right
+// column's new divider has no old-layout precedent to migrate from, so
+// it's simply not seeded here (falls through to DEFAULT_FRACTION at the
+// call site), rather than inventing a value.
+function migrateLeftPanelFraction(layout: CellLayout | null | undefined): number | undefined {
+  return layout?.left_panel_fraction ?? layout?.panel_fraction
+}
+
+function migrateColumnFraction(layout: CellLayout | null | undefined): number | undefined {
+  return layout?.column_fraction ?? layout?.code_fraction
+}
+
+// CELL_QUADRANT_LAYOUT_TODO.md item 3's suggested extraction: the same
+// "measure a container's rect on pointermove, clamp-free per the user's
+// own 'don't worry about a minimum quadrant size' instruction, apply a
+// page-wide drag-lock class, report once on pointerup" shape that used
+// to be hand-copied 3 times (codeFraction/panelFraction/
+// extraCodeFraction) is now a 5th-and-6th near-verbatim copy once the
+// vertical column divider and the right column's own new divider are
+// added -- worth sharing one hook instead of writing yet more copies.
+// `extraCodeAbove`'s own resize trio is deliberately NOT migrated to
+// this hook -- it's being deleted wholesale by item 4, not touched
+// here, per this item's own scoping decision to keep it working as-is
+// during the item-3/item-4 transition.
+//
+// `axis` picks which rect dimension/coordinate drives the fraction;
+// `invert` flips it (used for the column divider, since the dragged
+// container measures the *left* column's own width but the fraction
+// this hook returns is conventionally "how much the container after
+// the handle in DOM order gets," matching `panelFraction`'s existing
+// "top gets this fraction" convention one axis over). `onMove` is
+// called on every pointermove with the raw new fraction (the caller's
+// own `useState` setter, e.g. `setColumnFraction` -- this hook doesn't
+// own the fraction's state itself, same "caller's state stays the
+// single source of truth" shape the 3 original hand-rolled copies
+// already had); `onSettle` fires once on pointerup, same "report the
+// result, not every frame" precedent `emitLayoutChange` already
+// depends on elsewhere.
+function useDragDivider(axis: 'horizontal' | 'vertical', invert: boolean, onMove: (fraction: number) => void, onSettle: () => void) {
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const draggingRef = useRef(false)
+  const onMoveRef = useRef(onMove)
+  onMoveRef.current = onMove
+  const onSettleRef = useRef(onSettle)
+  onSettleRef.current = onSettle
+
+  const handleMove = useCallback(
+    (event: PointerEvent) => {
+      const container = containerRef.current
+      if (!container) return
+      const rect = container.getBoundingClientRect()
+      const size = axis === 'horizontal' ? rect.width : rect.height
+      if (size === 0) return
+      const start = axis === 'horizontal' ? rect.left : rect.top
+      const pos = axis === 'horizontal' ? event.clientX : event.clientY
+      const raw = (pos - start) / size
+      onMoveRef.current(invert ? 1 - raw : raw)
+    },
+    [axis, invert],
+  )
+
+  const stop = useCallback(() => {
+    if (!draggingRef.current) return
+    draggingRef.current = false
+    document.body.classList.remove(axis === 'horizontal' ? 'cs-resizing' : 'cs-resizing-vertical')
+    window.removeEventListener('pointermove', handleMove)
+    window.removeEventListener('pointerup', stop)
+    onSettleRef.current()
+  }, [axis, handleMove])
+
+  const start = useCallback(
+    (event: React.PointerEvent) => {
+      event.preventDefault()
+      draggingRef.current = true
+      // Applied to <body>, not the handle -- during a fast drag the
+      // pointer can end up over the code editor or an element widget
+      // between move events; without a page-wide cursor/selection lock
+      // the drag would otherwise flicker as the cursor changes and text
+      // gets selected underneath it.
+      document.body.classList.add(axis === 'horizontal' ? 'cs-resizing' : 'cs-resizing-vertical')
+      window.addEventListener('pointermove', handleMove)
+      window.addEventListener('pointerup', stop)
+    },
+    [axis, handleMove, stop],
+  )
+
+  return { containerRef, start }
+}
+
 // One cell: editor + status + attached input/viewer elements + output
 // (ARCHITECTURE.md section 1/3a). Static cells render read-only --
 // per ARCHITECTURE.md section 2, only `instance="editable"` cells accept
@@ -275,15 +389,21 @@ export function Cell({
   // re-render (a cell status update, a save elsewhere), or every one of
   // those would silently snap an in-progress or already-adjusted layout
   // back to whatever was last saved.
-  const [codeFraction, setCodeFraction] = useState(() => meta.layout?.code_fraction ?? DEFAULT_CODE_FRACTION)
+  const [columnFraction, setColumnFraction] = useState(
+    () => migrateColumnFraction(meta.layout) ?? DEFAULT_FRACTION,
+  )
   // The title-slide-only split between `extraCodeAbove` (the setup
   // cell's composed-in editor) and this cell's own -- only ever
   // rendered/draggable when `extraCodeAbove` is actually provided (see
   // the JSX below), but declared unconditionally same as every other
   // layout fraction here, so its value survives across renders where
   // `extraCodeAbove` might toggle (e.g. slide navigation away and back).
+  // Kept as-is per item 3's own scoping decision: extraCodeAbove keeps
+  // working exactly as before during the item-3/item-4 transition,
+  // layered onto whichever quadrant the primary editor tab lives in --
+  // item 4 deletes this together with extraCodeAbove itself, not before.
   const [extraCodeFraction, setExtraCodeFraction] = useState(
-    () => meta.layout?.extra_code_fraction ?? DEFAULT_CODE_FRACTION,
+    () => meta.layout?.extra_code_fraction ?? DEFAULT_FRACTION,
   )
   // Presenter-only line highlighting: purely local, ephemeral state (not
   // sent over the websocket, not persisted to the deck's .py source) --
@@ -362,43 +482,42 @@ export function Cell({
       return new Set([...prev].filter((line) => line <= lineCount))
     })
   }, [meta.source])
-  const bodyRef = useRef<HTMLDivElement | null>(null)
-  const draggingRef = useRef(false)
 
-  // The vertical (upper/lower) split within `.cs-cell-side`'s own
-  // fraction state -- declared here (not next to
-  // startPanelResizing/stopPanelResizing further down, where it's
-  // otherwise used) so `layoutRef` below can close over it; `layoutRef`
-  // is itself needed by `emitLayoutChange`, which the *horizontal*
-  // resize handlers (immediately below) already depend on, so this has
-  // to exist before either resize section. Same lazy-initializer
-  // seed-once-on-mount precedent as `codeFraction` above.
-  const [panelFraction, setPanelFraction] = useState(() => meta.layout?.panel_fraction ?? 0.5)
-
-  // Every view item (each element, plus the cell's own output) is a tab,
-  // now split across two independent, stacked sections in the left
-  // column ("upper"/"lower", per the user's request) -- each section has
-  // its own tab strip and shows its own selected tab's content
-  // simultaneously with the other section's, rather than only one tab
-  // being visible at a time across the whole cell the way a single tab
-  // strip worked before this. `'__output__'` is a synthetic id (never a
-  // valid element name, since element names come from
-  // `ui.slider("name", ...)`-style calls that share the same namespace
-  // cells write into).
-  //
-  // `tabPanel` maps every tab id to which section it currently lives in
-  // -- absent entries default to `'upper'` (`panelOf` below), so this
-  // only ever needs to record the *lower* ones. Seeded from
-  // `meta.layout.lower_tabs` (same lazy-initializer, seed-once-on-mount
-  // precedent as `codeFraction` above) if a layout was previously
-  // saved; otherwise starts empty, matching the pre-split behavior
-  // exactly (nothing changes on screen until the user actually drags a
-  // tab down). Dragging a tab's button onto the other section's strip
-  // moves just that one entry.
-  const [tabPanel, setTabPanel] = useState<Record<string, 'upper' | 'lower'>>(() =>
-    Object.fromEntries((meta.layout?.lower_tabs ?? []).map((tab) => [tab, 'lower' as const])),
+  // The left column's own top/bottom split -- declared here (not next to
+  // startLeftPanelResizing/stopLeftPanelResizing further down, where
+  // it's otherwise used) so `layoutRef` below can close over it;
+  // `layoutRef` is itself needed by `emitLayoutChange`, which the
+  // *column* resize handler (immediately below) already depends on, so
+  // this has to exist before either resize section. Same lazy-
+  // initializer seed-once-on-mount precedent as `columnFraction` above,
+  // migrated from the old single `panel_fraction` (item 7).
+  const [leftPanelFraction, setLeftPanelFraction] = useState(
+    () => migrateLeftPanelFraction(meta.layout) ?? DEFAULT_FRACTION,
   )
-  const panelOf = useCallback((tab: string) => tabPanel[tab] ?? 'upper', [tabPanel])
+  // The right column's own top/bottom split -- a genuinely new
+  // divider (item 2), independent of the left column's one above; no
+  // old-layout value to migrate from (the right column didn't exist
+  // before this feature), so it just seeds from DEFAULT_FRACTION.
+  const [rightPanelFraction, setRightPanelFraction] = useState(
+    () => meta.layout?.right_panel_fraction ?? DEFAULT_FRACTION,
+  )
+
+  // Every view item (each element, plus the cell's own primary code
+  // editor -- CODE_TAB_ID, item 2's sentinel-tab-id decision) is a tab,
+  // now positioned in one of 4 independent quadrants (item 3) rather
+  // than the old 2-section upper/lower split.
+  //
+  // `tabQuadrant` maps every tab id to which quadrant it currently
+  // lives in -- absent entries default to `'top-left'` (`quadrantOf`
+  // below), matching the old "absent means upper" precedent one level
+  // more specifically. Seeded from `meta.layout.tab_quadrant` (falling
+  // back to migrating the old `lower_tabs` shape, item 7) if a layout
+  // was previously saved; otherwise starts empty, matching the
+  // pre-quadrant behavior exactly (nothing changes on screen until the
+  // user actually drags a tab). Dragging a tab's button onto a
+  // different quadrant's strip moves just that one entry.
+  const [tabQuadrant, setTabQuadrant] = useState<Record<string, Quadrant>>(() => migrateTabQuadrant(meta.layout))
+  const quadrantOf = useCallback((tab: string) => tabQuadrant[tab] ?? 'top-left', [tabQuadrant])
 
   // Which tab shows first on load with no prior interaction
   // (EditCellPanel's "Default view item" checkbox) -- deliberately
@@ -413,36 +532,53 @@ export function Cell({
   // `"__output__"` from before the Output tab was removed entirely).
   const [defaultTab, setDefaultTab] = useState(meta.layout?.default_tab)
 
-  // Mirrors codeFraction/panelFraction/tabPanel/defaultTab's *latest*
-  // values outside React state, so the pointerup handlers below (stable
-  // `useCallback`s, registered once per drag via
-  // `window.addEventListener` rather than re-subscribed on every
-  // fraction change mid-drag) can read the just-settled value without
-  // depending on state that would otherwise force resubscribing the
-  // listener on every single pointermove of the drag itself. Updated in
-  // lockstep with every corresponding `setX` call, never read to drive
-  // rendering -- only `emitLayoutChange` (below) ever reads it, at the
-  // moment a drag/tab-move/default-tab-change actually settles.
-  const layoutRef = useRef({ codeFraction, panelFraction, tabPanel, defaultTab, extraCodeFraction })
-  layoutRef.current = { codeFraction, panelFraction, tabPanel, defaultTab, extraCodeFraction }
+  // Mirrors columnFraction/leftPanelFraction/rightPanelFraction/
+  // tabQuadrant/defaultTab/extraCodeFraction's *latest* values outside
+  // React state, so the pointerup handlers below (stable `useCallback`s,
+  // registered once per drag via `window.addEventListener` rather than
+  // re-subscribed on every fraction change mid-drag) can read the
+  // just-settled value without depending on state that would otherwise
+  // force resubscribing the listener on every single pointermove of the
+  // drag itself. Updated in lockstep with every corresponding `setX`
+  // call, never read to drive rendering -- only `emitLayoutChange`
+  // (below) ever reads it, at the moment a drag/tab-move/default-tab-
+  // change actually settles.
+  const layoutRef = useRef({
+    columnFraction,
+    leftPanelFraction,
+    rightPanelFraction,
+    tabQuadrant,
+    defaultTab,
+    extraCodeFraction,
+  })
+  layoutRef.current = {
+    columnFraction,
+    leftPanelFraction,
+    rightPanelFraction,
+    tabQuadrant,
+    defaultTab,
+    extraCodeFraction,
+  }
 
   // Reports this cell's complete current layout up to App.tsx (per the
   // user's request that Save persist it) -- called once a drag settles
-  // (`stopResizing`/`stopPanelResizing`), a tab is dropped into a
-  // different section (`moveTabToPanel`), or the default tab checkbox is
-  // clicked (`handleSetDefaultTab`), never on every intermediate frame
-  // of a drag. A no-op if the caller didn't provide `onLayoutChange`
-  // (e.g. any future use of Cell that doesn't care about persistence).
+  // (any of the 3 dividers' own stop-resizing handlers), a tab is
+  // dropped into a different quadrant (`moveTabToQuadrant`), or the
+  // default tab checkbox is clicked (`handleSetDefaultTab`), never on
+  // every intermediate frame of a drag. A no-op if the caller didn't
+  // provide `onLayoutChange` (e.g. any future use of Cell that doesn't
+  // care about persistence). Old-shape fields (`code_fraction`/
+  // `panel_fraction`/`lower_tabs`) are deliberately NOT written here
+  // any more -- only read, for migrating a pre-existing saved layout
+  // (item 7); a current client only ever writes the new shape.
   const emitLayoutChange = useCallback(() => {
     if (!onLayoutChange) return
     const current = layoutRef.current
-    const lowerTabs = Object.entries(current.tabPanel)
-      .filter(([, panel]) => panel === 'lower')
-      .map(([tab]) => tab)
     onLayoutChange({
-      code_fraction: current.codeFraction,
-      panel_fraction: current.panelFraction,
-      lower_tabs: lowerTabs,
+      column_fraction: current.columnFraction,
+      left_panel_fraction: current.leftPanelFraction,
+      right_panel_fraction: current.rightPanelFraction,
+      tab_quadrant: current.tabQuadrant,
       ...(current.defaultTab !== undefined ? { default_tab: current.defaultTab } : {}),
       extra_code_fraction: current.extraCodeFraction,
     })
@@ -457,22 +593,47 @@ export function Cell({
     [emitLayoutChange],
   )
 
-  const allTabs = meta.elements.map((e) => e.name)
-  const upperTabs = allTabs.filter((t) => panelOf(t) === 'upper')
-  const lowerTabs = allTabs.filter((t) => panelOf(t) === 'lower')
+  // The cell's own primary code editor is now one more tab in the same
+  // pool as its elements (item 2's CODE_TAB_ID sentinel decision) --
+  // present in `allTabs` whenever the cell currently has one
+  // (`has_primary_editor`, item 2b), absent entirely when it doesn't
+  // (not "present but parked nowhere" -- see item 2's own writeup).
+  // `hide_code=True` is a separate, author-time concern: it means "never
+  // show this tab as an option at all," checked before folding
+  // CODE_TAB_ID in below, same as it already gated the old always-
+  // present code column.
+  const hasPrimaryEditorTab = !hideCode && (meta.has_primary_editor ?? true)
+  const allTabs = hasPrimaryEditorTab ? [...meta.elements.map((e) => e.name), CODE_TAB_ID] : meta.elements.map((e) => e.name)
+  const tabsByQuadrant: Record<Quadrant, string[]> = {
+    'top-left': allTabs.filter((t) => quadrantOf(t) === 'top-left'),
+    'top-right': allTabs.filter((t) => quadrantOf(t) === 'top-right'),
+    'bottom-left': allTabs.filter((t) => quadrantOf(t) === 'bottom-left'),
+    'bottom-right': allTabs.filter((t) => quadrantOf(t) === 'bottom-right'),
+  }
 
-  // Each section owns which of *its own* tabs is currently selected --
-  // independent state per section, same "local, no effect on execution"
-  // shape as `tabPanel`. Falls back to that section's first tab whenever
-  // its previously-active one is no longer actually in that section
-  // (dragged elsewhere, or -- for an element's own tab -- removed via
-  // the edit panel) rather than rendering a dead selection; `undefined`
-  // when the section has no tabs at all (collapses to an empty strip,
-  // per the user's own scoping decision).
-  const [upperActiveTabState, setUpperActiveTab] = useState<string | undefined>(meta.layout?.default_tab)
-  const [lowerActiveTabState, setLowerActiveTab] = useState<string | undefined>(undefined)
-  const upperActiveTab = upperTabs.includes(upperActiveTabState ?? '') ? upperActiveTabState : upperTabs[0]
-  const lowerActiveTab = lowerTabs.includes(lowerActiveTabState ?? '') ? lowerActiveTabState : lowerTabs[0]
+  // Each quadrant owns which of *its own* tabs is currently selected --
+  // independent state per quadrant, same "local, no effect on
+  // execution" shape as `tabQuadrant`. Falls back to that quadrant's
+  // first tab whenever its previously-active one is no longer actually
+  // in that quadrant (dragged elsewhere, or -- for an element's own tab
+  // -- removed via the edit panel, or -- for CODE_TAB_ID -- the primary
+  // editor was just removed) rather than rendering a dead selection;
+  // `undefined` when the quadrant has no tabs at all (collapses to an
+  // empty strip, per the user's own scoping decision).
+  const [activeTabState, setActiveTabState] = useState<Partial<Record<Quadrant, string>>>(() => ({
+    'top-left': meta.layout?.default_tab,
+  }))
+  const activeTabOf = useCallback(
+    (quadrant: Quadrant) => {
+      const tabs = tabsByQuadrant[quadrant]
+      const active = activeTabState[quadrant]
+      return active !== undefined && tabs.includes(active) ? active : tabs[0]
+    },
+    [tabsByQuadrant, activeTabState],
+  )
+  const setActiveTab = useCallback((quadrant: Quadrant, tab: string) => {
+    setActiveTabState((prev) => ({ ...prev, [quadrant]: tab }))
+  }, [])
 
   // Native HTML5 drag-and-drop (no new dependency) -- `draggedTab` tracks
   // which tab id is currently being dragged so the drop handler knows
@@ -481,110 +642,63 @@ export function Cell({
   // visual feedback. Cleared on drop/dragend regardless of outcome.
   const [draggedTab, setDraggedTab] = useState<string | null>(null)
 
-  function moveTabToPanel(tab: string, panel: 'upper' | 'lower') {
-    setTabPanel((prev) => {
-      const next = { ...prev, [tab]: panel }
-      // `emitLayoutChange` reads `layoutRef.current.tabPanel`, which
+  function moveTabToQuadrant(tab: string, quadrant: Quadrant) {
+    setTabQuadrant((prev) => {
+      const next = { ...prev, [tab]: quadrant }
+      // `emitLayoutChange` reads `layoutRef.current.tabQuadrant`, which
       // this render hasn't committed yet at the point `onDrop` runs
       // (state updates are async) -- computed and reported directly
       // from `next` here instead of relying on the ref/effect timing,
       // so the drop's own layout report never races the state update
       // that's still in flight.
-      const lowerTabs = Object.entries(next)
-        .filter(([, p]) => p === 'lower')
-        .map(([t]) => t)
       onLayoutChange?.({
-        code_fraction: layoutRef.current.codeFraction,
-        panel_fraction: layoutRef.current.panelFraction,
-        lower_tabs: lowerTabs,
+        column_fraction: layoutRef.current.columnFraction,
+        left_panel_fraction: layoutRef.current.leftPanelFraction,
+        right_panel_fraction: layoutRef.current.rightPanelFraction,
+        tab_quadrant: next,
+        ...(layoutRef.current.defaultTab !== undefined ? { default_tab: layoutRef.current.defaultTab } : {}),
+        extra_code_fraction: layoutRef.current.extraCodeFraction,
       })
       return next
     })
-    if (panel === 'upper') setUpperActiveTab(tab)
-    else setLowerActiveTab(tab)
+    setActiveTab(quadrant, tab)
   }
 
-  const handleResizeMove = useCallback((event: PointerEvent) => {
-    const body = bodyRef.current
-    if (!body) return
-    const rect = body.getBoundingClientRect()
-    if (rect.width === 0) return
-    // `.cs-cell-side` (view items) now renders on the left and
-    // `.cs-cell-code` on the right (per the user's request to swap
-    // them) -- `codeFraction` still means "code's own share of the row
-    // width" (it's still what sizes `.cs-cell-code`'s flex-basis below),
-    // but the cursor's raw left-edge fraction now measures the *side*
-    // column's width first, so it has to be inverted here to keep
-    // dragging the handle resize the column it's visually attached to,
-    // not the opposite one.
-    const fractionFromLeft = (event.clientX - rect.left) / rect.width
-    const fraction = 1 - fractionFromLeft
-    setCodeFraction(Math.min(MAX_CODE_FRACTION, Math.max(MIN_CODE_FRACTION, fraction)))
-  }, [])
-
-  const stopResizing = useCallback(() => {
-    if (!draggingRef.current) return
-    draggingRef.current = false
-    document.body.classList.remove('cs-resizing')
-    window.removeEventListener('pointermove', handleResizeMove)
-    window.removeEventListener('pointerup', stopResizing)
-    emitLayoutChange()
-  }, [handleResizeMove, emitLayoutChange])
-
-  const startResizing = useCallback(
-    (event: React.PointerEvent) => {
-      event.preventDefault()
-      draggingRef.current = true
-      // Applied to <body>, not the handle -- during a fast drag the
-      // pointer can end up over the code editor or an element widget
-      // between move events; without a page-wide cursor/selection lock
-      // the drag would otherwise flicker as the cursor changes and text
-      // gets selected underneath it.
-      document.body.classList.add('cs-resizing')
-      window.addEventListener('pointermove', handleResizeMove)
-      window.addEventListener('pointerup', stopResizing)
-    },
-    [handleResizeMove, stopResizing],
+  // The vertical divider between the left column (top-left + bottom-
+  // left) and the right column (top-right + bottom-right) -- the
+  // repurposed old codeFraction/`.cs-resize-handle`, per item 2/3.
+  // Measures `.cs-cell-body`'s own rect; NOT inverted, unlike the old
+  // codeFraction handler (which measured the same left-edge fraction
+  // but meant "the RIGHT/code column's own share," the opposite
+  // convention) -- `columnFraction` here means "the LEFT column's own
+  // share," so the raw left-edge fraction already is the value this
+  // needs, with no flip.
+  const { containerRef: bodyRef, start: startColumnResizing } = useDragDivider(
+    'horizontal',
+    false,
+    setColumnFraction,
+    emitLayoutChange,
   )
 
-  // The vertical (upper/lower) split within `.cs-cell-side`, mirroring
-  // `startResizing`/`handleResizeMove`/`stopResizing` above exactly, just
-  // measuring the panel container's own height instead of `.cs-cell-
-  // body`'s width -- a second, independent draggable divider, not a
-  // reuse of the horizontal one (different axis, different ref/state).
-  // `panelFraction`/`setPanelFraction` themselves are declared up near
-  // `codeFraction` (see comment there); only the refs live here, next to
-  // where they're actually used.
-  const panelsRef = useRef<HTMLDivElement | null>(null)
-  const panelDraggingRef = useRef(false)
+  // The left column's own top/bottom split (top-left vs. bottom-left) --
+  // independent from the right column's own divider below (different
+  // container ref/state), per the confirmed "3 independent dividers,
+  // not a crosshair" design.
+  const { containerRef: leftPanelDividerRef, start: startLeftPanelResizing } = useDragDivider(
+    'vertical',
+    false,
+    setLeftPanelFraction,
+    emitLayoutChange,
+  )
 
-  const handlePanelResizeMove = useCallback((event: PointerEvent) => {
-    const panels = panelsRef.current
-    if (!panels) return
-    const rect = panels.getBoundingClientRect()
-    if (rect.height === 0) return
-    const fraction = (event.clientY - rect.top) / rect.height
-    setPanelFraction(Math.min(MAX_CODE_FRACTION, Math.max(MIN_CODE_FRACTION, fraction)))
-  }, [])
-
-  const stopPanelResizing = useCallback(() => {
-    if (!panelDraggingRef.current) return
-    panelDraggingRef.current = false
-    document.body.classList.remove('cs-resizing-vertical')
-    window.removeEventListener('pointermove', handlePanelResizeMove)
-    window.removeEventListener('pointerup', stopPanelResizing)
-    emitLayoutChange()
-  }, [handlePanelResizeMove, emitLayoutChange])
-
-  const startPanelResizing = useCallback(
-    (event: React.PointerEvent) => {
-      event.preventDefault()
-      panelDraggingRef.current = true
-      document.body.classList.add('cs-resizing-vertical')
-      window.addEventListener('pointermove', handlePanelResizeMove)
-      window.addEventListener('pointerup', stopPanelResizing)
-    },
-    [handlePanelResizeMove, stopPanelResizing],
+  // The right column's own top/bottom split (top-right vs. bottom-
+  // right) -- the one genuinely new divider (item 2), independent of
+  // the left column's one above.
+  const { containerRef: rightPanelDividerRef, start: startRightPanelResizing } = useDragDivider(
+    'vertical',
+    false,
+    setRightPanelFraction,
+    emitLayoutChange,
   )
 
   // The setup/main editor split within `.cs-cell-code`, same mirror-of-
@@ -626,17 +740,62 @@ export function Cell({
     [handleExtraCodeResizeMove, stopExtraCodeResizing],
   )
 
-  // A single tab's own view-item content -- extracted so both sections
-  // render it identically without duplicating this dispatch. Unchanged
-  // from before the upper/lower split existed, just no longer inlined
-  // directly under one shared `.cs-cell-tab-content`.
+  // A single tab's own view-item content -- extracted so all 4 quadrants
+  // render it identically without duplicating this dispatch. Gains a
+  // CODE_TAB_ID case (item 3): the primary editor is now one of the
+  // dispatched tabs rather than its own always-present column, but its
+  // props (source/onRunCell/readOnly/highlightedLines/lineOffset) are
+  // otherwise unchanged from the old unconditional render -- a `static`
+  // cell's editor is still read-only, exactly as before.
+  //
+  // `extraCodeAbove` (the title-slide-only setup-cell composition) is
+  // composed in here, directly above this cell's own editor, wherever
+  // CODE_TAB_ID's tab content ends up rendering -- per item 3's own
+  // scoping decision, extraCodeAbove keeps working exactly as before
+  // during the item-3/item-4 transition (it's deleted wholesale by item
+  // 4, not touched here), just relocated from its own always-present
+  // column to wherever the primary editor tab currently lives in the
+  // quadrant system. Same `extraCodeFraction`-driven top/bottom split,
+  // draggable via the same handle, as before this item.
   function renderTabContent(tab: string) {
+    if (tab === CODE_TAB_ID) {
+      const codeEditor = (
+        <CodeEditor
+          source={meta.source}
+          onRunCell={onRunCell}
+          onRunAll={onRunAll}
+          readOnly={meta.instance === 'static'}
+          highlightedLines={highlightedLines}
+          onToggleLineHighlight={toggleLineHighlight}
+          lineOffset={lineOffset}
+          onLineCountChange={onLineCountChange}
+        />
+      )
+      if (!extraCodeAbove) return codeEditor
+      return (
+        <div className="cs-cell-code-with-extra" ref={extraCodeRef}>
+          <div className="cs-cell-extra-code" style={{ flexBasis: `${extraCodeFraction * 100}%` }}>
+            {extraCodeAbove}
+          </div>
+          <div
+            className="cs-panel-resize-handle"
+            onPointerDown={startExtraCodeResizing}
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label={`Resize ${cellId}'s setup/main editor split`}
+          />
+          <div className="cs-cell-extra-code" style={{ flexBasis: `${(1 - extraCodeFraction) * 100}%` }}>
+            {codeEditor}
+          </div>
+        </div>
+      )
+    }
     const element = meta.elements.find((e) => e.name === tab)
-    // Every tab in `allTabs` (below) comes directly from `meta.elements`
-    // now that the Output tab no longer exists -- this should be
-    // unreachable, but returning null rather than throwing keeps a
-    // stray/legacy tab id (e.g. a saved layout naming a since-removed
-    // element) a silent no-render instead of a crash.
+    // Every non-CODE_TAB_ID tab in `allTabs` (below) comes directly from
+    // `meta.elements` -- this should be unreachable, but returning null
+    // rather than throwing keeps a stray/legacy tab id (e.g. a saved
+    // layout naming a since-removed element) a silent no-render instead
+    // of a crash.
     if (!element) return null
     if (isInputElement(element.kind)) {
       return <ElementWidget element={element} value={elementValues[element.name]} onSetValue={onSetElementValue} />
@@ -664,32 +823,35 @@ export function Cell({
     return null
   }
 
-  // One section (upper or lower): its own tab strip (a drag source for
-  // every tab currently assigned here, and a drop target accepting a tab
-  // dragged from the *other* section) plus its own active tab's content.
-  // An empty section (no tabs assigned) still renders its strip -- an
-  // empty, but still-droppable, target -- collapsed via
-  // `.cs-cell-panel-empty` rather than showing a blank content area with
-  // nothing in it (per the user's own scoping decision for this case).
+  // One quadrant: its own tab strip (a drag source for every tab
+  // currently assigned here, and a drop target accepting a tab dragged
+  // from ANY of the other 3 quadrants -- generalized from the old
+  // 2-panel version, which only ever needed to accept from "the other
+  // one") plus its own active tab's content. An empty quadrant (no tabs
+  // assigned) still renders its strip -- an empty, but still-droppable,
+  // target -- collapsed via `.cs-cell-panel-empty` rather than showing a
+  // blank content area with nothing in it (per the user's own scoping
+  // decision for this case, extended from 2 sections to all 4
+  // quadrants).
   //
-  // `otherIsEmpty` drives the flex-basis math: with both sections
-  // populated, each gets its own share of `panelFraction`/`1 -
-  // panelFraction` (the draggable divider between them). With the other
-  // section empty (collapsed to `.cs-cell-panel-empty`'s own fixed CSS
-  // size, not a flex share), giving *this* one only its own fraction of
-  // the row would leave the remainder unclaimed by anything -- flex-grow
-  // 0.5 of the available space with an empty sibling that isn't
-  // stretching to fill the rest either. Explicit `flex: 1` here instead
-  // makes it correctly claim 100% of whatever's left over.
-  function renderPanel(
-    panel: 'upper' | 'lower',
-    tabs: string[],
-    active: string | undefined,
-    setActive: (tab: string) => void,
-    otherIsEmpty: boolean,
-  ) {
+  // `flexValue` drives the flex-basis math within this quadrant's own
+  // column: with both of the column's quadrants populated, each gets
+  // its own share of the column's own panel fraction (left column:
+  // leftPanelFraction/1-leftPanelFraction; right column:
+  // rightPanelFraction/1-rightPanelFraction independently). With the
+  // other quadrant IN THIS SAME COLUMN empty (collapsed to
+  // `.cs-cell-panel-empty`'s own fixed CSS size, not a flex share),
+  // giving *this* one only its own fraction of the column would leave
+  // the remainder unclaimed -- explicit `flex: 1` instead correctly
+  // claims 100% of whatever's left over in that column, same "otherIsEmpty"
+  // precedent the old 2-panel version already had.
+  function renderQuadrant(quadrant: Quadrant, otherInColumnIsEmpty: boolean) {
+    const tabs = tabsByQuadrant[quadrant]
+    const active = activeTabOf(quadrant)
     const isEmpty = tabs.length === 0
-    const flexValue = otherIsEmpty ? 1 : panel === 'upper' ? panelFraction : 1 - panelFraction
+    const isTop = quadrant === 'top-left' || quadrant === 'top-right'
+    const columnFractionForPanel = quadrant.endsWith('left') ? leftPanelFraction : rightPanelFraction
+    const flexValue = otherInColumnIsEmpty ? 1 : isTop ? columnFractionForPanel : 1 - columnFractionForPanel
     return (
       <div
         className={`cs-cell-panel ${isEmpty ? 'cs-cell-panel-empty' : ''}`}
@@ -700,7 +862,7 @@ export function Cell({
         }}
         onDrop={(event) => {
           event.preventDefault()
-          if (draggedTab !== null) moveTabToPanel(draggedTab, panel)
+          if (draggedTab !== null) moveTabToQuadrant(draggedTab, quadrant)
           setDraggedTab(null)
         }}
       >
@@ -713,7 +875,7 @@ export function Cell({
               draggable
               aria-selected={active === tab}
               className={`cs-cell-tab ${active === tab ? 'cs-cell-tab-active' : ''} ${draggedTab === tab ? 'cs-cell-tab-dragging' : ''}`}
-              onClick={() => setActive(tab)}
+              onClick={() => setActiveTab(quadrant, tab)}
               onDragStart={(event) => {
                 event.dataTransfer.effectAllowed = 'move'
                 // Some browsers refuse to start a native HTML5 drag at
@@ -727,7 +889,7 @@ export function Cell({
               }}
               onDragEnd={() => setDraggedTab(null)}
             >
-              {tab}
+              {tab === CODE_TAB_ID ? 'Code' : tab}
             </button>
           ))}
         </div>
@@ -735,6 +897,40 @@ export function Cell({
       </div>
     )
   }
+
+  // A whole-column-collapsed column (both of its own quadrants empty,
+  // see below) renders as ONE thin strip, not its two quadrants' own
+  // `.cs-cell-panel-empty` strips still stacked inside a differently-
+  // sized wrapper -- this is the single collapsed strip itself, still a
+  // real drop target (dropping a tab here assigns it to the column's
+  // own top quadrant, same "top" default `quadrantOf` already falls
+  // back to elsewhere).
+  function renderCollapsedColumn(topQuadrant: Quadrant) {
+    return (
+      <div
+        className="cs-cell-panel cs-cell-panel-empty"
+        onDragOver={(event) => {
+          if (draggedTab === null) return
+          event.preventDefault()
+        }}
+        onDrop={(event) => {
+          event.preventDefault()
+          if (draggedTab !== null) moveTabToQuadrant(draggedTab, topQuadrant)
+          setDraggedTab(null)
+        }}
+      >
+        <div className="cs-cell-tabs" role="tablist" />
+      </div>
+    )
+  }
+
+  // Whole-column collapse (confirmed follow-up decision, see the todo
+  // doc's "Design decisions"): a column collapses to a single thin
+  // strip -- not its two quadrants' own strips stacked -- when BOTH of
+  // its own quadrants are empty. Computed fresh per render straight
+  // from `tabsByQuadrant`, not stored as separate state.
+  const leftColumnEmpty = tabsByQuadrant['top-left'].length === 0 && tabsByQuadrant['bottom-left'].length === 0
+  const rightColumnEmpty = tabsByQuadrant['top-right'].length === 0 && tabsByQuadrant['bottom-right'].length === 0
 
   return (
     <div
@@ -852,122 +1048,84 @@ export function Cell({
 
       {!collapsed && (
         <div className="cs-cell-body" ref={bodyRef}>
-          {/* View items render on the left, code on the right (per the
-              user's request to swap the two columns) -- `.cs-cell-code`/
-              `.cs-cell-side` both use `flex: 0 0 auto` (App.css) so the
-              drag-driven inline `flex-basis` is the actual rendered
-              width, not just a starting point flexbox is free to
-              redistribute -- but that means `.cs-cell-side` *must*
-              always get an explicit basis, including when `hideCode`
-              hides the other column entirely. Leaving it `undefined`
-              here previously left the basis at its CSS default of
-              `auto`, which sizes a 0-grow flex item to its *content's*
-              intrinsic width -- normally harmless, but a cs.image()
-              data URI or any other long unbroken string in a tab's
-              content has no wrap points, so the container expanded to
-              fit it and blew the whole page out to thousands of pixels
-              wide (reported bug: slide 2 "Image Preview" with code
-              hidden). `100%` here means "the only column, fill the
-              row." */}
+          {/* Left column (top-left + bottom-left): flex-basis driven by
+              `columnFraction` (the repurposed old `codeFraction`) unless
+              whole-column-collapsed (both quadrants empty, confirmed
+              follow-up decision), in which case it claims none of the
+              row's width -- `.cs-cell-column-empty` (App.css) gives it
+              a fixed thin-strip size instead of a flex share, same
+              "explicit basis, not left at `auto`" precedent the old
+              `hideCode ? '100%' : ...` line already had (a long
+              unbroken string in a tab's content has no wrap points and
+              would otherwise blow the row out to thousands of pixels
+              wide -- see the regression this precedent was fixing). */}
           <div
-            className="cs-cell-side"
-            style={{ flexBasis: hideCode ? '100%' : `${(1 - codeFraction) * 100}%` }}
+            className={`cs-cell-column ${leftColumnEmpty ? 'cs-cell-column-empty' : ''}`}
+            style={!leftColumnEmpty ? { flexBasis: `${columnFraction * 100}%` } : undefined}
+            ref={leftPanelDividerRef}
           >
-            {/* Two independent, stacked sections (per the user's
-                request) -- each is its own drop target
-                (onDragOver/onDrop) for a tab dragged from either
-                section's strip, and each renders only the tabs
-                currently assigned to it (`upperTabs`/`lowerTabs`,
-                driven by `tabPanel`). An empty section still renders
-                its (empty) strip as a drop target, collapsed to a
-                thin header-only row via `.cs-cell-panel-empty`
-                rather than claiming the panel's full flex-basis
-                share for nothing to show, per the user's own scoping
-                decision. */}
-            <div className="cs-cell-panels" ref={panelsRef}>
-              {renderPanel('upper', upperTabs, upperActiveTab, setUpperActiveTab, lowerTabs.length === 0)}
-              {upperTabs.length > 0 && lowerTabs.length > 0 && (
-                <div
-                  className="cs-panel-resize-handle"
-                  onPointerDown={startPanelResizing}
-                  role="separator"
-                  aria-orientation="horizontal"
-                  aria-label={`Resize ${cellId}'s upper/lower view-item split`}
-                />
+            {leftColumnEmpty
+              ? renderCollapsedColumn('top-left')
+              : (
+                <>
+                  {renderQuadrant('top-left', tabsByQuadrant['bottom-left'].length === 0)}
+                  {/* Hidden/inert while the left column itself is
+                      whole-column-collapsed -- there's no real split to
+                      drag when neither quadrant is rendering anything
+                      to resize. */}
+                  {tabsByQuadrant['top-left'].length > 0 && tabsByQuadrant['bottom-left'].length > 0 && (
+                    <div
+                      className="cs-panel-resize-handle"
+                      onPointerDown={startLeftPanelResizing}
+                      role="separator"
+                      aria-orientation="horizontal"
+                      aria-label={`Resize ${cellId}'s top-left/bottom-left split`}
+                    />
+                  )}
+                  {renderQuadrant('bottom-left', tabsByQuadrant['top-left'].length === 0)}
+                </>
               )}
-              {renderPanel('lower', lowerTabs, lowerActiveTab, setLowerActiveTab, upperTabs.length === 0)}
-            </div>
           </div>
 
-          {/* No handle (and no split to speak of) once the code column
-              itself is hidden -- ARCHITECTURE.md's slideshow reveal-code
-              toggle already collapses to a single column in that case,
-              same as a screen narrow enough to stack the two columns
-              (see the @media rule in App.css). */}
-          {!hideCode && (
+          {/* Hidden/inert while either column is whole-column-collapsed
+              -- there's nothing to drag between a real column and a
+              collapsed strip. */}
+          {!leftColumnEmpty && !rightColumnEmpty && (
             <div
               className="cs-resize-handle"
-              onPointerDown={startResizing}
+              onPointerDown={startColumnResizing}
               role="separator"
               aria-orientation="vertical"
-              aria-label={`Resize ${cellId}'s code/elements split`}
+              aria-label={`Resize ${cellId}'s left/right column split`}
             />
           )}
 
-          {!hideCode && (
-            <div
-              className="cs-cell-code"
-              ref={extraCodeAbove ? extraCodeRef : undefined}
-              style={{ flexBasis: `${codeFraction * 100}%` }}
-            >
-              {extraCodeAbove ? (
+          {/* Right column (top-right + bottom-right) -- same shape as
+              the left column above, its own independent
+              rightPanelFraction/whole-column-collapse state. */}
+          <div
+            className={`cs-cell-column ${rightColumnEmpty ? 'cs-cell-column-empty' : ''}`}
+            style={!rightColumnEmpty ? { flexBasis: `${(1 - columnFraction) * 100}%` } : undefined}
+            ref={rightPanelDividerRef}
+          >
+            {rightColumnEmpty
+              ? renderCollapsedColumn('top-right')
+              : (
                 <>
-                  {/* Title-slide-only composition (SlideShow.tsx): the
-                      setup cell's own editor rendered here, above this
-                      cell's own, sharing this column's codeFraction-
-                      driven width instead of getting an independent
-                      one. The two share `extraCodeFraction` as their
-                      own top/bottom split, draggable via the handle
-                      below -- same "flex-basis in %, drag measures the
-                      shared container's own rect" shape as `panelFraction`
-                      above, just a third independent instance of it. */}
-                  <div className="cs-cell-extra-code" style={{ flexBasis: `${extraCodeFraction * 100}%` }}>
-                    {extraCodeAbove}
-                  </div>
-                  <div
-                    className="cs-panel-resize-handle"
-                    onPointerDown={startExtraCodeResizing}
-                    role="separator"
-                    aria-orientation="horizontal"
-                    aria-label={`Resize ${cellId}'s setup/main editor split`}
-                  />
-                  <div className="cs-cell-extra-code" style={{ flexBasis: `${(1 - extraCodeFraction) * 100}%` }}>
-                    <CodeEditor
-                      source={meta.source}
-                      onRunCell={onRunCell}
-                      onRunAll={onRunAll}
-                      readOnly={meta.instance === 'static'}
-                      highlightedLines={highlightedLines}
-                      onToggleLineHighlight={toggleLineHighlight}
-                      lineOffset={lineOffset}
-                      onLineCountChange={onLineCountChange}
+                  {renderQuadrant('top-right', tabsByQuadrant['bottom-right'].length === 0)}
+                  {tabsByQuadrant['top-right'].length > 0 && tabsByQuadrant['bottom-right'].length > 0 && (
+                    <div
+                      className="cs-panel-resize-handle"
+                      onPointerDown={startRightPanelResizing}
+                      role="separator"
+                      aria-orientation="horizontal"
+                      aria-label={`Resize ${cellId}'s top-right/bottom-right split`}
                     />
-                  </div>
+                  )}
+                  {renderQuadrant('bottom-right', tabsByQuadrant['top-right'].length === 0)}
                 </>
-              ) : (
-                <CodeEditor
-                  source={meta.source}
-                  onRunCell={onRunCell}
-                  onRunAll={onRunAll}
-                  readOnly={meta.instance === 'static'}
-                  highlightedLines={highlightedLines}
-                  onToggleLineHighlight={toggleLineHighlight}
-                  lineOffset={lineOffset}
-                  onLineCountChange={onLineCountChange}
-                />
               )}
-            </div>
-          )}
+          </div>
         </div>
       )}
     </div>

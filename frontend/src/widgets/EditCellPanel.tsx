@@ -1,5 +1,14 @@
 import { useState } from 'react'
+import { CODE_TAB_ID } from '../protocol'
 import { isTestElement, type ElementMeta } from './elementMeta'
+
+// CELL_QUADRANT_LAYOUT_TODO.md item 3 -- `tabs` now includes the
+// primary editor's own sentinel id (CODE_TAB_ID) alongside real element
+// names, so this list needs a friendly display label for it rather than
+// leaking the raw `'__code__'` string into the UI.
+function tabLabel(tab: string): string {
+  return tab === CODE_TAB_ID ? 'Code' : tab
+}
 
 // Every element kind an author can pick from the "add element" dropdown,
 // with the config `Element.config` needs for a sensible default --
@@ -340,7 +349,7 @@ export function EditCellPanel({
                     if (event.target.checked) onSetDefaultTab(tab)
                   }}
                 />
-                {tab}
+                {tabLabel(tab)}
               </label>
             </li>
           ))}

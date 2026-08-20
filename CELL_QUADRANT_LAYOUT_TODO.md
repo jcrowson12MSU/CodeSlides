@@ -442,10 +442,44 @@ stated below, no further sign-off needed on these points.
     means at the data-model level — item 3's quadrant render logic
     depends on this being settled, not the other way around.
 
-- [ ] **3. Rewrite `Cell.tsx`'s layout render as 4 independent
+- [x] **3. Rewrite `Cell.tsx`'s layout render as 4 independent
   quadrants**
   (replacing today's `.cs-cell-side` / `.cs-resize-handle` /
-  `.cs-cell-code` three-part row):
+  `.cs-cell-code` three-part row). **Done**: `Cell.tsx` rewritten with
+  `tabQuadrant`/`quadrantOf` (replacing `tabPanel`/`panelOf`),
+  `moveTabToQuadrant` (generalized from `moveTabToPanel` to accept a
+  drop from any of the other 3 quadrants), a shared `useDragDivider`
+  hook backing all 3 independent dividers (vertical column divider +
+  each column's own horizontal divider), whole-column collapse via
+  `renderCollapsedColumn` (a real bug caught and fixed during
+  verification — the first pass rendered 2 stacked empty-quadrant
+  strips instead of 1 collapsed column strip), and `CODE_TAB_ID`
+  dispatched through `renderTabContent`/`allTabs` so the primary editor
+  is a real draggable tab (with `extraCodeAbove` composed in wherever
+  that tab currently renders, per the confirmed transition decision
+  to keep it working as-is until item 4 removes it). `App.css` updated:
+  `.cs-cell-side`/`.cs-cell-code` merged into one shared
+  `.cs-cell-column` class (used for both columns now, since either can
+  hold any mix of tabs), new `.cs-cell-column-empty` (whole-column
+  collapse) and `.cs-cell-code-with-extra` (extraCodeAbove's new
+  composition wrapper), Slides-view-specific rules and the narrow-
+  screen stacking media query updated to match. Migration (item 7) done
+  as part of this: `migrateTabQuadrant`/`migrateLeftPanelFraction`/
+  `migrateColumnFraction` read the old `lower_tabs`/`panel_fraction`/
+  `code_fraction` shape when the new one isn't present yet, so an
+  existing saved deck's layout doesn't reset. Verified live in a real
+  browser (Playwright, native `DragEvent`/`DataTransfer` dispatch,
+  since drag simulation needs real events, not mouse move/down/up):
+  dragging tabs into all 4 quadrants, the 2 horizontal dividers ending
+  up at genuinely different heights independent of each other and the
+  vertical divider (confirmed via bounding-rect Y positions before/
+  after), whole-column collapse to one strip (not two), `hide_code`
+  correctly removing the Code tab entirely, and a full Save + reload
+  round-trip persisting the new `column_fraction`/`left_panel_fraction`/
+  `right_panel_fraction`/`tab_quadrant` shape exactly (confirmed by
+  reading the written `.py` file directly, not just the UI). 568
+  backend tests still pass (this item is frontend-only); `tsc -b
+  --force` and a full `npm run build` both clean.
   - Four `renderPanel`-equivalent quadrants instead of two, each an
     independent drag source and drop target for any tab (element or
     code editor) dragged from *any* other quadrant — `moveTabToPanel`
