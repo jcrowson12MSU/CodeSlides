@@ -78,28 +78,52 @@ class Cell:
     # always keeps the decorator regardless of this flag.
     hide_def: bool = False
     # `@app.cell(layout={...})` -- the browser's own draggable-divider/
-    # view-item-panel arrangement (TODO: split code/view-items column,
-    # split upper/lower view-item sections, and which section each view
-    # item's tab lives in), persisted here so a Save writes it back to
-    # the deck's .py file and it's restored the next time the deck loads
-    # (per the user's request -- previously pure client-side React state
-    # in Cell.tsx, lost on every reload). `None` means "no saved layout
-    # yet, use the browser's own defaults" -- never populated by hand-
-    # written code in practice, but not validated/shaped beyond "a
+    # view-item-tab arrangement, persisted here so a Save writes it back
+    # to the deck's .py file and it's restored the next time the deck
+    # loads (per the user's request -- previously pure client-side React
+    # state in Cell.tsx, lost on every reload). `None` means "no saved
+    # layout yet, use the browser's own defaults" -- never populated by
+    # hand-written code in practice, but not validated/shaped beyond "a
     # dict" here, same loose-typing precedent `Element.config` already
     # sets, since this is purely a display concern with no effect on
     # execution and every key is optional (a partial dict from an older
     # save format, or one written by hand, degrades to remaining browser
-    # defaults for whichever keys are missing rather than erroring).
-    # Expected keys (all optional): "code_fraction" (float, 0-1 -- the
-    # code column's share of the row width), "panel_fraction" (float,
-    # 0-1 -- the upper section's share of the view-items column height),
-    # "lower_tabs" (list[str] -- element names, plus the literal string
-    # "__output__" for the Output tab, currently assigned to the lower
-    # section; everything else defaults to upper), "default_tab" (str --
-    # an element name, or "__output__", naming which tab shows first on
-    # load with no prior interaction; absent means "__output__", matching
-    # the pre-existing hardcoded default).
+    # defaults for whichever keys are missing rather than erroring). See
+    # CellLayout in frontend/src/protocol.ts for the authoritative shape
+    # (kept in sync with this docstring by hand, same as every other
+    # message type -- this module intentionally does not import/
+    # validate against it).
+    #
+    # CELL_QUADRANT_LAYOUT_TODO.md item 2 -- a cell's view is 4
+    # independent quadrants, not 2 upper/lower sections, and the cell's
+    # own primary code editor is now one more entry in the same tab pool
+    # as its other elements (reserved id "__code__", never a legal
+    # author-chosen element name -- see item 2b) rather than always
+    # occupying its own fixed column. Current (new-shape) keys, all
+    # optional: "column_fraction" (float, 0-1 -- the left column's share
+    # of the row width; the old "code_fraction"'s replacement, renamed
+    # since the code editor no longer has an inherent side),
+    # "left_panel_fraction" (float, 0-1 -- top-left's share of the left
+    # column's height), "right_panel_fraction" (float, 0-1 -- top-right's
+    # share of the right column's height, independent of
+    # left_panel_fraction -- 3 independent dividers total, not a
+    # crosshair), "tab_quadrant" (dict[str, str] -- element name (or
+    # "__code__") -> one of "top-left"/"top-right"/"bottom-left"/
+    # "bottom-right"; a tab absent from this dict defaults to
+    # "top-left"), "default_tab" (str -- an element name, or "__code__",
+    # naming which tab shows first on load with no prior interaction;
+    # absent means the first top-left tab, unchanged in meaning from
+    # before this item).
+    #
+    # Deprecated (old-shape) keys, still readable for migrating a
+    # pre-existing saved layout (item 7) but never written by a current
+    # client: "code_fraction", "panel_fraction" (both superseded by
+    # column_fraction/left_panel_fraction above), "lower_tabs" (list[str]
+    # of element names in the old single lower section; superseded by
+    # tab_quadrant), "extra_code_fraction" (the title-slide-only
+    # `extraCodeAbove` setup/main editor split -- removed once item 4
+    # replaces the title slide with a layout that no longer renders
+    # through this cell layout system at all).
     layout: dict[str, Any] | None = None
     # `@app.cell(is_main=True)` -- marks this cell as the deck's single
     # designated entry point (e.g. a cell whose body is an

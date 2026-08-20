@@ -11,26 +11,52 @@ import type { SlideMeta } from './widgets/SlideShow'
 // own docstring for the exact shape) -- all keys optional, since a
 // partial dict from an older save format or one written by hand should
 // degrade to remaining browser defaults for whichever keys are missing,
-// not error. `lower_tabs` names element ids currently assigned to the
-// lower section; everything else defaults to the upper one. `default_tab`
-// (also an element id) is which tab shows first on load with no prior
-// interaction -- absent means the first upper-panel tab (`Cell.tsx`'s
-// `upperActiveTab` fallback). Cells no longer have a synthetic Output
-// tab (removed entirely, per the user's own explicit request) -- a
-// pre-existing saved `"__output__"` in either field just degrades to
-// that same "no tab of that name, fall back" behavior.
+// not error.
+//
+// CELL_QUADRANT_LAYOUT_TODO.md item 2 -- a cell's view is 4 independent
+// quadrants (`Quadrant` below) instead of the old 2-section upper/lower
+// layout, and the cell's own primary code editor is now folded into the
+// same tab pool as every other element (reserved id `CODE_TAB_ID`,
+// item 2's "Option A" sentinel decision) rather than always rendering in
+// its own fixed column. `tab_quadrant` replaces `lower_tabs`; `default_tab`
+// is unchanged in meaning. `code_fraction`/`panel_fraction` are kept,
+// still readable, for migrating an old saved layout (see item 7) but are
+// no longer written by a current client -- `column_fraction`/
+// `left_panel_fraction`/`right_panel_fraction` are their 3-independent-
+// divider replacements (one vertical divider between the left and right
+// columns, plus each column's own independent top/bottom divider).
+// `extra_code_fraction` (the title-slide-only `extraCodeAbove` setup/main
+// editor split) is kept for now only because `Cell.tsx`/`SlideShow.tsx`
+// still read/write it -- item 4 replaces the title slide with a bespoke
+// layout that doesn't render through this cell layout system at all, at
+// which point `extra_code_fraction` and its last usages should be
+// deleted together, not before.
+export type Quadrant = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
+
+// Reserved `tab_quadrant`/tab-id key for the cell's own primary code
+// editor -- never a legal author-chosen element name (enforced where
+// elements are added; see CELL_QUADRANT_LAYOUT_TODO.md item 2b's
+// reserved-name-collision guard). Absent from `tab_quadrant` (and from
+// the tab list generally) means the cell currently has no primary editor
+// at all, not merely "not positioned yet" -- see item 2b.
+export const CODE_TAB_ID = '__code__'
+
 export interface CellLayout {
+  // New shape (3 independent dividers + 4-quadrant tab assignment).
+  column_fraction?: number
+  left_panel_fraction?: number
+  right_panel_fraction?: number
+  tab_quadrant?: Record<string, Quadrant>
+  default_tab?: string
+  // Old shape, read-only from here on -- kept so a pre-existing saved
+  // layout can still be migrated (item 7) rather than silently reset.
+  // A current client never writes these.
   code_fraction?: number
   panel_fraction?: number
   lower_tabs?: string[]
-  default_tab?: string
-  // The title-slide-only split between a composed `extraCodeAbove`
-  // editor (Cell.tsx/SlideShow.tsx) and this cell's own -- meaningless
-  // outside that context (a normal cell with no extraCodeAbove ignores
-  // it entirely), but saved on the MAIN cell's own layout since that's
-  // the cell whose Cell instance actually owns the divider/drag state.
-  // Same "top gets this fraction, bottom gets the rest" meaning as
-  // `panel_fraction`.
+  // Title-slide-only `extraCodeAbove` split -- see the field-level note
+  // above `Quadrant`. Still actively read/written by `Cell.tsx` today;
+  // deleted alongside its last usage when item 4 lands, not before.
   extra_code_fraction?: number
 }
 
