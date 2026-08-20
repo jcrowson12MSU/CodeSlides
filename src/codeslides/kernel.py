@@ -1323,6 +1323,27 @@ class Kernel:
         self.reload_deck(load_deck(self.deck_path))
         return self.deck.cells[cell_name]
 
+    def set_hide_def(self, session: Session, cell_name: str, hide_def: bool) -> Cell:
+        """Set/clear `cell_name`'s `hide_def` (`deck.Cell.hide_def`), on
+        disk, immediately -- same write-immediately, reload-baseline-
+        synchronously precedent as `set_hide_code` right above (mirror it
+        if either changes). Unlike `is_main`, there's no uniqueness
+        constraint to enforce, so this only ever touches `cell_name`'s
+        own decorator."""
+        if self.deck_path is None:
+            raise ValueError("cannot set hide_def: this Kernel was not started from a deck file")
+        if cell_name not in self.deck.cells:
+            raise ValueError(f"cannot set hide_def for cell {cell_name!r}: it no longer exists")
+
+        from codeslides.serialization import set_hide_def as _set_hide_def_on_disk
+
+        _set_hide_def_on_disk(self.deck_path, cell_name, hide_def)
+
+        from codeslides.loader import load_deck
+
+        self.reload_deck(load_deck(self.deck_path))
+        return self.deck.cells[cell_name]
+
     def remove_cell(self, session: Session, name: str) -> None:
         """Delete a cell entirely (TODO.md #54's "cells can be deleted
         and rearranged"), on disk, immediately -- the inverse of

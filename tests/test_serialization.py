@@ -33,6 +33,7 @@ from codeslides.serialization import (
     set_cell_layout,
     set_element_config,
     set_hide_code,
+    set_hide_def,
     set_main_cell,
     set_notes_docstring,
     set_tests_default,
@@ -996,6 +997,50 @@ def test_set_hide_code_does_not_affect_other_cells(deck_file):
 def test_set_hide_code_raises_on_unknown_cell(deck_file):
     with pytest.raises(SaveConflictError):
         set_hide_code(str(deck_file), "does_not_exist", True)
+
+
+def test_set_hide_def_marks_the_named_cell(deck_file):
+    set_hide_def(str(deck_file), "live_demo", True)
+
+    deck = load_deck(str(deck_file))
+    assert deck.cells["live_demo"].hide_def is True
+    assert deck.cells["setup"].hide_def is False
+
+
+def test_set_hide_def_can_clear_it_again(deck_file):
+    set_hide_def(str(deck_file), "live_demo", True)
+    set_hide_def(str(deck_file), "live_demo", False)
+
+    deck = load_deck(str(deck_file))
+    assert deck.cells["live_demo"].hide_def is False
+
+
+def test_set_hide_def_does_not_affect_other_cells(deck_file):
+    # Unlike set_main_cell, there's no uniqueness constraint -- setting
+    # one cell's hide_def must never touch another cell's.
+    set_hide_def(str(deck_file), "setup", True)
+    set_hide_def(str(deck_file), "live_demo", True)
+
+    deck = load_deck(str(deck_file))
+    assert deck.cells["setup"].hide_def is True
+    assert deck.cells["live_demo"].hide_def is True
+
+
+def test_set_hide_def_raises_on_unknown_cell(deck_file):
+    with pytest.raises(SaveConflictError):
+        set_hide_def(str(deck_file), "does_not_exist", True)
+
+
+def test_set_hide_def_preserves_real_def_line_on_disk(deck_file):
+    # hide_def only ever affects display/edit UX (display_source) -- the
+    # actual on-disk function structure (a real `def name(...):` line,
+    # full body) must never change just because the decorator's hide_def
+    # kwarg toggled.
+    set_hide_def(str(deck_file), "live_demo", True)
+
+    text = deck_file.read_text()
+    assert "def live_demo(" in text
+    assert "hide_def=True" in text
 
 
 def test_rename_cell_preserves_hide_code_on_disk(tmp_path):

@@ -1728,7 +1728,8 @@ body.cs-slides-locked {
 
 .cs-edit-cell-main,
 .cs-edit-cell-setup,
-.cs-edit-cell-hide-code {
+.cs-edit-cell-hide-code,
+.cs-edit-cell-hide-def {
   display: flex;
   align-items: center;
   gap: 0.4rem;

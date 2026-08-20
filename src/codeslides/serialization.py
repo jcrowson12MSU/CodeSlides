@@ -1593,6 +1593,74 @@ def set_hide_code(deck_path: str, cell_name: str, hide_code: bool) -> None:
     path.write_text(updated)
 
 
+def set_hide_def(deck_path: str, cell_name: str, hide_def: bool) -> None:
+    """Set/clear `cell_name`'s `hide_def=True` (`deck.Cell.hide_def`),
+    on disk, immediately -- same write-immediately precedent, and same
+    shape, as `set_hide_code` right above (mirror it if either changes).
+    Unlike `is_main`/`is_setup`, there's no uniqueness constraint: any
+    number of cells may have `hide_def=True` independently, so this only
+    ever touches `cell_name`'s own decorator, never a second cell's.
+    `rebuild_cell_source` always keeps the real `def name(...):` line and
+    full function body in the on-disk source regardless of `hide_def`'s
+    value -- toggling this only ever changes the decorator's own
+    `hide_def=...` kwarg, never the function's actual structure (see
+    `hide_def`'s own docstring, App.cell): a UI toggle for this is safe
+    to add without any risk of corrupting a cell's real code.
+
+    Raises `SaveConflictError` if `cell_name` no longer exists, or
+    `InvalidSourceError` if the result doesn't parse."""
+    path = Path(deck_path)
+    original = path.read_text()
+    spans = _cell_line_spans(original)
+    if cell_name not in spans:
+        raise SaveConflictError(f"cannot set hide_def for cell {cell_name!r}: it no longer exists")
+
+    tree = ast.parse(original)
+    func = next(
+        n
+        for n in ast.iter_child_nodes(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == cell_name
+    )
+    is_editable = any(
+        isinstance(dec, ast.Call)
+        and any(kw.arg == "instance" and ast.literal_eval(kw.value) == "editable" for kw in dec.keywords)
+        for dec in func.decorator_list
+    )
+    hide_code = _detect_hide_code(func)
+    layout = _detect_layout(func)
+    is_main = _detect_is_main(func)
+    is_setup = _detect_is_setup(func)
+    elements = _existing_elements(func)
+
+    start, end = spans[cell_name]
+    lines = original.splitlines(keepends=True)
+    cell_source = "".join(lines[start - 1 : end])
+
+    new_cell_source = rebuild_cell_source(
+        cell_name,
+        "editable" if is_editable else "static",
+        elements,
+        cell_source,
+        hide_def=hide_def,
+        layout=layout,
+        is_main=is_main,
+        is_setup=is_setup,
+        hide_code=hide_code,
+    )
+    lines[start - 1 : end] = [new_cell_source]
+    updated = "".join(lines)
+
+    try:
+        ast.parse(updated)
+    except SyntaxError as exc:
+        raise InvalidSourceError(
+            f"setting hide_def for cell {cell_name!r} would leave {deck_path!r} with invalid "
+            f"Python syntax, not saved: {exc}"
+        ) from exc
+
+    path.write_text(updated)
+
+
 def add_element(deck_path: str, cell_name: str, element: Element) -> None:
     """Add `element` to `cell_name`'s `elements=[...]` list, on disk,
     immediately (TODO.md #22 -- same "write immediately, don't stage

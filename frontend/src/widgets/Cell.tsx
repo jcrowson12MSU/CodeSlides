@@ -67,6 +67,18 @@ export interface CellMeta {
   // directly by the render, same "?? false, not a required field"
   // precedent as `is_main`.
   hide_code?: boolean
+  // Author-time declaration that this cell's code editor should show
+  // just its dedented body, hiding the `def name(...):` line itself
+  // (`hide_def` in the .py file) -- e.g. a straight-line-code teaching
+  // cell where the function wrapper is pure boilerplate the author
+  // doesn't want a student to see. The real function structure is
+  // unchanged on disk regardless -- purely a display/edit toggle,
+  // unlike `hide_code` (which removes the whole editor). Same
+  // "?? false, not a required field" precedent as `is_main`/
+  // `hide_code`. Only meaningful for a parameterless cell in practice
+  // (see `App.cell`'s own `hide_def` docstring) -- this component
+  // doesn't enforce that, it's purely an author-time judgment call.
+  hide_def?: boolean
   // Whether this cell currently has a primary code editor at all
   // (CELL_QUADRANT_LAYOUT_TODO.md item 2b -- "zero primary editor
   // means zero body code," not a hide-the-tab toggle). Opposite default
@@ -153,6 +165,11 @@ export interface CellProps {
    * is a genuine two-way toggle (no uniqueness constraint), so it takes
    * the value to set rather than always meaning "turn on". */
   onSetHideCode: (hideCode: boolean) => void
+  /** EditCellPanel's "Hide function definition" checkbox: set/clear
+   * this cell's `hide_def`. Same shape as onSetHideCode right above --
+   * writes to the deck's .py file immediately, a genuine two-way
+   * toggle (no uniqueness constraint), takes the value to set. */
+  onSetHideDef: (hideDef: boolean) => void
   /** EditCellPanel's "Remove/Add primary editor" button
    * (CELL_QUADRANT_LAYOUT_TODO.md item 2b). Removing deletes this
    * cell's body code entirely, on disk, immediately -- not a
@@ -356,6 +373,7 @@ export function Cell({
   onSetMainCell,
   onSetSetupCell,
   onSetHideCode,
+  onSetHideDef,
   onRemovePrimaryEditor,
   onAddPrimaryEditor,
   onAddElement,
@@ -1135,6 +1153,8 @@ export function Cell({
           onSetSetupCell={onSetSetupCell}
           isHideCode={meta.hide_code ?? false}
           onSetHideCode={onSetHideCode}
+          isHideDef={meta.hide_def ?? false}
+          onSetHideDef={onSetHideDef}
           hasPrimaryEditor={meta.has_primary_editor ?? true}
           onRemovePrimaryEditor={onRemovePrimaryEditor}
           onAddPrimaryEditor={onAddPrimaryEditor}

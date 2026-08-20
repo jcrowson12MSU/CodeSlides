@@ -100,6 +100,7 @@ def create_app(deck: Deck | None = None, deck_path: str | None = None) -> FastAP
                     "is_main": cell.is_main,
                     "is_setup": cell.is_setup,
                     "hide_code": cell.hide_code,
+                    "hide_def": cell.hide_def,
                 }
                 for name, cell in d.cells.items()
             },

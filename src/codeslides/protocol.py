@@ -285,6 +285,22 @@ class SetHideCode:
 
 
 @dataclass
+class SetHideDef:
+    """Set/clear `cell_id`'s `hide_def` (`deck.Cell.hide_def` -- hides
+    just the cell's own `def name(...):` line from the browser's code
+    editor, showing the dedented body as if it were plain straight-line
+    code; the real function structure is untouched on disk regardless).
+    Same shape as `SetHideCode` right above -- write-immediately-to-disk,
+    no uniqueness constraint, only ever touches `cell_id`'s own
+    decorator."""
+
+    type: ClassVar[str] = "set_hide_def"
+    session_id: str
+    cell_id: str
+    hide_def: bool
+
+
+@dataclass
 class RemoveCell:
     """Delete a cell entirely (TODO.md #54 -- "cells can be deleted and
     rearranged"), on disk, immediately -- same write-immediately
@@ -541,10 +557,10 @@ class CellRenamed:
     (`serialization.rename_cell`'s own `_detect_layout` call), and this
     must carry that forward or the client's local state would silently
     lose track of a previously-saved layout the moment its owning cell
-    gets renamed. `is_main`/`is_setup`/`hide_code` for the same reason
-    -- a rename must not silently drop the deck's main/setup-cell
-    designation or a cell's hide-code declaration from the client's
-    local state."""
+    gets renamed. `is_main`/`is_setup`/`hide_code`/`hide_def` for the
+    same reason -- a rename must not silently drop the deck's main/
+    setup-cell designation or a cell's hide-code/hide-def declaration
+    from the client's local state."""
 
     type: ClassVar[str] = "cell_renamed"
     session_id: str
@@ -557,6 +573,7 @@ class CellRenamed:
     is_main: bool = False
     is_setup: bool = False
     hide_code: bool = False
+    hide_def: bool = False
 
 
 @dataclass
@@ -592,6 +609,24 @@ class HideCodeSet:
     session_id: str
     cell_id: str
     hide_code: bool
+
+
+@dataclass
+class HideDefSet:
+    """Acknowledges a successful `set_hide_def`. Unlike `HideCodeSet`,
+    also carries the freshly re-rendered `source` (`_effective_display_
+    source`, same as CellRenamed/every other cell-mutating response) --
+    `hide_def` (unlike `hide_code`) changes what `display_source` itself
+    returns for this cell (whether the `def name(...):` line is
+    included), so the client's already-fetched `source` string is stale
+    the instant this toggles and must be replaced, not just the boolean
+    flag."""
+
+    type: ClassVar[str] = "hide_def_set"
+    session_id: str
+    cell_id: str
+    hide_def: bool
+    source: str
 
 
 @dataclass
@@ -766,6 +801,7 @@ ClientMessage = (
     | SetMainCell
     | SetSetupCell
     | SetHideCode
+    | SetHideDef
     | RemoveCell
     | ReorderCells
     | AddElement
@@ -790,6 +826,7 @@ ServerMessage = (
     | MainCellSet
     | SetupCellSet
     | HideCodeSet
+    | HideDefSet
     | CellRemoved
     | SlideRemoved
     | CellsReordered
@@ -823,6 +860,7 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
         SetMainCell,
         SetSetupCell,
         SetHideCode,
+        SetHideDef,
         RemoveCell,
         ReorderCells,
         AddElement,

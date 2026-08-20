@@ -413,12 +413,12 @@ function App() {
             elements: msg.elements,
             layout: msg.layout,
             // None of these message types touch is_main/is_setup/
-            // hide_code (the backend preserves all three --
+            // hide_code/hide_def (the backend preserves all four --
             // serialization.py's _detect_is_main/_detect_is_setup/
-            // _detect_hide_code, same precedent as hide_def/layout) --
-            // carry the existing local value forward rather than
-            // dropping to `undefined`/false, which would make the UI
-            // show the main/setup-cell/hide-code checkboxes as
+            // _detect_hide_code, same precedent as layout) -- carry the
+            // existing local value forward rather than dropping to
+            // `undefined`/false, which would make the UI show the
+            // main/setup-cell/hide-code/hide-def checkboxes as
             // unchecked the moment an unrelated element edit landed.
             // cell_added is the one case with no existing cell to carry
             // forward from -- a brand-new cell is never main, setup, or
@@ -426,6 +426,7 @@ function App() {
             is_main: cells[msg.cell_id]?.is_main ?? false,
             is_setup: cells[msg.cell_id]?.is_setup ?? false,
             hide_code: cells[msg.cell_id]?.hide_code ?? false,
+            hide_def: cells[msg.cell_id]?.hide_def ?? false,
             // Same carry-forward precedent -- none of these operations
             // touch whether this cell has a primary editor either.
             // Absent (a cell that's never been touched by
@@ -445,6 +446,7 @@ function App() {
             is_main: cells[msg.cell_id]?.is_main ?? false,
             is_setup: cells[msg.cell_id]?.is_setup ?? false,
             hide_code: cells[msg.cell_id]?.hide_code ?? false,
+            hide_def: cells[msg.cell_id]?.hide_def ?? false,
             has_primary_editor: msg.type === 'primary_editor_added',
           }
         } else if (msg.type === 'cell_renamed') {
@@ -465,6 +467,7 @@ function App() {
             is_main: msg.is_main,
             is_setup: msg.is_setup,
             hide_code: msg.hide_code,
+            hide_def: msg.hide_def,
             has_primary_editor: hadPrimaryEditor,
           }
         } else if (msg.type === 'main_cell_set') {
@@ -486,6 +489,17 @@ function App() {
           changed = true
           if (cells[msg.cell_id]) {
             cells[msg.cell_id] = { ...cells[msg.cell_id], hide_code: msg.hide_code }
+          }
+        } else if (msg.type === 'hide_def_set') {
+          if (!changed) cells = { ...cells }
+          changed = true
+          if (cells[msg.cell_id]) {
+            // Unlike hide_code_set, hide_def changes what the backend's
+            // display_source itself returns for this cell (whether the
+            // `def name(...):` line is included) -- source must be
+            // replaced too, or the editor keeps showing pre-toggle
+            // content until some unrelated event happens to refresh it.
+            cells[msg.cell_id] = { ...cells[msg.cell_id], hide_def: msg.hide_def, source: msg.source }
           }
         } else if (msg.type === 'cell_removed') {
           if (!changed) cells = { ...cells }
@@ -727,6 +741,12 @@ function App() {
     if (!sessionId) return
     clearEditError(cellId)
     send({ type: 'set_hide_code', session_id: sessionId, cell_id: cellId, hide_code: hideCode })
+  }
+
+  function handleSetHideDef(cellId: string, hideDef: boolean) {
+    if (!sessionId) return
+    clearEditError(cellId)
+    send({ type: 'set_hide_def', session_id: sessionId, cell_id: cellId, hide_def: hideDef })
   }
 
   function handleAddElement(cellId: string, name: string, kind: string, config: Record<string, unknown>) {
@@ -1063,6 +1083,7 @@ function App() {
               onSetMainCell={() => handleSetMainCell(cellId)}
               onSetSetupCell={() => handleSetSetupCell(cellId)}
               onSetHideCode={(hideCode) => handleSetHideCode(cellId, hideCode)}
+              onSetHideDef={(hideDef) => handleSetHideDef(cellId, hideDef)}
               onRemovePrimaryEditor={() => handleRemovePrimaryEditor(cellId)}
               onAddPrimaryEditor={() => handleAddPrimaryEditor(cellId)}
               onAddElement={(name, kind, config) => handleAddElement(cellId, name, kind, config)}
@@ -1114,6 +1135,7 @@ function App() {
           onSetMainCell={handleSetMainCell}
           onSetSetupCell={handleSetSetupCell}
           onSetHideCode={handleSetHideCode}
+          onSetHideDef={handleSetHideDef}
           onRemovePrimaryEditor={handleRemovePrimaryEditor}
           onAddPrimaryEditor={handleAddPrimaryEditor}
           onAddElement={handleAddElement}

@@ -48,6 +48,7 @@ export interface SlideShowProps {
   onSetMainCell: (cellId: string) => void
   onSetSetupCell: (cellId: string) => void
   onSetHideCode: (cellId: string, hideCode: boolean) => void
+  onSetHideDef: (cellId: string, hideDef: boolean) => void
   onRemovePrimaryEditor: (cellId: string) => void
   onAddPrimaryEditor: (cellId: string) => void
   onAddElement: (cellId: string, name: string, kind: string, config: Record<string, unknown>) => void
@@ -93,6 +94,7 @@ export function SlideShow({
   onSetMainCell,
   onSetSetupCell,
   onSetHideCode,
+  onSetHideDef,
   onRemovePrimaryEditor,
   onAddPrimaryEditor,
   onAddElement,
@@ -282,6 +284,7 @@ export function SlideShow({
               onSetMainCell={() => onSetMainCell(cellId)}
               onSetSetupCell={() => onSetSetupCell(cellId)}
               onSetHideCode={(hideCode) => onSetHideCode(cellId, hideCode)}
+              onSetHideDef={(hideDef) => onSetHideDef(cellId, hideDef)}
               onRemovePrimaryEditor={() => onRemovePrimaryEditor(cellId)}
               onAddPrimaryEditor={() => onAddPrimaryEditor(cellId)}
               onAddElement={(name, kind, config) => onAddElement(cellId, name, kind, config)}

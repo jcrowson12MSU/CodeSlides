@@ -189,6 +189,13 @@ export interface SetHideCode {
   hide_code: boolean
 }
 
+export interface SetHideDef {
+  type: 'set_hide_def'
+  session_id: string
+  cell_id: string
+  hide_def: boolean
+}
+
 export interface RemoveCell {
   type: 'remove_cell'
   session_id: string
@@ -268,6 +275,7 @@ export type ClientMessage =
   | SetMainCell
   | SetSetupCell
   | SetHideCode
+  | SetHideDef
   | RemoveCell
   | ReorderCells
   | AddElement
@@ -397,6 +405,7 @@ export interface CellRenamed {
   is_main: boolean
   is_setup: boolean
   hide_code: boolean
+  hide_def: boolean
 }
 
 export interface MainCellSet {
@@ -418,6 +427,14 @@ export interface HideCodeSet {
   session_id: string
   cell_id: string
   hide_code: boolean
+}
+
+export interface HideDefSet {
+  type: 'hide_def_set'
+  session_id: string
+  cell_id: string
+  hide_def: boolean
+  source: string
 }
 
 export interface CellRemoved {
@@ -519,6 +536,7 @@ export type ServerMessage =
   | MainCellSet
   | SetupCellSet
   | HideCodeSet
+  | HideDefSet
   | CellRemoved
   | CellsReordered
   | ElementAdded

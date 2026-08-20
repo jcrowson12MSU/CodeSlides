@@ -64,6 +64,16 @@ export interface EditCellPanelProps {
    * genuine two-way toggle -- no uniqueness constraint, so unchecking is
    * a real action, not a no-op. */
   onSetHideCode: (hideCode: boolean) => void
+  /** Whether this cell's code editor currently hides its own `def
+   * name(...):` line (`deck.Cell.hide_def`) -- shows just the dedented
+   * body, as if it were plain straight-line code. The real function
+   * structure is unchanged on disk regardless; this only ever affects
+   * what the editor displays/accepts back. */
+  isHideDef: boolean
+  /** Toggle the "Hide function definition" box: set/clear this cell's
+   * `hide_def`, on disk, immediately. Same shape as `onSetHideCode`
+   * above -- a genuine two-way toggle, no uniqueness constraint. */
+  onSetHideDef: (hideDef: boolean) => void
   /** Whether this cell currently has a primary code editor at all
    * (CELL_QUADRANT_LAYOUT_TODO.md item 2b) -- distinct from
    * `isHideCode`: `hide_code=True` is an author-time declaration that
@@ -135,6 +145,8 @@ export function EditCellPanel({
   onSetSetupCell,
   isHideCode,
   onSetHideCode,
+  isHideDef,
+  onSetHideDef,
   hasPrimaryEditor,
   onRemovePrimaryEditor,
   onAddPrimaryEditor,
@@ -322,6 +334,18 @@ export function EditCellPanel({
           onChange={(event) => onSetHideCode(event.target.checked)}
         />
         Hide code editor
+      </label>
+
+      <label
+        className="cs-edit-cell-hide-def"
+        title="Hides just this cell's own `def name(...):` line, showing the dedented body as plain code -- the real function structure is unchanged on disk. Mainly useful for a parameterless cell where the def line is pure boilerplate; a cell with input-element parameters still won't show its parameter list in the editor either way."
+      >
+        <input
+          type="checkbox"
+          checked={isHideDef}
+          onChange={(event) => onSetHideDef(event.target.checked)}
+        />
+        Hide function definition
       </label>
 
       <div className="cs-edit-cell-primary-editor">

@@ -23,6 +23,7 @@ from codeslides.protocol import (
     ElementsReordered,
     ErrorMessage,
     HideCodeSet,
+    HideDefSet,
     MainCellSet,
     NavigateSlide,
     PrimaryEditorAdded,
@@ -41,6 +42,7 @@ from codeslides.protocol import (
     SetElementConfig,
     SetElementValue,
     SetHideCode,
+    SetHideDef,
     SetMainCell,
     SetSlideOrder,
     SetTestSource,
@@ -1308,6 +1310,69 @@ def test_set_hide_code_unknown_session_produces_error_not_crash(tmp_path):
 
     messages = handle_message(
         registry, SetHideCode(session_id="does-not-exist", cell_id="live_demo", hide_code=True)
+    )
+
+    assert isinstance(messages[0], ErrorMessage)
+
+
+def test_set_hide_def_emits_hide_def_set_and_writes_to_disk(tmp_path):
+    registry, path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    messages = handle_message(
+        registry, SetHideDef(session_id=session.session_id, cell_id="live_demo", hide_def=True)
+    )
+
+    assert isinstance(messages[0], HideDefSet)
+    result = messages[0]
+    assert result.cell_id == "live_demo"
+    assert result.hide_def is True
+    assert "hide_def=True" in path.read_text()
+    assert registry.kernel.deck.cells["live_demo"].hide_def is True
+
+
+def test_set_hide_def_response_carries_freshly_rendered_source(tmp_path):
+    # Regression test: HideDefSet must carry the freshly re-rendered
+    # source (unlike HideCodeSet, which doesn't need to -- hide_code
+    # doesn't change display_source's own output, only whether the
+    # editor renders at all). Without this, the client's already-
+    # fetched source string goes stale the instant hide_def toggles,
+    # since display_source(source, hide_def=...) is what actually
+    # decides whether the `def name(...):` line is included.
+    registry, _path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    on = handle_message(
+        registry, SetHideDef(session_id=session.session_id, cell_id="live_demo", hide_def=True)
+    )[0]
+    assert isinstance(on, HideDefSet)
+    assert "def live_demo(" not in on.source
+
+    off = handle_message(
+        registry, SetHideDef(session_id=session.session_id, cell_id="live_demo", hide_def=False)
+    )[0]
+    assert isinstance(off, HideDefSet)
+    assert "def live_demo(" in off.source
+
+
+def test_set_hide_def_does_not_affect_other_cells(tmp_path):
+    registry, _path = _build_file_backed_registry(tmp_path)
+    session = registry.create()
+
+    handle_message(registry, SetHideDef(session_id=session.session_id, cell_id="setup", hide_def=True))
+    handle_message(
+        registry, SetHideDef(session_id=session.session_id, cell_id="live_demo", hide_def=True)
+    )
+
+    assert registry.kernel.deck.cells["setup"].hide_def is True
+    assert registry.kernel.deck.cells["live_demo"].hide_def is True
+
+
+def test_set_hide_def_unknown_session_produces_error_not_crash(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
+
+    messages = handle_message(
+        registry, SetHideDef(session_id="does-not-exist", cell_id="live_demo", hide_def=True)
     )
 
     assert isinstance(messages[0], ErrorMessage)

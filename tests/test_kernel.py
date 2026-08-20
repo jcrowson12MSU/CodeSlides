@@ -1400,6 +1400,52 @@ def test_set_hide_code_without_a_deck_path_raises():
         kernel.set_hide_code(session, "one", True)
 
 
+def test_set_hide_def_updates_the_kernel_baseline_and_disk(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    cell = kernel.set_hide_def(session, "live_demo", True)
+
+    assert cell.hide_def is True
+    assert kernel.deck.cells["live_demo"].hide_def is True
+    assert "hide_def=True" in path.read_text()
+
+
+def test_set_hide_def_does_not_affect_other_cells(tmp_path):
+    from codeslides.loader import load_deck
+
+    path = _write_deck_file(tmp_path, _TWO_CELL_DECK_SOURCE)
+    deck = load_deck(str(path))
+    kernel = Kernel(deck, deck_path=str(path))
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    kernel.set_hide_def(session, "setup", True)
+    kernel.set_hide_def(session, "live_demo", True)
+
+    assert kernel.deck.cells["setup"].hide_def is True
+    assert kernel.deck.cells["live_demo"].hide_def is True
+
+
+def test_set_hide_def_without_a_deck_path_raises():
+    app = App()
+
+    @app.cell
+    def one():
+        pass
+
+    kernel = Kernel(app.deck)
+    session = Session(deck=app.deck)
+
+    with pytest.raises(ValueError, match="not started from a deck file"):
+        kernel.set_hide_def(session, "one", True)
+
+
 def test_rename_cell_remaps_the_requesting_sessions_state(tmp_path):
     from codeslides.loader import load_deck
 
