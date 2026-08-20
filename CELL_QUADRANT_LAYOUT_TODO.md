@@ -2,12 +2,15 @@
 
 Scope: `frontend/src/widgets/Cell.tsx` (and its CSS in `App.css`), the
 `CellLayout` shape (`frontend/src/protocol.ts`) it persists through
-`set_cell_layout`/`Cell.layout` (`src/codeslides/deck.py`), plus one
-real exception: `Deck`/`Cell` (`deck.py`) and the element-mutation path
-need actual changes to support deleting/restoring a cell's body code
-when its primary editor is removed/added — see item 2b. See "Why this
-is almost entirely a `Cell.tsx` change" below for what does and does
-not stay contained.
+`set_cell_layout`/`Cell.layout` (`src/codeslides/deck.py`); plus two
+real exceptions: (1) `Deck`/`Cell` (`deck.py`) and the element-mutation
+path need actual changes to support deleting/restoring a cell's body
+code when its primary editor is removed/added — see item 2b; (2)
+`SlideShow.tsx`'s title slide gets a wholly new, bespoke layout
+(table of contents + Setup/Main tabs), replacing `extraCodeAbove`
+entirely rather than being reconciled with the quadrant system — see
+item 4. See "Why this is almost entirely a `Cell.tsx` change" below
+for what does and does not stay contained.
 
 ## The request, restated precisely
 
@@ -83,11 +86,12 @@ special.
   `readOnly`, `highlightedLines`, etc.) don't change; only *where* the
   `<CodeEditor>` element renders inside `Cell.tsx`'s own JSX changes.
 - `SlideShow.tsx`'s `extraCodeAbove` composition (the title-slide
-  setup-cell case) is the one existing consumer of `Cell.tsx` that
-  reaches into its internal code-column layout from outside — this
-  needs explicit design attention (see the dedicated item below) but
-  is still contained to the `Cell`/`SlideShow` boundary, not a
-  server-side concern.
+  setup-cell case) is being deleted outright, resolved by the user —
+  see item 4. It's replaced by a bespoke title-slide layout that
+  doesn't render through `Cell.tsx` at all, so it's not really "a
+  `Cell.tsx` change" either way; it's still contained to the frontend
+  (`SlideShow.tsx` + a new title-slide component), not a server-side
+  concern.
 - **Exception: item 2b touches the backend, but verified to be a
   small, well-precedented change, not an open-ended one.** "Removing
   the primary editor deletes the cell's body code" (confirmed in
@@ -107,10 +111,10 @@ special.
 ## Design decisions — confirmed by the user
 
 The four open questions from the first draft of this document, plus
-two confirmed follow-ups (whole-column collapse, and the primary/test
-editor model below), are all settled. These are decisions, not
-recommendations — implement exactly as stated below, no further
-sign-off needed on these points.
+three confirmed follow-ups (whole-column collapse, the primary/test
+editor model below, and item 4's title-slide layout), are all settled.
+These are decisions, not recommendations — implement exactly as
+stated below, no further sign-off needed on these points.
 
 - **Terminology**: `top-left` / `top-right` / `bottom-left` /
   `bottom-right`. Use these identifiers consistently in code, CSS
@@ -229,11 +233,13 @@ sign-off needed on these points.
   naming, a single empty quadrant collapses to a strip, an entire
   column with both its own quadrants empty collapses to one thin
   strip (not two stacked ones), 3 independent dividers (not a
-  crosshair), no minimum-quadrant-size clamping, and the primary/test
+  crosshair), no minimum-quadrant-size clamping, the primary/test
   editor cardinality and dependency model (primary editor is an
   ordinary, fully-draggable, 0-or-1 element folded into the same
   sentinel-tab-id scheme as elements; test editors require a primary
-  editor to exist at add-time; 0-to-many test editors allowed).
+  editor to exist at add-time; 0-to-many test editors allowed), and
+  the title slide's own bespoke layout (table of contents left, Setup/
+  Main tabs right, replacing `extraCodeAbove` entirely — item 4).
 
 - [ ] **2. Extend `CellLayout` with the new fields** (`protocol.ts` +
   `Cell.layout`'s own docstring in `deck.py`, documentation only — no
@@ -421,10 +427,11 @@ sign-off needed on these points.
     is the repurposed `codeFraction`, described in item 2 above) — so
     no `MIN_CODE_FRACTION`/`MAX_CODE_FRACTION` clamping on any of the
     3 left/right, top-left/bottom-left, top-right/bottom-right
-    dividers. `extraCodeFraction` (the title-slide-only setup/main
-    editor split, a 4th, separate divider unrelated to the quadrant
-    system — see item 4) is unaffected either way and keeps its own
-    existing clamping regardless of how item 4 resolves.
+    dividers. `extraCodeFraction` (today's title-slide-only setup/main
+    editor split) is being deleted entirely, not carried forward — see
+    item 4, which replaces the whole `extraCodeAbove` mechanism with a
+    bespoke title-slide layout, so there is no 4th divider to keep
+    compatible with the other 3 here.
   - The code editor renders as one of the 4 quadrants' tab content
     (`renderTabContent`'s dispatch gains a case for the code-editor
     sentinel/field, returning a `<CodeEditor>` with the same props the
@@ -458,27 +465,69 @@ sign-off needed on these points.
     computed from its own two quadrants' emptiness, not an explicit
     author-set flag like `hideCode` is).
 
-- [ ] **4. Reconcile `SlideShow.tsx`'s `extraCodeAbove` (title-slide
-  setup-cell composition) with quadrants.** This prop currently
-  assumes `Cell.tsx` has exactly one dedicated code column to compose
-  a second editor above/below within — once the code editor is just
-  another draggable tab with no fixed column, "above the main cell's
-  own code editor, sharing its column" no longer has an obvious
-  meaning. Needs one of:
-  - Keep `extraCodeAbove` as a special case bypassing the quadrant
-    system entirely for this one title-slide scenario (simplest, but
-    means the setup-cell composition and the general 4-quadrant system
-    are now two independent layout mechanisms that happen to coexist,
-    not one unified one).
-  - Redesign the setup-cell composition to itself be quadrant-aware
-    (e.g. the setup cell's editor becomes draggable into whichever
-    quadrant the main cell's own code editor tab lives in, stacked
-    with it) — more consistent, materially more design/implementation
-    work, and changes established title-slide behavior from earlier
-    this session that was already built, verified, and shipped.
-  - This decision needs explicit sign-off before starting, same as
-    item 1's decisions — it's the one place this feature's scope
-    reaches outside `Cell.tsx` itself.
+- [ ] **4. Replace the title slide's `extraCodeAbove` composition with
+  a bespoke title-slide layout: table of contents on the left, an
+  ordinary tab strip on the right offering Setup/Main tabs when those
+  cell roles exist.** Resolved by the user, decision confirmed below —
+  **not** a case of reconciling `extraCodeAbove` with the 4-quadrant
+  system; the title slide stops using the per-cell quadrant system
+  (and stops using `extraCodeAbove`/`Cell.tsx` to render itself at
+  all) and gets its own dedicated component instead.
+  - **Layout**: two columns. Left column: a table of contents (new —
+    no existing TOC concept anywhere in the codebase today; needs its
+    own design — see sub-bullet below). Right column: a tab strip,
+    conceptually similar to today's `.cs-cell-panel` tab header but
+    not reusing `Cell.tsx`'s quadrant machinery, showing whichever
+    tabs have been added (see next point) plus a "+ Add tab"
+    affordance. One divider between the two columns (adjustable,
+    mirroring the existing resize-handle pattern elsewhere in this
+    project) — no further internal splitting of either column is
+    requested, so this is NOT a second instance of the 4-quadrant
+    system, just a plain 2-column layout with its own single divider.
+  - **Tab content, confirmed**: "Setup" and "Main" are the only two
+    offerable tabs, each an embed of that cell's actual primary code
+    editor — same `source`, same `onRunCell`/editability semantics as
+    opening that cell's own dedicated slide directly (i.e. essentially
+    what `extraCodeAbove` already renders today, just promoted from
+    "always force-injected above the main cell" to "an addable/
+    removable tab the author explicitly turns on"). This is a much
+    smaller reuse of existing `CodeEditor`-embedding code than it
+    might first look — see `SlideShow.tsx`'s current `extraCodeAbove`
+    prop (being replaced) for the exact props shape to carry over
+    (`source`, `onRunCell`, `onRunAll`, `readOnly`, `lineOffset`,
+    `onLineCountChange`).
+  - **Availability, confirmed**: "Add Setup tab" is offered only when
+    the deck has an `is_setup` cell (`Deck.cells[...].is_setup`,
+    `deck.py`); "Add Main tab" only when the deck has an `is_main`
+    cell. Neither appears if that role doesn't exist in the deck. No
+    general "add any cell as a tab" picker — exactly these two,
+    conditionally.
+  - **New: table of contents design, not yet specified beyond "on the
+    left."** Needs its own follow-up decisions before implementation:
+    what each TOC entry shows (slide title? cell name? both?), whether
+    entries are clickable to jump to that slide (near-certainly yes,
+    but confirm), whether it's flat or reflects any grouping/hierarchy
+    the deck might have (check whether `Deck`/`Slide` has any
+    grouping concept beyond a flat `slides: list[Slide]` before
+    assuming), and whether the currently-active slide is visually
+    highlighted within it. **Flag this as a smaller, still-open
+    sub-question before implementation reaches item 4** — the
+    surrounding layout (TOC-left, tabs-right, one divider) is decided,
+    but the TOC's own internal content/behavior is not yet.
+  - **Persistence**: which tabs are currently added (Setup present?
+    Main present?), which one is active, and the column divider
+    fraction need a small persisted-state shape of their own —
+    likely a new, separate concern from `CellLayout` entirely (this
+    isn't a cell, it's the deck's title slide), e.g. a `Deck`-level or
+    `Slide`-level layout field. Needs its own field name/shape
+    decision when this item is implemented — don't assume it piggybacks
+    on `CellLayout`.
+  - Removing `extraCodeAbove` also means deleting its call site in
+    `SlideShow.tsx` (`extraCodeAbove` prop passed to the main cell's
+    `<Cell>`) and the now-dead `extraCodeFraction`/`extra_code_fraction`
+    layout field and its own divider implementation in `Cell.tsx` —
+    confirm nothing else reads `extra_code_fraction` before deleting it
+    (grep before removing, don't assume it's single-purpose).
 
 - [ ] **5. Update `EditCellPanel.tsx`'s tab-related UI for 4
   quadrants, and for the new primary/test editor cardinality rules.**
@@ -566,8 +615,14 @@ sign-off needed on these points.
   collapsed; dragging a tab back into a whole-column-collapsed column
   correctly re-expands it back to a normal 2-quadrant split; the code
   editor removed from every quadrant entirely (a cell with zero
-  visible code, distinct from `hide_code=True`); the title-slide
-  `extraCodeAbove` case (whichever resolution item 4 reaches); Save +
+  visible code, distinct from `hide_code=True`); **the new title-slide
+  layout from item 4** — table of contents renders and its entries
+  navigate to the right slide, "Add Setup tab"/"Add Main tab" are only
+  offered when that cell role exists in the deck (and confirm the
+  inverse: neither is offered on a deck lacking that role), an added
+  Setup/Main tab renders and can edit/run that cell's actual code,
+  removing a tab and reloading correctly drops it, and the title
+  slide's own divider position round-trips through Save + reload; Save +
   reload round-tripping a saved layout exactly (all 4 quadrants' tab
   assignments, all 3 divider positions, which tab is default, and
   whichever column(s) were whole-column-collapsed at save time); and
