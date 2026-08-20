@@ -980,10 +980,22 @@ export function Cell({
               `hideCode ? '100%' : ...` line already had (a long
               unbroken string in a tab's content has no wrap points and
               would otherwise blow the row out to thousands of pixels
-              wide -- see the regression this precedent was fixing). */}
+              wide -- see the regression this precedent was fixing).
+              When the RIGHT column is the one collapsed instead, this
+              column must claim the width it frees rather than staying
+              pinned at its own saved fraction -- `flex: 1` (not a
+              flex-basis share) grows to fill the row, same
+              "otherIsEmpty" precedent `renderQuadrant` already uses one
+              level down for a lone quadrant claiming its whole column. */}
           <div
             className={`cs-cell-column ${leftColumnEmpty ? 'cs-cell-column-empty' : ''}`}
-            style={!leftColumnEmpty ? { flexBasis: `${columnFraction * 100}%` } : undefined}
+            style={
+              leftColumnEmpty
+                ? undefined
+                : rightColumnEmpty
+                  ? { flex: 1 }
+                  : { flexBasis: `${columnFraction * 100}%` }
+            }
             ref={leftPanelDividerRef}
           >
             {leftColumnEmpty
@@ -1024,10 +1036,19 @@ export function Cell({
 
           {/* Right column (top-right + bottom-right) -- same shape as
               the left column above, its own independent
-              rightPanelFraction/whole-column-collapse state. */}
+              rightPanelFraction/whole-column-collapse state, and the
+              same "claim the freed width when the LEFT column is the
+              one collapsed" fix (`flex: 1` instead of its own saved
+              fraction). */}
           <div
             className={`cs-cell-column ${rightColumnEmpty ? 'cs-cell-column-empty' : ''}`}
-            style={!rightColumnEmpty ? { flexBasis: `${(1 - columnFraction) * 100}%` } : undefined}
+            style={
+              rightColumnEmpty
+                ? undefined
+                : leftColumnEmpty
+                  ? { flex: 1 }
+                  : { flexBasis: `${(1 - columnFraction) * 100}%` }
+            }
             ref={rightPanelDividerRef}
           >
             {rightColumnEmpty
