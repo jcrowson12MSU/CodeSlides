@@ -9,13 +9,13 @@
    and popovers alike) -- a future resize of one role's rule shouldn't
    require renaming the variable everywhere else it happens to match. */
 :root {
-  --cs-font-xs: 0.7rem; /* smallest: the round cell-index badge */
-  --cs-font-sm: 0.75rem; /* small buttons/toggles/badges (notes edit/preview, minimize, tests badge) */
-  --cs-font-tight: 0.8rem; /* status text, collapsed-cell preview, minimized element label */
-  --cs-font-base: 0.85rem; /* the default UI text size: labels, popovers, editors, cell output, save status */
-  --cs-font-md: 1.2rem; /* a step up from base: notes' rendered markdown body, slideshow toolbar */
-  --cs-font-lg: 1rem; /* icon/remove buttons, Slides-view cell output */
-  --cs-font-xl: 1.15rem; /* Slides-view body text size */
+  --cs-font-xs: 1.6rem; /* smallest: the round cell-index badge */
+  --cs-font-sm: 1.6rem; /* small buttons/toggles/badges (notes edit/preview, minimize, tests badge) */
+  --cs-font-tight: 1.6rem; /* status text, collapsed-cell preview, minimized element label */
+  --cs-font-base: 1.6rem; /* the default UI text size: labels, popovers, editors, cell output, save status */
+  --cs-font-md: 1.6rem; /* a step up from base: notes' rendered markdown body, slideshow toolbar */
+  --cs-font-lg: 1.6rem; /* icon/remove buttons, Slides-view cell output */
+  --cs-font-xl: 1.6rem; /* Slides-view body text size */
   --cs-font-2xl: 1.75rem; /* app title, collapsed Slides-view header */
   --cs-font-3xl: 2rem; /* slide title */
 
@@ -29,13 +29,13 @@
      went from 0.9rem to 1.2rem, to keep the same size *ratios* between
      the body text and each heading level rather than letting h5/h6
      collapse below or barely above the now-larger body text. */
-  --cs-font-notes-h1: 1.53rem;
-  --cs-font-notes-h2: 1.4rem;
-  --cs-font-notes-h3: 1.33rem;
-  --cs-font-notes-h4: 1.27rem;
-  --cs-font-notes-h5: 1.2rem;
-  --cs-font-notes-h6: 1.13rem;
-  --cs-font-code: 0.72222em; /* Cells-view code editor's own base size --
+  --cs-font-notes-h1: 2.0rem;
+  --cs-font-notes-h2: 1.9rem;
+  --cs-font-notes-h3: 1.8rem;
+  --cs-font-notes-h4: 1.7rem;
+  --cs-font-notes-h5: 1.65rem;
+  --cs-font-notes-h6: 1.6rem;
+  --cs-font-code: 1.6em; /* Cells-view code editor's own base size --
                                  CodeEditor.tsx's CodeMirror theme
                                  (EditorView.theme()) reads this directly,
                                  since it emits literal CSS and a var()
@@ -52,9 +52,10 @@
                                  media query. See that override's own
                                  comment for why the editor's size is
                                  kept fixed rather than shrinking on
-                                 narrow viewports like the rest of the
+                                 narrow
+                                  viewports like the rest of the
                                  app's rem-based scale. */
-  --cs-font-code-slides: 0.88889em; /* Slides-view override of the same
+  --cs-font-code-slides: 1.6em; /* Slides-view override of the same
                                         editor, larger for presenting/
                                         reading from a distance
                                         (`.cs-slide .cs-code-editor
