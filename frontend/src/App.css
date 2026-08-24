@@ -834,6 +834,18 @@ body.cs-resizing-vertical {
   color: #555;
 }
 
+/* The input control's own text (a text_input's typed value, a slider's
+   numeric readout) previously had no font-size rule of its own --
+   inputElements.tsx's TextInputWidget/SliderWidget only style the
+   label span, so the actual `<input>`/value text fell back to the
+   browser's tiny default input font-size regardless of --cs-font-base.
+   Matches --cs-font-code's precedent of following the same type-scale
+   token as everything else, rather than being the one exception. */
+.cs-element input[type='text'],
+.cs-element-value {
+  font-size: var(--cs-font-base);
+}
+
 .cs-cell-error {
   background: #fdecea;
   color: #c0392b;
