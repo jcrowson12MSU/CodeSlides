@@ -14,9 +14,13 @@ def setup():
     elements=[
         ui.notes('config'),
     ],
+    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'__code__': 'top-right'}, 'extra_code_fraction': 0.5},
 )
 def config():
-    """The grid size that drives the whole program: every downstream
+    """# ttt
+
+
+The grid size that drives the whole program: every downstream
 cell -- createMatrix, markCorners, marchingSquares -- is ultimately
 sized off of these two numbers. Change them here and every cell that
 reads rows/cols re-runs with the new grid size."""
@@ -29,8 +33,9 @@ reads rows/cols re-runs with the new grid size."""
     instance='editable',
     elements=[
         ui.notes('notes'),
-        ui.tests('test', default='print(createMatrix(3,4))'),
+        ui.tests('test', default='print(createMatrix(3,4))\n'),
     ],
+    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'__code__': 'top-right', 'test': 'bottom-left'}, 'extra_code_fraction': 0.5},
 )
 def createMatrix(rows=2, cols=5):
     """This function creates a 2D list where each inner list
@@ -56,7 +61,7 @@ Example:
             value = random.randint(0,1)
             newRow.append(value)
         l.append(newRow)
-
+        print(3)
     return l
 
 

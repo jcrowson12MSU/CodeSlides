@@ -84,9 +84,11 @@ Use **Slides** to step through the lecture in order, or switch to
     elements=[
         ui.notes('notes'),
         ui.text_input('name', default='Ada'),
-        ui.tests('Input, Output, and Process', default=''),
+        ui.tests('Input, Output, and Process', default='print(5)'),
     ],
+    is_main=True,
     hide_code=True,
+    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Input, Output, and Process': 'top-right', '__inputs__': 'bottom-left'}, 'extra_code_fraction': 0.5},
 )
 def how_programs_work(name):
     """## How Programs Work: Input → Process → Output
@@ -675,15 +677,14 @@ question* about it and prints `True`/`False`."""
 
 
 @app.cell(
-    instance="editable",
-    hide_def=True,
-    is_main=True,
+    instance='editable',
     elements=[
-        ui.notes("notes"),
-        ui.text_input("name", default="Ava"),
-        ui.text_input("hours_text", default="32"),
-        ui.text_input("rate_text", default="18.5"),
+        ui.notes('notes'),
+        ui.text_input('name', default='Ava'),
+        ui.text_input('hours_text', default='32'),
+        ui.text_input('rate_text', default='18.5'),
     ],
+    hide_def=True,
 )
 def pay_calculator(name, hours_text, rate_text):
     """# Medium Example: Pay Calculator
