@@ -6,6 +6,22 @@ in-app turtle rendering (`codeslides.turtle`, the browser canvas) never loads
 the real `tkinter`/`turtle` modules, so it cannot regress from any step below.
 See `docs/turtle-standalone-broken.md` for the full diagnosis.
 
+> **Update, resolved:** `brew install python-tk@3.13` pulled in an upgrade of
+> the `python@3.13` formula itself (3.13.1 -> 3.13.15) as a dependency, and
+> re-linked Homebrew's `opt/python@3.13` symlink to point at the new keg.
+> `CodeSlides/.venv` was still built from the now-unlinked 3.13.1 — its
+> compiled C-extension packages (`uvloop` in particular) started segfaulting
+> the server on startup (`codeslides edit`/`present` exited with code 139,
+> silently, no traceback) even though plain `import turtle`/`tkinter` worked
+> fine in isolation. Fix was to recreate the venv against the *currently
+> linked* interpreter: `rm -rf .venv && /opt/homebrew/bin/python3.13 -m venv
+> .venv && .venv/bin/pip install -e ".[dev]"`. Confirmed after: `import
+> turtle` succeeds, `codeslides edit` starts and stays up, `pytest` is
+> 580 passed. **Any Homebrew `python@3.13` upgrade (including one pulled in
+> as a side effect of installing an unrelated formula) can silently break an
+> existing venv this way — always recreate the venv after one, not just after
+> installing `python-tk`.**
+
 ## 1. Install a Tk-enabled Python
 
 - [ ] `brew install python-tk@3.13` (matches the Homebrew `python@3.13` build
