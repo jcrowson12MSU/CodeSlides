@@ -27,6 +27,18 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
+**Recreate `.venv` after any Homebrew `python@3.13` upgrade** — including one
+pulled in as a side effect of installing an unrelated formula (e.g.
+`brew install python-tk@3.13`, which upgrades `python@3.13` itself as a
+dependency and re-links Homebrew's `python@3.13` symlink to the new keg). An
+existing venv still built against the old, now-unlinked interpreter can keep
+running, but its compiled C-extension packages (`uvloop` in particular) may
+segfault the server on startup with no error output. If `codeslides edit`/
+`present` exits immediately with no output after a Homebrew Python upgrade,
+recreate the venv (`rm -rf .venv`, then the steps above) rather than
+debugging further — see `docs/turtle-standalone-fix-todo.md` for the
+diagnosis this was caught from.
+
 ## See it work: run the test suite
 
 ```bash
