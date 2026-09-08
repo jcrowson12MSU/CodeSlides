@@ -1,42 +1,3 @@
-"""Branches -- lecture deck built from Lectures/ZybooksNotes/Chapter 4
-(zyBooks CSE 1284, sections 4.1-4.7 and 4.9-4.11; section 4.8's source
-PDF was not provided and is skipped).
-
-Like chapter1.py/chapter2.py/chapter3.py, this deck is deliberately
-straight-line code -- no `def` anywhere inside a cell body, since
-functions haven't been taught yet. Every cell's own MAIN code editor is
-hidden (`hide_code=True`); the runnable/editable code a student sees and
-can experiment with lives in one or more `ui.tests(...)` boxes instead,
-mirroring zyBooks' own "type this exact program, run it, change the
-input" pattern for `input()`-driven branch examples. The cell body
-itself still computes real values from a `ui.text_input`-bound stand-in
-for `input()` wherever zyBooks' own example read input, so the slide's
-own live output (via `cs.md(...)`) has something real to react to,
-exactly like input_and_prompts/simple_program in chapter1.py.
-
-Where zyBooks used a flowchart/animation tool (branching concept,
-hotel-rate/insurance-price traces, the AND/OR/NOT truth tables, the
-precedence-rules tree, the code-block indentation figure) this deck
-re-creates the same teaching point as Markdown (tables, worked traces)
-plus a live `ui.tests` box a student can actually run, consistent with
-the prior chapters' "real reactive control instead of a canned
-animation" pattern.
-"""
-
-from codeslides import App, cs, ui
-
-app = App()
-
-
-@app.cell(
-    instance='static',
-    elements=[
-        ui.notes('notes'),
-    ],
-    hide_def=True,
-    hide_code=True,
-)
-def intro():
     """# Branches
 
 Eight zyBooks sections (4.1-4.7, 4.9-4.11) on how a program can take
@@ -52,15 +13,6 @@ Use **Slides** to step through in order, or **Cells** to jump straight
 to a topic."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-    ],
-    hide_def=True,
-    hide_code=True,
-)
-def branching_concept():
     """## Branches: The General Idea
 
 A **branch** is a sequence of statements only executed under a certain
@@ -80,16 +32,6 @@ a large table. That "if / else if / else" structure is exactly what
 the rest of this chapter writes in Python."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('user_age_text', default='68'),
-        ui.tests('Hotel rate trace', default='hotel_rate = 155\nuser_age = int(input("user_age_text"))\n\nif user_age > 65:\n    hotel_rate -= 20\n    print("Congrats on still living!")\nprint("Thanks for staying with us!")\nprint("Your rate:", hotel_rate)'),
-    ],
-    hide_code=True,
-    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Hotel rate trace': 'top-right', '__inputs__': 'bottom-left'}, 'extra_code_fraction': 0.5},
-)
 def if_branch_trace(user_age_text):
     """## An `if` Branch: Hotel Rate Example
 
@@ -103,15 +45,6 @@ execution continues after the branch."""
     return cs.md(f"**Your rate:** `{hotel_rate}`")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('val_text', default='-7'),
-        ui.tests('Absolute value', default='val = -100\nif val < 0:\n    val *= -1\n    print("Was negative, flipped positive")\nelse:\n    print("ALready positive")\nprint(val)'),
-    ],
-    hide_code=True,
-)
 def if_else_absolute_value(val_text):
     """## `if`-`else`: Computing Absolute Value
 
@@ -123,16 +56,6 @@ expression is `True`; otherwise, the *else* branch executes."""
     return cs.md(f"**Output:** `{val}`")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('num_years_text', default='50'),
-        ui.tests('Hotel discount', default='num_years = 51\nhotel_rate = 160\n\nif num_years == 50:\n    print("Congratulations on 50 years of marriage!")\n    hotel_rate = hotel_rate / 2\n\nprint(f"Your hotel rate: ${hotel_rate:.2f}")'),
-    ],
-    hide_code=True,
-    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'__inputs__': 'bottom-left', 'Hotel discount': 'top-right'}, 'extra_code_fraction': 0.5},
-)
 def equality_operator(num_years_text):
     """## The Equality Operator: `==`
 
@@ -151,15 +74,6 @@ right sides are equal."""
     return cs.md(f"**Output:**\n\n```text\n{message + chr(10) if message else ''}{rate_line}\n```")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Equality vs inequality', default='x = 3\nprint(x == 3)\n# Is x equal to 3\nprint(x == 4)\n# Is x not equal to 3\n# Is x different than 3\nprint(x != 3)\nprint(x != 4)'),
-    ],
-    hide_code=True,
-    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Equality vs inequality': 'top-right'}, 'extra_code_fraction': 0.5},
-)
 def equality_inequality_table():
     """## Equality and Inequality Operators
 
@@ -174,16 +88,6 @@ The **inequality operator** (`!=`) evaluates to `True` if the left and
 right sides are *different*."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('user_num_text', default='22'),
-        ui.tests('Even or odd', default='user_num = int(input("user_num_text"))\ndiv_remainder = user_num % 2\n\nif div_remainder == 0:\n    print(f"{user_num} is even.")\nelse:\n    print(f"{user_num} is odd.")'),
-    ],
-    hide_code=True,
-    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Even or odd': 'top-right', '__inputs__': 'bottom-left'}, 'extra_code_fraction': 0.5},
-)
 def if_else_even_odd(user_num_text):
     """## `if`-`else`: Even or Odd
 
@@ -198,15 +102,6 @@ expression is `True`, and another group when it's `False`."""
     return cs.md(f"**Output:** `{result}`")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('num_years_text2', default='25'),
-        ui.tests('Anniversaries', default='num_years = 1\n\nif num_years == 1:\n    print("Your first year -- great!")\n# elif num_years == 10:\n#     print("A whole decade -- impressive.")\n# elif num_years == 25:\n#     print("Your silver anniversary -- enjoy.")\n# elif num_years == 50:\n#     print("Your golden anniversary -- amazing.")\nelse:\n    print("Nothing special.")'),
-    ],
-    hide_code=True,
-)
 def elif_anniversaries(num_years_text2):
     """## `elif`: Additional Branches
 
@@ -237,16 +132,6 @@ condition is `True`, Python runs that branch and skips the rest."""
     return cs.md(f"**Output:** `{message}`")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('relational_x_text', default='3'),
-        ui.tests('Relational operators', default='x = 3\nprint(x < 4)\nprint(x > 2)\nprint(x <= 3)\nprint(x >= 4)'),
-    ],
-    hide_code=True,
-    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Relational operators': 'top-right', '__inputs__': 'bottom-left'}, 'extra_code_fraction': 0.5},
-)
 def relational_operators_table(relational_x_text):
     """## Relational Operators
 
@@ -263,16 +148,6 @@ another."""
     )
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('insurance_age_text', default='27'),
-        ui.tests('Insurance price by age', default='user_age = 60\n\n\n\nif user_age < 16:      # Age 15 and under\n    print("Too young.")\n    insurance_price = 0\nelif user_age < 25:    # Age 16 - 24\n    insurance_price = 4800\nelif user_age < 40:    # Age 25 - 39\n    insurance_price = 2350\n\nprint(f"Annual price: ${insurance_price}")'),
-    ],
-    hide_code=True,
-    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Insurance price by age': 'top-right', '__inputs__': 'bottom-left'}, 'extra_code_fraction': 0.5},
-)
 def ranges_insurance(insurance_age_text):
     """## Detecting Ranges: Insurance Prices
 
@@ -293,14 +168,6 @@ ever writing the range's lower bound explicitly."""
     return cs.md(f"**Output:**\n\n```text\n{too_young}Annual price: ${insurance_price}\n```")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('AND / OR / NOT', default='x, y = 7, 9\nprint((x > 0) and (y < 10))\nprint((x > 0) and (y < 5))\nprint((x < 0) or (y > 5))\nprint(not (x < 0))'),
-    ],
-    hide_code=True,
-)
 def logical_operators():
     """TR 8am start with 3 prop truth table
 ## Logical Operators: `and`, `or`, `not`
@@ -323,15 +190,6 @@ lowercase keywords **`and`**, **`or`**, and **`not`**.
 """
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('channel_text', default='3'),
-        ui.tests('Cable TV channel ranges', default='user_channel = 3\n\nif (user_channel >= 2) and (user_channel <= 499):\n    channel_type = "standard"\nelif (user_channel >= 1002) and (user_channel <= 1499):\n    channel_type = "HD"\nelse:\n    channel_type = "not a channel"\n\nprint(channel_type)'),
-    ],
-    hide_code=True,
-)
 def and_for_ranges(channel_text):
     """## Using `and` to Detect a Range
 
@@ -355,14 +213,6 @@ Applied to a real range check -- cable TV channels:
     return cs.md(f"**Output:** `{channel_type}`")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Boolean values', default='my_bool = True\nprint(my_bool)\n\nis_small = 4 < 3\nprint(is_small)'),
-    ],
-    hide_code=True,
-)
 def boolean_variables_and_logical_table():
     """## Boolean Variables and Logical Operators
 
@@ -391,14 +241,6 @@ With `age = 19, days = 7, user_char = "q"`:
 | `not (age > 16)` | `False` -- operand is `True` |"""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Explicit vs implicit ranges', default='x = 15\n\n# Explicitly defined ranges\nif (x >= 0) and (x <= 10):\n    label = "0..10"\nelif (x >= 11) and (x <= 20):\n    label = "11..20"\nelse:\n    label = "21+"\nprint("explicit:", label)\n\n# Implicitly defined ranges (equivalent)\nif x <= 10:\n    label = "0..10"\nelif x <= 20:\n    label = "11..20"\nelse:\n    label = "21+"\nprint("implicit:", label)'),
-    ],
-    hide_code=True,
-)
 def implicit_vs_explicit_ranges():
     """## Implicit vs. Explicit Ranges
 
@@ -431,15 +273,6 @@ second branch only needs to check the upper bound. This is exactly the
 same simplification the insurance-price example used earlier."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('movie_age_text', default='67'),
-        ui.tests('Movie ticket price', default='user_age = 67\n\nif user_age <= 12:      # Age 12 and under\n    print("Child ticket discount.")\n    movie_ticket_price = 11\nelif user_age >= 65:    # Age 65 and older\n    print("Senior ticket discount.")\n    movie_ticket_price = 12\nelse:                    # All other ages\n    movie_ticket_price = 14\n\nprint(f"Movie ticket price: ${movie_ticket_price}")'),
-    ],
-    hide_code=True,
-)
 def ranges_with_gaps(movie_age_text):
     """## Detecting Ranges With Gaps
 
@@ -481,16 +314,6 @@ Type an age below."""
     return cs.md(f"**Output:**\n\n```text\n{note}Movie ticket price: ${movie_ticket_price}\n```")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('office_num_text', default='120'),
-        ui.tests('Two disjoint valid ranges (elif form)', default='office_num = 120\n\nif office_num >= 100 and office_num <= 150:\n    valid = True\nelif office_num >= 200 and office_num <= 250:\n    valid = True\nelse:\n    valid = False\n\nprint("valid office number:", valid)'),
-        ui.tests('Same check combined with or', default='office_num = 120\n\nif (office_num >= 100 and office_num <= 150) or (office_num >= 200 and office_num <= 250):\n    valid = True\nelse:\n    valid = False\n\nprint("valid office number:", valid)'),
-    ],
-    hide_code=True,
-)
 def gaps_and_or(office_num_text):
     """## Combining Gapped Ranges With `or`
 
@@ -526,14 +349,6 @@ Type an office number below (try `120`, then `300`)."""
     return cs.md(f"**valid office number:** `{valid}`")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Multiple independent ifs', default='user_age = 26\n\n# Note that more than one "if" statement can execute\nif user_age < 16:\n    print("Enjoy your early years.")\n\nif user_age > 15:\n    print("You are old enough to drive.")\n\nif user_age > 17:\n    print("You are old enough to vote.")\n\nif user_age > 24:\n    print("Most car rental companies will rent to you.")\n\nif user_age > 34:\n    print("You can run for president.")'),
-    ],
-    hide_code=True,
-)
 def multiple_independent_ifs():
     """## Multiple, Independent `if` Statements
 
@@ -564,14 +379,6 @@ With `user_age = 26`, three separate `if`s are `True` (`> 15`, `> 17`,
 `> 24`), so **three** lines print -- run it and count them."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Nested if-else', default='user_choice = 2\nnum_items = 5\n\nif user_choice == 1:\n    print("user_choice is 1")\nelif user_choice == 2:\n    if num_items < 0:\n        print("user_choice is 2 and num_items < 0")\n    else:\n        print("user_choice is 2 and num_items >= 0")\nelse:\n    print("user_choice is neither 1 or 2")'),
-    ],
-    hide_code=True,
-)
 def nested_if_else():
     """## Nested `if`-`else`
 
@@ -601,14 +408,6 @@ Each level of nesting is its own independent decision, indented one
 level deeper."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Evaluation-order trace', default='x, y, z = 7, 6, 3\nresult = y * z < x + 1 or z == 3\nprint(result)'),
-    ],
-    hide_code=True,
-)
 def precedence_rules():
     """## Order of Evaluation: Precedence Rules
 
@@ -642,14 +441,6 @@ Arithmetic first, then relational/equality, then `not`, then `and`,
 then `or` last."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Indentation defines the block', default='year = 1965\nmodel = "Ford"\n\nantique = False\ndomestic = False\n\nif year < 1970:\n    # indented 4 columns -- inside the if block\n    antique = True\n\nif model in ["Ford", "Chevrolet", "Dodge"]:\n  # indented 2 columns -- any amount > 0 works\n  domestic = True\n\nif antique:\n    if domestic:\n        # nested block: 4 more columns (8 total)\n        print("My own model-T still runs like a charm...")'),
-    ],
-    hide_code=True,
-)
 def code_blocks_indentation():
     """## Code Blocks and Indentation
 
@@ -680,15 +471,6 @@ dict literal) can also wrap across lines; indentation there is just
 for readability, not a new block."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('my_number_text', default='7'),
-        ui.tests('Conditional expression', default='my_number = 7\nyour_number = 0 if my_number <= 9 else 4\nprint(your_number)'),
-    ],
-    hide_code=True,
-)
 def conditional_expressions(my_number_text):
     """## Conditional Expressions
 
@@ -728,113 +510,3 @@ Type a number below -- `9` or under gives `0`, anything higher gives
     my_number = int(my_number_text)
     your_number = 0 if my_number <= 9 else 4
     return cs.md(f"**Output:** `{your_number}`")
-
-
-@app.slide("Title", cells=[])
-def slide_title():
-    """"""
-
-
-@app.slide("Branches: The General Idea", cells=["branching_concept"])
-def slide_1():
-    """"""
-
-
-@app.slide("An if Branch: Hotel Rate", cells=["if_branch_trace"])
-def slide_2():
-    """"""
-
-
-@app.slide("if-else: Absolute Value", cells=["if_else_absolute_value"])
-def slide_3():
-    """"""
-
-
-@app.slide("The Equality Operator: ==", cells=["equality_operator"])
-def slide_4():
-    """"""
-
-
-@app.slide("Equality and Inequality", cells=["equality_inequality_table"])
-def slide_5():
-    """"""
-
-
-@app.slide("if-else: Even or Odd", cells=["if_else_even_odd"])
-def slide_6():
-    """"""
-
-
-@app.slide("elif: Additional Branches", cells=["elif_anniversaries"])
-def slide_7():
-    """"""
-
-
-@app.slide("Detecting Ranges With Branches", cells=[])
-def slide_8():
-    """"""
-
-
-@app.slide("Relational Operators", cells=["relational_operators_table"])
-def slide_9():
-    """"""
-
-
-@app.slide("Ranges: Insurance Prices", cells=["ranges_insurance"])
-def slide_10():
-    """"""
-
-
-@app.slide("Logical Operators: and, or, not", cells=["logical_operators"])
-def slide_11():
-    """"""
-
-
-@app.slide("Using and to Detect a Range", cells=["and_for_ranges"])
-def slide_12():
-    """"""
-
-
-@app.slide("Boolean Variables", cells=["boolean_variables_and_logical_table"])
-def slide_13():
-    """"""
-
-
-@app.slide("Implicit vs Explicit Ranges", cells=["implicit_vs_explicit_ranges"])
-def slide_14():
-    """"""
-
-
-@app.slide("Ranges With Gaps", cells=["ranges_with_gaps"])
-def slide_15():
-    """"""
-
-
-@app.slide("Combining Gapped Ranges With or", cells=["gaps_and_or"])
-def slide_16():
-    """"""
-
-
-@app.slide("Multiple Independent ifs", cells=["multiple_independent_ifs"])
-def slide_17():
-    """"""
-
-
-@app.slide("Nested if-else", cells=["nested_if_else"])
-def slide_18():
-    """"""
-
-
-@app.slide("Order of Evaluation: Precedence", cells=["precedence_rules"])
-def slide_19():
-    """"""
-
-
-@app.slide("Code Blocks and Indentation", cells=["code_blocks_indentation"])
-def slide_20():
-    """"""
-
-
-@app.slide("Conditional Expressions", cells=["conditional_expressions"])
-def slide_21():
-    """"""

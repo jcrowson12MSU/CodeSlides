@@ -84,11 +84,11 @@ Use **Slides** to step through the lecture in order, or switch to
     elements=[
         ui.notes('notes'),
         ui.text_input('name', default='Ada'),
-        ui.tests('Input, Output, and Process', default='print(5)'),
+        ui.tests('Input, Output, and Process', default='name = input("Enter your name: ")\nprint("Good moring!", name)'),
     ],
     is_main=True,
     hide_code=True,
-    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Input, Output, and Process': 'top-right', '__inputs__': 'bottom-left'}, 'extra_code_fraction': 0.5},
+    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5883917228196744, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Input, Output, and Process': 'top-right', '__inputs__': 'bottom-left'}, 'extra_code_fraction': 0.5},
 )
 def how_programs_work(name):
     """## How Programs Work: Input → Process → Output
@@ -106,10 +106,10 @@ and greets whoever you typed."""
 
 
 @app.cell(
-    instance="editable",
+    instance='editable',
     elements=[
-        ui.notes("notes"),
-        ui.tests("Run it", default="age = 15\nname = 'Ava'\nprint(age, name)"),
+        ui.notes('notes'),
+        ui.tests('Run it', default="age = 15\n\nname = 'Avawwrgfetrhryww'\nprint(age, name)"),
     ],
 )
 def variables():
@@ -122,16 +122,22 @@ age = 15
 name = "Ava"
 ```
 
-Read assignment right-to-left:
+The = is the **assignment operator**. The assignment operator is used to store a value in a variable.
 
-> **Evaluate the right side, then store the result in the variable
-> on the left.**"""
+> **Evaluate the right side, then store the result in the variable on the left.**"""
     age = 15
     name = "Ava"
     return age, name
 
 
-@app.cell(instance="editable", elements=[ui.notes("notes")])
+@app.cell(
+    instance='editable',
+    elements=[
+        ui.notes('notes'),
+        ui.tests('Math Example', default='x + 2 == 7\n'),
+    ],
+    hide_code=True,
+)
 def assignment_vs_equality():
     """## `=` Is Not Math Equality
 
@@ -161,12 +167,15 @@ variable_name = value
 
 
 @app.cell(
-    instance="editable",
+    instance='editable',
     elements=[
-        ui.notes("notes"),
-        ui.text_input("first_text", default="4"),
-        ui.text_input("second_text", default="9"),
+        ui.notes('notes'),
+        ui.text_input('first_text', default='4'),
+        ui.text_input('second_text', default='9'),
+        ui.tests('Simple Input', default='first = int(input("Enter first number:"))\nsecond = int(input("Enter second number:"))\nprint(first, type(first))\nprint(second, type(second))\ntotal =  second + first\n\nprint("Total: ", total)\n\n'),
     ],
+    hide_code=True,
+    layout={'column_fraction': 0.4420045045045045, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'__inputs__': 'bottom-left', '__code__': 'top-left', 'Simple Input': 'top-right'}, 'extra_code_fraction': 0.5},
 )
 def simple_program(first_text, second_text):
     """## A Simple Python Program
@@ -195,7 +204,15 @@ exactly the way `int(input(...))` would."""
     return cs.md(f"**Total:** `{total}`")
 
 
-@app.cell(hide_def=True, elements=[ui.notes("notes")])
+@app.cell(
+    instance='static',
+    elements=[
+        ui.notes('notes'),
+    ],
+    hide_def=True,
+    hide_code=True,
+    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'__code__': 'top-right'}, 'extra_code_fraction': 0.5},
+)
 def computational_thinking():
     """## Computational Thinking
 
@@ -206,47 +223,23 @@ Ask:
 
 - What information do I need?
 - What steps should happen?
-- What answer should be produced?"""
+- What answer should be produced?
+
+
+Grab cake mix
+mix with water(????)
+Bake 365f for 20 min
+
+"""
 
 
 @app.cell(
-    instance="editable",
+    instance='editable',
     elements=[
-        ui.notes("notes"),
-        ui.text_input("first_n_text", default="4"),
-        ui.text_input("second_n_text", default="9"),
+        ui.notes('notes'),
+        ui.tests('Run it', default='print("Hello")\nprint("Welcome to Python")\nprint("Good morning!")\nprint("Who else hates 8am classes?")\n'),
     ],
-)
-def algorithm(first_n_text, second_n_text):
-    """## Algorithm
-
-An **algorithm** is a step-by-step plan for solving a problem.
-
-Example algorithm:
-
-```text
-1. Ask for two numbers
-2. Convert them to integers
-3. Add them
-4. Print the answer
-```
-
-Then translate the algorithm into Python, one step at a time -- the
-code below *is* that translation, the same shape as `simple_program`
-from a few slides back. Type numbers into the two boxes below to try
-it."""
-    first_n = int(first_n_text)
-    second_n = int(second_n_text)
-    total = first_n + second_n
-    return cs.md(f"**Answer:** `{total}`")
-
-
-@app.cell(
-    instance="editable",
-    elements=[
-        ui.notes("notes"),
-        ui.tests("Run it", default='print("Hello")\nprint("Welcome to Python")'),
-    ],
+    hide_code=True,
 )
 def print_function():
     """## `print()`
@@ -264,10 +257,10 @@ Each `print()` normally starts a new line."""
 
 
 @app.cell(
-    instance="editable",
+    instance='editable',
     elements=[
-        ui.notes("notes"),
-        ui.tests("Run it", default='print("Room 203")\nprint("Email sent!")'),
+        ui.notes('notes'),
+        ui.tests('Run it', default='print("Room 205")\nprint(\'In butler hall\')\n\nprint(\'The doctor said, "you are fine."\')\nprint("The doctor said, \\"you are fine.\\"")\n\n\ntext = """\nDocString\n\n\nTHis is a strign\n;wknetg[obn]\n"""\n\n\nprint(text)'),
     ],
 )
 def strings():
@@ -280,12 +273,22 @@ print("Hello")
 print('Python is fun')
 ```
 
-Strings can contain letters, numbers, spaces, and symbols."""
+Strings can contain letters, numbers, spaces, and symbols.
+Strings are just text. You cannot do math with strings even if the content of a string is a number.
+"""
     print("Hello")
     print("Python is fun")
 
 
-@app.cell(instance="editable", elements=[ui.notes("notes")])
+@app.cell(
+    instance='editable',
+    elements=[
+        ui.notes('notes'),
+        ui.tests('Run Code', default='students = 24  # int\nprice = 3.99  # float\nprint(students, price)\n'),
+    ],
+    hide_code=True,
+    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Run Code': 'top-right'}, 'extra_code_fraction': 0.5},
+)
 def int_and_float():
     """## `int` and `float`
 
@@ -304,11 +307,12 @@ price = 3.99       # float
 
 
 @app.cell(
-    instance="editable",
+    instance='editable',
     elements=[
-        ui.notes("notes"),
-        ui.tests("Run it", default='print("Name\\tGrade")'),
+        ui.notes('notes'),
+        ui.tests('Run it', default='print("Line 1nLine 2")\n\nprint("Line 1\\nLine 2")\n\nprint("""Line 3\nLine 4""")\n\nprint("Line 5")\nprint("Line 6")\n\n\nprint("Name\\tGrade")\nprint("Name    Grade")'),
     ],
+    hide_code=True,
 )
 def escape_sequences():
     """## Newline and Tab
@@ -327,11 +331,13 @@ print("Name\\tGrade")
 
 
 @app.cell(
-    instance="editable",
+    instance='editable',
     elements=[
-        ui.notes("notes"),
-        ui.tests("Run it", default='print("\\\\")'),
+        ui.notes('notes'),
+        ui.tests('Run it', default='print(\'1"Hello"\')\nprint("2Hello")\nprint("3\\"Hello\\"")\nprint("4\\\\")'),
     ],
+    hide_code=True,
+    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Run it': 'top-right'}, 'extra_code_fraction': 0.5},
 )
 def quotes_and_backslashes():
     """## Printing Quotes and Backslashes
@@ -351,11 +357,12 @@ print("\\\\")
 
 
 @app.cell(
-    instance="editable",
+    instance='editable',
     elements=[
-        ui.notes("notes"),
-        ui.tests("Run it", default='print("Sam", "is", 16, "years old.")'),
+        ui.notes('notes'),
+        ui.tests('Run it', default='name = "Ava"\nage = 345+555\n\nprint("Ava", "is",17, "years old.")\n\n\n\n\n\n'),
     ],
+    hide_code=True,
 )
 def printing_multiple_things():
     """## Printing Multiple Things
@@ -376,11 +383,12 @@ Python automatically adds spaces between comma-separated items."""
 
 
 @app.cell(
-    instance="editable",
+    instance='editable',
     elements=[
-        ui.notes("notes"),
-        ui.tests("Run it", default='print("Hello", end=" ")\nprint("there")'),
+        ui.notes('notes'),
+        ui.tests('Run it', default='print("1Hello")\nprint("2Hello", end="\\n")\nprint("3Hello", end="-!-wrjlrf bljv")\nprint("4Hello")\n\n\nprint("2026", "08", "18")\nprint("2026", "08", "18", sep=" ")\nprint("2026", "08", "18", sep="ergeg-")\n'),
     ],
+    hide_code=True,
 )
 def sep_and_end():
     """## `sep` and `end`
@@ -401,11 +409,12 @@ print("there")
 
 
 @app.cell(
-    instance="editable",
+    instance='editable',
     elements=[
-        ui.notes("notes"),
-        ui.tests("Run it", default='print(1 + 1)\nprint("1" + "1")'),
+        ui.notes('notes'),
+        ui.tests('Run it', default='print(1 + 1)\nprint("1" + "1")'),
     ],
+    hide_code=True,
 )
 def data_types_matter():
     """## Data Types Matter: `1` vs `"1"`
@@ -428,11 +437,14 @@ Output:
 
 
 @app.cell(
-    instance="editable",
+    instance='editable',
     elements=[
-        ui.notes("notes"),
-        ui.text_input("name", default="Sam"),
+        ui.notes('notes'),
+        ui.text_input('name', default='Sam'),
+        ui.tests('Input Example', default='print(input("Name: "))'),
     ],
+    hide_code=True,
+    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Input Example': 'top-right', '__inputs__': 'bottom-left'}, 'extra_code_fraction': 0.5},
 )
 def input_and_prompts(name):
     """## Input and Prompts
@@ -474,15 +486,23 @@ every IDE has.
 | Debugger | Find what went wrong | the error slides next |"""
 
 
-@app.cell(hide_def=True, elements=[ui.notes("notes")])
+@app.cell(
+    instance='static',
+    elements=[
+        ui.notes('notes'),
+    ],
+    hide_def=True,
+    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'__code__': 'top-right'}, 'extra_code_fraction': 0.5},
+)
 def errors_are_normal():
-    """## Errors Are Normal
+    """#### Start Here for TR8/TR2
+## Errors Are Normal
 
 Programming requires precision. Small details matter.
 
 Three major error types:
 
-- [x] **Syntax error** -- Python cannot understand the code.
+- [ ] **Syntax error** -- Python cannot understand the code.
 - [ ] **Runtime error** -- code starts, then crashes.
 - [ ] **Logic error** -- code runs but gives the wrong answer.
 
@@ -490,7 +510,13 @@ The next three slides show each one *actually happening*, live --
 not just described."""
 
 
-@app.cell(instance="editable", elements=[ui.notes("notes")])
+@app.cell(
+    instance='editable',
+    elements=[
+        ui.notes('notes'),
+    ],
+    hide_def=True,
+)
 def syntax_errors():
     """## Syntax Errors
 
@@ -514,11 +540,15 @@ print("Hello")
 
 
 @app.cell(
-    instance="editable",
+    instance='editable',
     elements=[
-        ui.notes("notes"),
-        ui.text_input("age_text", default="15"),
+        ui.notes('notes'),
+        ui.text_input('age_text', default='15'),
+        ui.tests('Run Code', default='print("this")\nx = int(input("age_text "))\nprint(x, type(x))\nprint(5/x)'),
     ],
+    hide_def=True,
+    hide_code=True,
+    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'__inputs__': 'bottom-left', '__code__': 'top-right', 'Run Code': 'top-right'}, 'extra_code_fraction': 0.5},
 )
 def runtime_errors(age_text):
     """## Runtime Errors
@@ -536,7 +566,7 @@ cannot become an integer.
 Type into the box below -- `15` works fine, but try typing `twelve`
 instead and watch a real `ValueError` appear as soon as you do."""
     age = int(age_text)
-    return cs.md(f"**Age:** `{age}`")
+    print(f"Age: {age}")
 
 
 @app.cell(
@@ -683,8 +713,10 @@ question* about it and prints `True`/`False`."""
         ui.text_input('name', default='Ava'),
         ui.text_input('hours_text', default='32'),
         ui.text_input('rate_text', default='18.5'),
+        ui.tests('Example', default=''),
     ],
     hide_def=True,
+    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'__inputs__': 'bottom-left', '__code__': 'top-right'}, 'extra_code_fraction': 0.5},
 )
 def pay_calculator(name, hours_text, rate_text):
     """# Medium Example: Pay Calculator
@@ -716,8 +748,9 @@ This program uses:
 
 Type your own name, hours, and rate into the boxes below -- the
 summary updates automatically."""
-    hours = float(hours_text)
-    rate = float(rate_text)
+    name = input("name: ")
+    hours = float(input("hours_text: "))
+    rate = float(input("rate_text: "))
 
     pay = hours * rate
 
@@ -729,7 +762,8 @@ summary updates automatically."""
         f"Rate: ${rate}\n"
         f"Pay: ${pay}"
     )
-    return cs.md(f"```text\n{summary}\n```")
+    print(summary)
+
 
 
 @app.slide("Title", cells=[])
@@ -762,7 +796,7 @@ def slide_5():
     """"""
 
 
-@app.slide("Algorithm", cells=["algorithm"])
+@app.slide("Algorithm", cells=[])
 def slide_6():
     """"""
 
@@ -855,3 +889,52 @@ def slide_23():
 @app.slide("Pay Calculator", cells=["pay_calculator"])
 def slide_24():
     """"""
+
+
+@app.cell(
+    instance='editable',
+    elements=[
+        ui.notes('Concatenation'),
+        ui.tests('Run Code', default='print("45" + "cat")'),
+    ],
+    hide_def=True,
+)
+def cell_1():
+    """Math cannot be performed with strings.
+print("4" - "5") #does not work
+but print("4" + "5") # does work
+
+ """
+
+    print("4" + "5")
+
+
+@app.cell(
+    instance='editable',
+    elements=[
+        ui.notes('Naming Rules'),
+        ui.notes('Examples'),
+        ui.tests('Variables Examples', default='name = "1Jonh"\nname = "2Jon"\nNAME = "3Jonny"\n\nprint(nme)'),
+    ],
+    hide_def=True,
+    hide_code=True,
+    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Examples': 'top-right', '__code__': 'top-right', 'Variables Examples': 'top-right'}, 'extra_code_fraction': 0.5},
+)
+def cell_2():
+    """# Invalid Variable Names
+- 7isTheNumber
+- this is a variable
+
+
+# Valid
+- FALSE, false
+- _
+- thisIsAVariable #CamelCase
+- this_is_a_variable #underscore case / snake case
+- GRAVITY #This convention is commonly used for constants
+- sErIaLkIlLeRcAsE
+
+
+
+"""
+    print(3)

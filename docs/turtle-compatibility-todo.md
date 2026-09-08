@@ -36,8 +36,6 @@ motion/pen API as module-level functions (auto-targeting the executing
 cell's one `turtle_canvas` element) plus a thin `Turtle` class whose
 methods are the same module-level functions bound as `staticmethod`s.
 **`Screen` does not exist at all** — no `turtle.Screen()`, no `wn` object,
-nothing.
-
 ## Gap 1 (blocking): `examples/originalMarchingSquares.py` fails outright
 
 This is the concrete, reference-case failure — not a hypothetical. The

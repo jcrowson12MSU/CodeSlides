@@ -1,41 +1,3 @@
-"""Variables, Objects, and Expressions -- lecture deck built from
-Lectures/ZybooksNotes/Chapter 2 (zyBooks CSE 1284, sections 2.1-2.8 and
-2.10-2.12; section 2.9's source PDF was not provided and is skipped).
-
-Like chapter1.py, this deck is deliberately straight-line code -- no
-`def` anywhere inside a cell body, since functions haven't been taught
-yet. Per instructions, this deck goes one step further than chapter1:
-every cell's own MAIN code editor is hidden (`hide_code=True`), and any
-runnable/editable code a student is meant to see or try lives instead
-in a `ui.tests(...)` box. The cell body itself still computes real
-values (so notes, text_input-bound demos, and tests all have something
-live to react to), but the student-facing "here is Python, try it"
-experience always happens in a test editor, never the main one.
-
-Where zyBooks used a JS-driven visualization (the bus-riddle activity,
-the interpreter/memory diagram, the name-binding animation), this deck
-re-creates the same teaching point with a live `ui.text_input` or
-`ui.slider` bound into the cell's own parameters, plus `cs.md(...)`
-output describing what happened -- consistent with chapter1's pattern
-of using a real reactive control as a stand-in for a canned animation.
-"""
-
-import math
-
-from codeslides import App, cs, ui
-
-app = App()
-
-
-@app.cell(
-    instance='static',
-    elements=[
-        ui.notes('notes'),
-    ],
-    hide_def=True,
-    hide_code=True,
-)
-def intro():
     """# Variables, Objects, and Expressions
 
 Twelve zyBooks sections (2.1-2.8, 2.10-2.12) on how Python remembers,
@@ -47,14 +9,6 @@ Use **Slides** to step through in order, or **Cells** to jump straight
 to a topic."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Run it', default='x = 5\nprint(x)\n\ny = x\nprint(y)\n\nz = x + 2\nprint(z)\n\nx = 3\nprint(x, y, z)\n'),
-    ],
-    hide_code=True,
-)
 def variables_and_assignments():
     """## Variables and Assignments
 
@@ -88,15 +42,6 @@ reassigned at the end -- only `x` does."""
     return x, y, z
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-    ],
-    hide_def=True,
-    hide_code=True,
-)
-def equals_is_not_equals():
     """## `=` Is Not Equals
 
 In algebra, an equation means "the item on the left always equals the
@@ -118,15 +63,6 @@ variable -- `x + 1 = 3` and `x + y = y + x` are **not** valid
 assignment statements in Python, even though both are valid algebra."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Variable on both sides', default='x = 1\nprint(x)\nx = x +1\nprint(x)\nx = x +1\nprint(x)\n\nx += 1\nprint(x)\nx += 1\nprint(x)\nx += 1\nprint(x)\n\n\n'),
-    ],
-    hide_code=True,
-    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Variable on both sides': 'top-right'}, 'extra_code_fraction': 0.5},
-)
 def variable_both_sides():
     """## A Variable on Both Sides
 
@@ -151,15 +87,6 @@ multiplies whatever `x` currently is."""
     return x_grown
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Valid or invalid?', default='x = 1\nprint("1 valid or not: ?")\n\n# x + 1 = 3\n# print("2 valid or not: ?")\n\n# y = 5\n# x = y\n# print("3 valid or not: ?")\n\n# x = y + 2\n# print("4 valid or not: ?")\n\n# x + y = y + x\n# print("5 valid or not: ?")'),
-        ui.notes('Results'),
-    ],
-    hide_code=True,
-)
 def valid_assignment_statements():
     """## Valid Assignment Statements
 
@@ -170,16 +97,6 @@ right side has no such restriction; it can be any expression at all
 """
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Name validator', default='\nx = sum([1,2,3])\n'),
-    ],
-    hide_def=True,
-    hide_code=True,
-)
-def identifiers():
     """## Identifiers
 
 An **identifier**, also called a **name**, is a sequence of letters
@@ -206,15 +123,6 @@ constants like `GRAVITY`. Use **meaningful** names -- `num_students`
 beats `ns` or `num`."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Mutability check', default='age = 15\nprint("before:", age, id(age))\n\nage = age + 1   # this does NOT change the old object -- it rebinds age to a NEW object\nprint("after:", age, id(age))\n'),
-        ui.tests('Reassignment Example', default='print("")'),
-    ],
-    hide_code=True,
-)
 def mutability():
     """## Mutability
 
@@ -236,14 +144,6 @@ edited in place."""
     return age
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('miles_text', default='450'),
-    ],
-    hide_code=True,
-)
 def floats(miles_text):
     """## Floating-Point Numbers
 
@@ -262,16 +162,6 @@ fractional part, even if it's `.0` -- `99.0`, not `99`."""
     pass
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Rounding Pi', default='import math\n\n# print("Default output of Pi:", math.pi)\nprint(f"Pi reduced to 4 digits: {math.pi:.5f}")\nprint("Pi reduced to 4 digits:", round(math.pi, 5))'),
-        ui.text_input('leg1', default=''),
-        ui.text_input('leg2', default=''),
-    ],
-    hide_code=True,
-)
 def formatting_floats():
     """## Formatting Floats
 
@@ -290,16 +180,6 @@ the decimal point, rounding the last digit as needed. This is the
 standard way to control how many decimal places a float displays."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('input_text', default='7.9'),
-        ui.tests('Type Conversion Example', default='\nvariable = float(input("input_text"))\nprint(variable, type(variable))\nprint(5 + variable)\n# print(int_variable, type(int_variable))\n\n\n'),
-    ],
-    hide_code=True,
-    layout={'column_fraction': 0.33261494252873564, 'left_panel_fraction': 0.46467907556437127, 'right_panel_fraction': 0.2061976631845524, 'tab_quadrant': {'Type Conversion Example': 'bottom-right', '__inputs__': 'top-right'}, 'extra_code_fraction': 0.5},
-)
 def type_conversion(input_text):
     """## Type Conversions
 
@@ -328,14 +208,6 @@ converted through `float()` and then `int()`."""
     return cs.md(f"```text\n{summary}\n```")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('str() for concatenation', default='num_meters = 5.2\nstr_meters = str(num_meters)\n\nprint("Number of meters: " + str_meters)\n\n# print("Number of meters: " + num_meters)   # TypeError -- cant concatenate str + float\n'),
-    ],
-    hide_code=True,
-)
 def str_conversion():
     """### TR 8am start here
 ## Converting to a String
@@ -350,17 +222,6 @@ test to see the working version -- and read the commented-out line to
 see which line would have raised the error."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.slider('x', min=0, max=10, default=4),
-        ui.slider('w', min=1, max=10, default=2),
-        ui.tests('Using Python to do Math', default='x = 2 #int(input("Enter a number: "))\nw = 5 #int(input("Enter a number: "))\n"""\npemdas\n1) Parenthesis\n2) exponents\n3) mult or div from left to right\n4) add or sub from left to right\n"""\n\ny = 10 + 3 * (x + 10 / w) - 5\nprint(1, y)\ny = 10 + 3 * (2 + 10 / 5) - 5\ny = 10 + 3 * (2 + 2) - 5\ny = 10 + 3 * 4 - 5\ny = 10 + 12 - 5\ny = 17\nprint(2, y)\n'),
-    ],
-    hide_code=True,
-    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Using Python to do Math': 'top-right'}, 'extra_code_fraction': 0.5},
-)
 def arithmetic_expressions(x, w):
     """## Arithmetic Expressions
 
@@ -8577,14 +8438,6 @@ the expression is re-evaluated with the new values."""
     # return cs.md(f"**y = 3 \\* (x + 10 / w) = ** `{y}`")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Order of evaluation', default='c = 4\nd = 5\n\nprint(c * d + 10)     # * before +  -->  30\nprint(c + d * 10)     # * before +  -->  54\nprint((c + d) * 10)   # parens first -->  90\nprint(2 ** 3 * 3)     # ** before * -->  24\nprint(2 * -c)         # unary - before * --> -8\n'),
-    ],
-    hide_code=True,
-)
 def precedence_rules():
     """## Precedence Rules
 
@@ -8605,16 +8458,6 @@ parentheses even when not required, just to make the intended order
 obvious to a reader."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Compound operators', default='age = 10\nprint(age)\n\nage += 1   # shorthand for age = age + 1\nprint(age)\n\nage *= 2   # shorthand for age = age * 2\nprint(age)\n\nage -= 5   # shorthand for age = age - 5\nprint(age)\n\nage /= 2   # shorthand for age = age / 2\nprint(age)\n'),
-    ],
-    hide_def=True,
-    hide_code=True,
-)
-def compound_operators():
     """## Compound Operators
 
 **Compound operators** are shorthand for "take a variable, combine it
@@ -8634,15 +8477,6 @@ right side using `age`'s *current* value, then rebinds `age` to the
 result, exactly like `age = age + 1` would."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('minutes_text', default='150'),
-        ui.tests('Example', default='x = 291\nprint(x/3)\nprint(x//3)\nprint(x%3)\nprint(f"1 {x} / 3 = {x//3} r{x%3}")\nprint(f"2 {x} / 3 = {x//3} {x%3}/{3}")\nprint(f"3 {x} / 3 = {x//3 + x%3/3}")'),
-    ],
-    hide_code=True,
-)
 def division_and_modulo(minutes_text):
     """## Division and Modulo
 
@@ -8668,14 +8502,6 @@ hours and leftover minutes live."""
     return cs.md(f"**{minutes} minute(s) is** `{hours}` **hour(s) and** `{minutes_remaining}` **minute(s)**")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Getting digits', default='user_val = 2927\n\n\nones_digit = user_val % 10          # 927 % 10 is 7\nprint("ones:", ones_digit)\n\ntmp_val = user_val // 10            # 927 // 10 is 92\ntens_digit = tmp_val % 10           # 92 % 10 is 2\nprint("tens:", tens_digit)\n\ntmp_val = tmp_val // 10             # 92 // 10 is 9\nhundreds_digit = tmp_val % 10       # 9 % 10 is 9\nprint("hundreds:", hundreds_digit)\n\n"""\n# tmp_val = tmp_val // 10             # 92 // 10 is 9\n# thousands_digit = tmp_val % 10       # 9 % 10 is 9\n# print("thousands:", thousands_digit)\n\n# for roundNum, in range(21):\n#     print(f"round #{i} player\'s {i%3} turn")\n\n"""'),
-    ],
-    hide_code=True,
-)
 def digit_extraction():
     """## Using `%` and `//` to Get Digits
 
@@ -8697,15 +8523,6 @@ digits (`321 % 10` is `1`). Run the test and trace through each step
 by hand to confirm `927` becomes `7`, `2`, `9`."""
 
 
-@app.cell(
-    instance='static',
-    elements=[
-        ui.notes('notes'),
-    ],
-    hide_def=True,
-    hide_code=True,
-)
-def modules_intro():
     """## Modules
 
 A programmer typically writes Python code in a file and runs that
@@ -8733,16 +8550,6 @@ that's already been imported in `sys.modules`, so importing the same
 module twice doesn't re-run its code a second time."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('base_text', default='1000'),
-        ui.text_input('rate_text', default='5'),
-        ui.text_input('years_text', default='10'),
-    ],
-    hide_code=True,
-)
 def math_module(base_text, rate_text, years_text):
     """## The `math` Module
 
@@ -8778,17 +8585,6 @@ into the boxes below -- the savings total updates live."""
     return cs.md(f"**Savings after {years} years is** `${total:.2f}`")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Random numbers', default='import random\n\nprint(random.random())            # float, 0.0 <= x < 1.0\nprint(random.randint(1, 10))      # int, 1 <= x <= 10  (inclusive both ends)\nprint(random.randrange(1, 10))    # int, 1 <= x < 10   (10 excluded)\n\nrandom.seed(15)   # same seed -> same "random" sequence every run\nprint(random.randint(1, 10))\nprint(random.randint(1, 10))\nprint(random.randint(1, 10))\n'),
-        ui.tests('Import Examples', default='import math\nimport random\n\nprint(random.random())\nrandom.seed(5)\nprint(random.random())\n'),
-    ],
-    hide_def=True,
-    hide_code=True,
-)
-def random_numbers():
     """## Random Numbers
 
 The **`random`** module (in the Python Standard Library) generates
@@ -8815,103 +8611,3 @@ time the program runs -- useful for reproducible testing.
 Run the test below more than once: the first three lines change
 every run, but the three lines *after* `random.seed(15)` print the
 same three numbers every time."""
-
-
-@app.slide("Title", cells=[])
-def slide_title():
-    """"""
-
-
-@app.slide("Variables and Assignments", cells=["variables_and_assignments"])
-def slide_2():
-    """"""
-
-
-@app.slide("= Is Not Equals", cells=["equals_is_not_equals"])
-def slide_3():
-    """"""
-
-
-@app.slide("A Variable on Both Sides", cells=["variable_both_sides"])
-def slide_4():
-    """"""
-
-
-@app.slide("Valid Assignment Statements", cells=["valid_assignment_statements"])
-def slide_5():
-    """"""
-
-
-@app.slide("Identifiers", cells=["identifiers"])
-def slide_6():
-    """"""
-
-
-@app.slide("Mutability", cells=["mutability"])
-def slide_9():
-    """"""
-
-
-@app.slide("Floating-Point Numbers", cells=["floats"])
-def slide_10():
-    """"""
-
-
-@app.slide("Formatting Floats", cells=["formatting_floats"])
-def slide_12():
-    """"""
-
-
-@app.slide("Type Conversions", cells=["type_conversion"])
-def slide_13():
-    """"""
-
-
-@app.slide("Converting to a String", cells=["str_conversion"])
-def slide_14():
-    """"""
-
-
-@app.slide("Arithmetic Expressions", cells=["arithmetic_expressions"])
-def slide_15():
-    """"""
-
-
-@app.slide("Precedence Rules", cells=["precedence_rules"])
-def slide_16():
-    """"""
-
-
-@app.slide("A Full Expression Example", cells=[])
-def slide_17():
-    """"""
-
-
-@app.slide("Compound Operators", cells=["compound_operators"])
-def slide_18():
-    """"""
-
-
-@app.slide("Division and Modulo", cells=["division_and_modulo"])
-def slide_19():
-    """"""
-
-
-@app.slide("Getting Digits", cells=["digit_extraction"])
-def slide_20():
-    """"""
-
-
-@app.slide("Modules", cells=["modules_intro"])
-def slide_21():
-    """"""
-
-
-@app.slide("The math Module", cells=["math_module"])
-def slide_22():
-    """"""
-
-
-@app.slide("Random Numbers", cells=["random_numbers"])
-def slide_23():
-    """"""

@@ -1,21 +1,7 @@
-from codeslides import App, cs, turtle, ui
+import turtle
 import random
 
-app = App()
 
-@app.cell(hide_def=True, is_setup=True)
-def setup():
-    import turtle
-    import random
-
-
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('config'),
-    ],
-    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'__code__': 'top-right'}, 'extra_code_fraction': 0.5},
-)
 def config():
     """# ttt
 
@@ -29,14 +15,6 @@ reads rows/cols re-runs with the new grid size."""
     return rows, cols
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('test', default='print(createMatrix(3,4))\n'),
-    ],
-    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'__code__': 'top-right', 'test': 'bottom-left'}, 'extra_code_fraction': 0.5},
-)
 def createMatrix(rows=2, cols=5):
     """This function creates a 2D list where each inner list
 contains randomly generated 1s and 0s.
@@ -65,17 +43,6 @@ Example:
     return l
 
 
-
-
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('markCorners'),
-        ui.turtle_canvas('Canvas', width=400, height=400),
-        ui.tests('Run Code', default='cells1 = createMatrix(30, 30)\nwn = turtle.Screen()\nwn.setworldcoordinates(0,0, 30,30)\nt = turtle.Turtle()\nt.up()\nt.shape("circle")\nmarkCorners(cells1, t)'),
-    ],
-    layout={'code_fraction': 0.5, 'panel_fraction': 0.5, 'lower_tabs': ['Canvas']},
-)
 def markCorners(cells2= None, t = None):
     """
 This function plots each corner of a 2D grid as either
@@ -99,14 +66,6 @@ the 2D list cells.
             t.stamp()
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('Notes'),
-        ui.iframe('Desmos', src='https://www.desmos.com/calculator/31jgkf3tgp', height=400),
-        ui.tests('Run Code', default='print(midpoint((2,4), (10, -81)))'),
-    ],
-)
 def midpoint(p1, p2):
     """This function computes the midpoint between p1 and p2.
 - p1: a tuple representing a point
@@ -125,17 +84,6 @@ return (6, 7)"""
     return (x1 + x2) / 2, (y1 + y2) / 2
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('Contents'),
-        ui.turtle_canvas('canvas', width=400, height=400),
-    ],
-    hide_def=True,
-    is_main=True,
-    layout={'code_fraction': 0.5, 'panel_fraction': 0.5, 'lower_tabs': ['canvas'], 'default_tab': 'Contents'},
-)
-def cell_4():
     """# Marching Squares
 
 *Drawing 2D contour lines from a grid of 1s and 0s.*
@@ -166,14 +114,6 @@ def cell_4():
         marchingSquares(cells, t)
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Run Code', default='p1 = (100, 100)\np2 = (100, 0)\np3 = (100, 100)\np4 = (0, 100)\n\nt = turtle.Turtle()\nt.up()\nt.hideturtle()\n\nt.goto(0, 0)\nt.stamp()\nt.goto(100, 0)\nt.stamp()\nt.goto(100, 100)\nt.stamp()\nt.goto(0, 100)\nt.stamp()\n\n# t.shape("circle")\n# t.shapesize(0.5)\n\ndrawLineSegment(t, p1, p2, p3, p4)'),
-        ui.turtle_canvas('Canvas', width=400, height=400),
-    ],
-)
 def drawLineSegment(t5, p1, p2, p3, p4):
     """This function draws a line starting at the midpoint of
 p1 and p2 and ending at the midpoint of p3 and p4.
@@ -193,15 +133,6 @@ p1 and p2 and ending at the midpoint of p3 and p4.
     print(start)
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('Notes'),
-        ui.turtle_canvas('Canvas', width=400, height=400),
-        ui.tests('Test', default='\nscale = 3\nrows, cols = 4 * scale, 6 * scale\nwn = turtle.Screen()\nwn.setworldcoordinates(0, 0, cols, rows)\nwn.tracer(0)\n\nt = turtle.Turtle()\n# t.up()\nt.hideturtle()\nt.shape("circle")\n\ncells = createMatrix(rows, cols)\nmarchingSquares(cells, t)'),
-        ui.image('Images', src=['assets/59d86210779d1dc2.png', 'assets/848646879097546d.png']),
-    ],
-)
 def marchingSquares(cells, t):
     """https://en.wikipedia.org/wiki/Marching_squares
 This function implements the marching squares algorithm.
@@ -249,15 +180,6 @@ draws a line segment corresponding to that case.
             elif case == "1111": pass
 
 
-
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('demo'),
-        ui.turtle_canvas('Canvas', width=400, height=400),
-        ui.tests('Run the whole program', default='cells = createMatrix(rows, cols)\nt = turtle.Turtle()\nt.hideturtle()\nmarkCorners(cells, t)\nmarchingSquares(cells, t)\n'),
-    ],
-)
 def demo():
     """This is the whole program, start to finish: build a random
 rows x cols grid (config), mark each corner (markCorners), then trace
@@ -268,57 +190,3 @@ a student would run themselves outside of any single slide."""
     # references exist purely so the dependency graph runs createMatrix/
     # markCorners/marchingSquares before this cell's own test does.
     createMatrix, markCorners, marchingSquares
-
-
-# cells=[] deliberately -- the title slide (deck's first slide) always
-# shows the is_setup cell's editor stacked above the is_main cell's,
-# computed server-side (Deck.effective_title_slide_cells), overriding
-# whatever's listed here.
-@app.slide('Title', cells=[])
-def slide_title():
-    """"""
-
-
-@app.slide('Setup', cells=['setup'])
-def slide_setup():
-    """"""
-
-
-@app.slide('Config', cells=['config'])
-def slide_config():
-    """"""
-
-
-@app.slide('CreateMatrix', cells=['createMatrix'])
-def slide_creatematrix():
-    """"""
-
-
-@app.slide('MarkCorners', cells=['markCorners'])
-def slide_markcorners():
-    """"""
-
-
-@app.slide('MidPoint', cells=['midpoint'])
-def slide_midpoint():
-    """"""
-
-
-@app.slide('DrawLineSegment', cells=['drawLineSegment'])
-def slide_drawlinesegment():
-    """"""
-
-
-@app.slide('MarchingSquares', cells=['marchingSquares'])
-def slide_marchingsquares():
-    """"""
-
-
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.iframe('campusKnot', src='https://www.campusknot.com/participation/poll/detail/1364/25623', height=240),
-    ],
-)
-def cell_1():
-    pass

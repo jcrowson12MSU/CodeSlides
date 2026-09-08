@@ -1,38 +1,3 @@
-"""Strings -- lecture deck built from Lectures/ZybooksNotes/Chapter 3
-(zyBooks CSE 1284, sections 3.1-3.3 and 3.5; section 3.4's source PDF was
-not provided and is skipped).
-
-Like chapter1.py and chapter2.py, this deck is deliberately straight-line
-code -- no `def` anywhere inside a cell body, since functions haven't
-been taught yet. Every cell's own MAIN code editor is hidden
-(`hide_code=True`); any runnable/editable code a student is meant to see
-or try lives in a `ui.tests(...)` box, never the main editor. The cell
-body itself still computes real values, so notes and any text_input/
-slider-bound demos have something live to react to.
-
-Where zyBooks used a JS-driven visualization (the string-indexing boxes,
-the PythonTutor concatenation trace, the slicing tool, the ASCII
-comparison trace), this deck re-creates the same teaching point with a
-live `ui.text_input` bound into the cell's own parameters, plus
-`cs.md(...)` output describing what happened -- consistent with the
-prior chapters' pattern of using a real reactive control as a stand-in
-for a canned animation.
-"""
-
-from codeslides import App, cs, ui
-
-app = App()
-
-
-@app.cell(
-    instance='static',
-    elements=[
-        ui.notes('notes'),
-    ],
-    hide_def=True,
-    hide_code=True,
-)
-def intro():
     """# Strings
 
 Four zyBooks sections (3.1-3.3, 3.5) on how Python represents, slices,
@@ -44,18 +9,6 @@ Use **Slides** to step through in order, or **Cells** to jump straight
 to a topic."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('sample_word', default='Trish'),
-        ui.tests('Index example', default='\ntext = input("sample_word ")\nprint(text)\n\n'),
-    ],
-    hide_def=True,
-    hide_code=True,
-    layout={'column_fraction': 0.4044422870915908, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Index example': 'top-right', '__inputs__': 'bottom-left'}, 'extra_code_fraction': 0.5},
-)
-def string_basics(sample_word):
     """## Strings Are a Sequence of Characters
 
 A **string** is a sequence of characters that represents textual data,
@@ -163912,14 +163865,6 @@ objects (here, characters) into a sequence, each with its own numbered
     # return cs.md(f"```text\n{summary}\n```")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('len() examples', default='george_v = """His Majesty George V, by the Grace of God,\n            of the United Kingdom of Great Britain and\n            Ireland and of the British Dominions beyond\n            the Seas, King, Defender of the Faith, Emperor of India"""\ngandhi = "Mohandas Karamchand Gandhi"\n#                 012   Length = 3, last char is 2 \njohn_f_kennedy = "JFK"\n\nlength = len(john_f_kennedy)\nprint(john_f_kennedy, length)\nprint(type(length), type(john_f_kennedy))'),
-    ],
-    hide_code=True,
-)
 def string_length():
     """## Finding a String's Length
 
@@ -163937,15 +163882,6 @@ Manually counting characters in a long string literal is error-prone --
 lengths of three very differently sized names."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Positive and negative indexing', default='\n"""                   1         2         3\n            0123456789012345678901234567890123456789"""\nalphabet = "ABxzcrjtukylu,rsbdtjkCDecwrshrtjyum,vabc"\n\nlength = len(alphabet)\nprint(length, alphabet)\nprint(alphabet[0], alphabet[1], alphabet[2])\nprint(alphabet[-1], alphabet[-2], alphabet[-3])\nprint(alphabet[length-1], alphabet[length-2], alphabet[length-3])'),
-    ],
-    hide_code=True,
-    layout={'column_fraction': 0.23663922447958016, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Positive and negative indexing': 'top-right'}, 'extra_code_fraction': 0.5},
-)
 def string_indexing():
     """## IndexingPositive and negative indexing
 
@@ -163963,18 +163899,6 @@ is the first character of a 26-character string (the same as
 Run the test and match each printed character back to its index."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('slice_source', default='http://en.wikipedia.org/wiki/Turing'),
-        ui.text_input('slice_start', default='7'),
-        ui.text_input('slice_end', default='23'),
-        ui.tests('SliceExample', default='""""             1         2         3\n       0123456789012345678901234567890123456"""\nurl = "http://en.wikipedia.org/wiki/Turing"\nlength = len(url)\nprint(length)\nprint("---", url[:], "---", sep="")\n'),
-    ],
-    hide_code=True,
-    layout={'column_fraction': 0.21894124521971967, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'SliceExample': 'top-right'}, 'extra_code_fraction': 0.5},
-)
 def slicing_basics(slice_source, slice_start, slice_end):
     """TR8am finished here
 ## Slicing
@@ -245913,14 +245837,6 @@ live."""
     # return cs.md(f"```text\n{summary}\n```")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('A slice is a brand-new string', default='my_str = "The cat jumped the brown cow"\nanimal = my_str[:]\nprint(animal)'),
-    ],
-    hide_code=True,
-)
 def slicing_creates_new_object():
     """## A Slice Creates a New Object
 
@@ -245929,14 +245845,6 @@ def slicing_creates_new_object():
 Run the test: `animal` still prints `"cat"` even after `my_str` is reassigned to a sentence about a fox."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Omitting start/end, and negative slice indices', default='my_str = "http://en.wikipedia.org/wiki/Nasa/"\n\nprint(my_str[10:19])   # "wikipedia"          -- indices 10-18\nprint(my_str[10:-5])   # "wikipedia.org/wiki/" -- indices 10 up to (len-5)\nprint(my_str[8:])      # "n.wikipedia.org/wiki/Nasa/" -- index 8 to the end\nprint(my_str[:23])     # "http://en.wikipedia.org"    -- start to index 23\nprint(my_str[:-1])     # everything but the last character\n'),
-    ],
-    hide_code=True,
-)
 def slicing_omitted_bounds():
     """## Omitting Start or End
 
@@ -245955,14 +245863,6 @@ Run the test against a URL and match each slice to its printed
 result."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Stride', default='numbers = "0123456789"\n\nprint(f"All numbers: {numbers[::]}")\nprint(f"Every even number: {numbers[::2]}")\nprint(f"Every third number between 1 and 8: {numbers[1:9:3]}")\n'),
-    ],
-    hide_code=True,
-)
 def slicing_stride():
     """## Stride
 
@@ -245975,15 +245875,6 @@ string, but only every 2nd character." Run the test to see all three
 strides applied to the digits `0123456789`."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('usr_text', default='Introduction to Python'),
-        ui.tests('Example', default='text = input("usr_text ")\nprint(text)\nlength = len(text)\nprint(length)\nprint("lhs:", text[:(length) // 2])\nprint("rhs:", text[(length) // 2:])'),
-    ],
-    hide_code=True,
-)
 def slicing_halves(usr_text):
     """## Splitting a String in Half
 
@@ -282856,14 +282747,6 @@ don't have to be literal numbers, they can be any expression."""
     # return cs.md(f"```text\n{summary}\n```")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Replacement fields', default='number = 5\namount = 20\nprint(f"{number} burritos cost ${amount}")\nprint(number, " burritos cost $", amount, sep="")\n\n'),
-    ],
-    hide_code=True,
-)
 def fstrings_basics():
     """MWF 10am, 11am start here
 ## f-strings
@@ -282873,14 +282756,6 @@ A **formatted string literal** (an **f-string**) lets a programmer build a strin
 Each `{...}` inside the string is a **replacement field** -- a placeholder expression whose value is substituted into the final string."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Self-documenting = specifier', default='print(f"{3**2=}")   # "2**2=4"\n\nx = 3.14\n# print(f"{3.5*x + 6.8=}" + 1)\nprint("{3.5*x + 6.8=}+1")\nprint(f"3.5*x + 6.8=")\nprint("3.5*x + 6.8=", 3.5*x + 6.8)\n'),
-    ],
-    hide_code=True,
-)
 def fstrings_equals_and_braces():
     """## Debugging With `=`, and Literal Braces
 
@@ -282896,17 +282771,6 @@ becomes `}`. Run the test to see the self-documenting `=` and the
 doubled-brace escapes side by side."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('replace()', default='phrase = input("Sentence: ")\nold_text = input("Old Text: ")\nnew_text = input("New Text: ")\n\nindex = phrase.find(old_text)\nold_text_length = len(old_text)\nprint("01234567890")\nprint(phrase)\n\nprint(index, old_text)\n# phrase = phrase.replace(old_text, new_text)\nlhs = phrase[:index]# "??? everything to the left of old text"\nrhs = phrase[index+old_text_length:]#"??? everything to the right of old text"\nprint("lhs:", lhs)\nprint("rhs:", rhs)\nphrase = lhs + new_text + rhs\nprint(phrase)'),
-        ui.text_input('Sentence:', default=''),
-        ui.text_input('Old Text', default=''),
-        ui.text_input('New Text:', default=''),
-    ],
-    hide_code=True,
-)
 def string_methods_replace():
     """## The `replace()` Method
 
@@ -282915,14 +282779,6 @@ def string_methods_replace():
 An optional third argument, `my_str.replace(old, new, count)`, limits the swap to just the first `count` occurrences."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('find(), rfind(), and count()', default='#       0123456789\nword = "onomatompoeia"\n\nprint("0)", word.find("o"))          # first "o", from the start\n# print("1)", word.find("m"))          # first "o", from the start\n# print("2)",  word.find("o", 4))       # first "o" starting the search at index 1\n# print("3)", word.find("o", 1, 4))    # first "o" between index 1 and 4\n# print("4)", word.rfind("o"))         # first "o" searching from the end\nprint("5)", word.count("o"))         # how many "o" characters total\nprint("6   )", word.find("z"))          # not found -> -1\n'),
-    ],
-    hide_code=True,
-)
 def string_methods_find():
     """## Searching: `find()`, `rfind()`, `count()`
 
@@ -282931,17 +282787,6 @@ def string_methods_find():
 `my_str.rfind(x)` works the same way but searches **in reverse**, finding the last occurrence's index. `my_str.count(x)` returns how many times `x` occurs."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('compare_left', default='Yankee Sierra'),
-        ui.text_input('compare_right', default='Yankee Zulu'),
-        ui.tests('Comparison Example', default='text = input("compare_left")\n\nprint(text)\nprint(text == "CAT")\nprint(text in "the cat in the hat")\n'),
-    ],
-    hide_code=True,
-    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.7311058588121214, 'right_panel_fraction': 0.5, 'tab_quadrant': {'__inputs__': 'bottom-left', 'Comparison Example': 'top-left'}, 'extra_code_fraction': 0.5},
-)
 def string_comparisons(compare_left, compare_right):
     """## Comparing Strings
 
@@ -283532,14 +283377,6 @@ Edit the two strings below to see how they compare."""
     # return cs.md(f"```text\n{summary}\n```")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('isX() checks', default='sample1 = "hello123"\nsample2 = "12345"\nsample3 = "hello"\nsample4 = "HELLO"\nsample5 = "            \\n  \\t"\nsample6 = "Hello World"\nprint("1)", sample6.isalnum())\nprint("2)", sample2.isdigit())\nprint("3)", sample4.isupper())\nprint("4)", sample1.islower())\nprint("5)", sample5.isspace())\n'),
-    ],
-    hide_code=True,
-)
 def string_is_methods():
     """## Checking String Contents: the `isX()` Methods
 
@@ -283556,15 +283393,6 @@ checking `user_input.isdigit()` before calling `int(user_input)`. Run
 the test across several sample strings and compare the results."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('case_text', default='  Hello, World!  '),
-        ui.tests('StringMethods', default='text = """\n\n\nthis is some text    \n\n"""\nprint(text)\ntext = text.strip()\n\nprint("11", text)'),
-    ],
-    hide_code=True,
-)
 def string_case_methods(case_text):
     """## Reshaping a String: `startswith()`, `endswith()`, Case, and `strip()`
 
@@ -283626,83 +283454,3 @@ whatever you type."""
     #     f"title():      {case_text.title()!r}"
     # )
     # return cs.md(f"```text\n{summary}\n```")
-
-
-@app.slide("Title", cells=[])
-def slide_1():
-    """"""
-
-
-@app.slide("Strings Are a Sequence of Characters", cells=["string_basics"])
-def slide_2():
-    """"""
-
-
-@app.slide("Finding a String's Length", cells=["string_length"])
-def slide_3():
-    """"""
-
-
-@app.slide("Indexing", cells=["string_indexing"])
-def slide_4():
-    """"""
-
-
-@app.slide("Slicing", cells=["slicing_basics"])
-def slide_7():
-    """"""
-
-
-@app.slide("A Slice Creates a New Object", cells=["slicing_creates_new_object"])
-def slide_8():
-    """"""
-
-
-@app.slide("Omitting Start or End", cells=["slicing_omitted_bounds"])
-def slide_9():
-    """"""
-
-
-@app.slide("Stride", cells=["slicing_stride"])
-def slide_10():
-    """"""
-
-
-@app.slide("Worked Example: Splitting a String in Half", cells=["slicing_halves"])
-def slide_11():
-    """"""
-
-
-@app.slide("f-strings", cells=["fstrings_basics"])
-def slide_12():
-    """"""
-
-
-@app.slide("Debugging With = and Literal Braces", cells=["fstrings_equals_and_braces"])
-def slide_13():
-    """"""
-
-
-@app.slide("The replace() Method", cells=["string_methods_replace"])
-def slide_14():
-    """"""
-
-
-@app.slide("Searching: find(), rfind(), count()", cells=["string_methods_find"])
-def slide_15():
-    """"""
-
-
-@app.slide("Comparing Strings", cells=["string_comparisons"])
-def slide_17():
-    """"""
-
-
-@app.slide("Checking String Contents: the isX() Methods", cells=["string_is_methods"])
-def slide_19():
-    """"""
-
-
-@app.slide("Reshaping a String", cells=["string_case_methods"])
-def slide_20():
-    """"""
