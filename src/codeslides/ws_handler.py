@@ -134,7 +134,7 @@ class Peer:
     # `?role=` query param at connect time (server.py) -- unlike
     # user_id/display_name, this exists even for a connection that never
     # sends Join, since it gates whether a message is handled at all
-    # (see MUTATING_MESSAGE_TYPES below), including messages sent before
+    # (see VIEWER_ALLOWED_MESSAGE_TYPES below), including messages sent before
     # any identity is established. "editor" (the default) can do
     # everything a solo connection always could; "viewer" can only join
     # and report presence -- every mutating message type is rejected.
