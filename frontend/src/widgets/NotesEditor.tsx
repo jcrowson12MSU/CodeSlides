@@ -1,6 +1,6 @@
 import { markdown } from '@codemirror/lang-markdown'
 import { syntaxTree } from '@codemirror/language'
-import { EditorState, StateEffect, StateField, type Extension } from '@codemirror/state'
+import { Compartment, EditorState, StateEffect, StateField, type Extension } from '@codemirror/state'
 import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view'
 import type { SyntaxNode } from '@lezer/common'
 import { Subscript, Superscript, Table, TaskList } from '@lezer/markdown'
@@ -9,6 +9,12 @@ import { useEffect, useRef } from 'react'
 export interface NotesEditorProps {
   source: string
   onChangeSource: (source: string) => void
+  // When true, the editor is a fully-decorated, non-editable render --
+  // no cursor placement is possible, so raw markdown can never reveal
+  // itself. See NotesViewer's double-click handler (viewerElements.tsx)
+  // for how a note moves between locked and unlocked; NotesEditor itself
+  // has no opinion on *why* it's locked, only how to behave while it is.
+  locked: boolean
 }
 
 // Obsidian-style "live preview": markdown renders inline as you type --
@@ -17,6 +23,12 @@ export interface NotesEditorProps {
 // where the raw markdown reappears so it can be edited. Replaces the old
 // NotesViewer Edit/Preview textarea toggle (viewerElements.tsx) with a
 // single always-live view; no separate preview pane exists anymore.
+//
+// `locked` (see NotesEditorProps) is a second, coarser mode layered on
+// top of the above: while locked, the editor is non-editable and always
+// fully decorated, regardless of cursor/selection, so a slide being
+// presented or merely clicked through never flashes raw markdown --
+// the per-line reveal-on-cursor behavior only applies once unlocked.
 //
 // Built on CodeMirror 6 (like CodeEditor.tsx) purely as an *engine* for
 // cursor-aware decorations -- @codemirror/lang-markdown's syntax tree
@@ -328,7 +340,7 @@ const HEADING_CLASS: Record<string, string> = {
   ATXHeading6: 'cs-notes-live-h6',
 }
 
-function buildDecorations(state: EditorState, hasFocus: boolean): DecorationSet {
+function buildDecorations(state: EditorState, hasFocus: boolean, locked: boolean): DecorationSet {
   // Without the focus check, the cursor's default initial position (doc
   // offset 0, before any user interaction) would count as "active" and
   // permanently reveal raw syntax on whatever construct happens to sit
@@ -338,7 +350,12 @@ function buildDecorations(state: EditorState, hasFocus: boolean): DecorationSet 
   // markdown-decorated regardless of where its internal selection
   // happens to be, matching Obsidian (leaving a note shows the rendered
   // form, not whatever raw line the cursor was last parked on).
-  const active = hasFocus ? activeLineRanges(state) : []
+  //
+  // `locked` overrides this the same way: a locked editor is never
+  // focused (see the editable Compartment below, which also disables
+  // selection input while locked), but belt-and-suspenders here too --
+  // a locked note is always fully decorated, full stop.
+  const active = hasFocus && !locked ? activeLineRanges(state) : []
   const builder: Array<{ from: number; to: number; deco: Decoration }> = []
   const tree = syntaxTree(state)
 
@@ -624,17 +641,37 @@ const hasFocusField = StateField.define<boolean>({
   },
 })
 
+// Carries the `locked` prop into the state used by buildDecorations, the
+// same dispatched-effect mechanism as setFocus/hasFocusField above (see
+// that pair's comment) -- a StateField can only change in response to a
+// dispatched transaction, so the sync effect below dispatches setLocked
+// whenever the `locked` prop changes after mount.
+const setLocked = StateEffect.define<boolean>()
+
+const lockedField = StateField.define<boolean>({
+  create: () => true,
+  update(value, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setLocked)) return effect.value
+    }
+    return value
+  },
+})
+
 const notesDecorationsField = StateField.define<DecorationSet>({
-  create: (state) => buildDecorations(state, state.field(hasFocusField)),
+  create: (state) => buildDecorations(state, state.field(hasFocusField), state.field(lockedField)),
   update(decorations, tr) {
     const focusChanged = tr.effects.some((e) => e.is(setFocus))
-    if (!tr.docChanged && !tr.selection && !focusChanged) return decorations
-    return buildDecorations(tr.state, tr.state.field(hasFocusField))
+    const lockedChanged = tr.effects.some((e) => e.is(setLocked))
+    if (!tr.docChanged && !tr.selection && !focusChanged && !lockedChanged) return decorations
+    return buildDecorations(tr.state, tr.state.field(hasFocusField), tr.state.field(lockedField))
   },
   provide: (field) => EditorView.decorations.from(field),
 })
 
-export function NotesEditor({ source, onChangeSource }: NotesEditorProps) {
+const editableCompartment = new Compartment()
+
+export function NotesEditor({ source, onChangeSource, locked }: NotesEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeSourceRef = useRef(onChangeSource)
@@ -646,7 +683,15 @@ export function NotesEditor({ source, onChangeSource }: NotesEditorProps) {
     const extensions: Extension[] = [
       markdown({ extensions: [Table, TaskList, Subscript, Superscript] }),
       hasFocusField,
+      lockedField.init(() => locked),
       notesDecorationsField,
+      // `editable` controls whether the DOM contenteditable/cursor exists
+      // at all; `readOnly` additionally blocks programmatic edits. Both
+      // are gated on `locked` -- while locked there's no cursor to place,
+      // so activeLineRanges (above) can never see a non-empty selection
+      // and the reveal-on-cursor behavior is structurally unreachable,
+      // not just visually suppressed.
+      editableCompartment.of([EditorView.editable.of(!locked), EditorState.readOnly.of(locked)]),
       EditorView.focusChangeEffect.of((_state, focusing) => setFocus.of(focusing)),
       EditorView.lineWrapping,
       EditorView.updateListener.of((update) => {
@@ -671,10 +716,11 @@ export function NotesEditor({ source, onChangeSource }: NotesEditorProps) {
     viewRef.current = view
 
     return () => view.destroy()
-    // Intentionally mount once; `source` prop changes after mount are
-    // handled by the sync effect below, matching CodeEditor.tsx's own
-    // uncontrolled-after-mount pattern -- re-creating the view on every
-    // prop change would discard cursor position and undo history.
+    // Intentionally mount once; `source`/`locked` prop changes after
+    // mount are handled by the sync effects below, matching
+    // CodeEditor.tsx's own uncontrolled-after-mount pattern -- re-
+    // creating the view on every prop change would discard cursor
+    // position and undo history.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -686,6 +732,25 @@ export function NotesEditor({ source, onChangeSource }: NotesEditorProps) {
       view.dispatch({ changes: { from: 0, to: current.length, insert: source } })
     }
   }, [source])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    if (view.state.field(lockedField) === locked) return
+    view.dispatch({
+      effects: [
+        setLocked.of(locked),
+        editableCompartment.reconfigure([EditorView.editable.of(!locked), EditorState.readOnly.of(locked)]),
+      ],
+    })
+    // Unlocking (e.g. NotesViewer's double-click handler) makes the
+    // editor contenteditable again, but the DOM click that triggered it
+    // happened before that -- nothing has focus yet, so without this the
+    // note would sit unlocked but inert until a second click. Locking
+    // needs no such call: NotesViewer re-locks on blur, i.e. focus has
+    // already left by the time locked flips back to true.
+    if (!locked) view.focus()
+  }, [locked])
 
   return <div className="cs-notes-live-editor" ref={containerRef} />
 }
