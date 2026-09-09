@@ -67,15 +67,13 @@ export interface SlideShowProps {
   // `readOnly` (the main cell's, via Cell.tsx, and the title slide's
   // separate `extraCodeAbove` setup-cell editor, composed directly here).
   viewerMode?: boolean
-  // TODO.md #65: see Cell.tsx's own docstrings for these -- forwarded
-  // here for the same reason viewerMode is (Slides view renders the same
-  // live Cell as Cells view, just one at a time).
+  // TODO.md #65/#65-xi: see Cell.tsx's own docstrings for these --
+  // forwarded here for the same reason viewerMode is (Slides view
+  // renders the same live Cell as Cells view, just one at a time).
   reviewMode?: boolean
   ownUserId?: string | null
-  onPushCell?: (cellId: string, source: string, elementId?: string) => void
-  onWithdrawProposal?: (cellId: string, elementId?: string) => void
-  onAcceptProposal?: (cellId: string, proposerUserId: string, elementId?: string) => void
-  onRejectProposal?: (cellId: string, proposerUserId: string, elementId?: string) => void
+  onStagePrimaryEdit?: (cellId: string, source: string) => void
+  onStageTestEdit?: (cellId: string, elementId: string, source: string) => void
 }
 
 // Slideshow/presentation mode (TODO.md #10, ARCHITECTURE.md's "one tool,
@@ -125,10 +123,8 @@ export function SlideShow({
   viewerMode = false,
   reviewMode = false,
   ownUserId = null,
-  onPushCell,
-  onWithdrawProposal,
-  onAcceptProposal,
-  onRejectProposal,
+  onStagePrimaryEdit,
+  onStageTestEdit,
 }: SlideShowProps) {
   const slideRef = useRef<HTMLDivElement | null>(null)
 
@@ -304,20 +300,12 @@ export function SlideShow({
               viewerMode={viewerMode}
               reviewMode={reviewMode}
               ownUserId={ownUserId}
-              onPushCell={
-                onPushCell ? (source, elementId) => onPushCell(cellId, source, elementId) : undefined
+              onStagePrimaryEdit={
+                onStagePrimaryEdit ? (source) => onStagePrimaryEdit(cellId, source) : undefined
               }
-              onWithdrawProposal={
-                onWithdrawProposal ? (elementId) => onWithdrawProposal(cellId, elementId) : undefined
-              }
-              onAcceptProposal={
-                onAcceptProposal
-                  ? (proposerUserId, elementId) => onAcceptProposal(cellId, proposerUserId, elementId)
-                  : undefined
-              }
-              onRejectProposal={
-                onRejectProposal
-                  ? (proposerUserId, elementId) => onRejectProposal(cellId, proposerUserId, elementId)
+              onStageTestEdit={
+                onStageTestEdit
+                  ? (elementId, source) => onStageTestEdit(cellId, elementId, source)
                   : undefined
               }
               onRunCell={(source) => onRunCell(cellId, source)}

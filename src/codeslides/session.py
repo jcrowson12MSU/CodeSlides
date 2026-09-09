@@ -66,31 +66,6 @@ class ElementInstance:
 
 
 @dataclass
-class CellProposal:
-    """TODO.md #65: one connection's pushed-but-not-yet-accepted source
-    for a cell, on a `Session.review_mode` document -- the "propose"
-    half of the propose/review/accept workflow `PROPOSAL_review_workflow.md`
-    designed. Keyed by the proposer's `user_id` on
-    `CellInstance.proposals` (not `connection_id`): a proposal survives
-    the proposing connection reconnecting under a fresh connection_id,
-    same identity `SessionRegistry.join` already assigns per Join rather
-    than per raw websocket connection. `display_name` is stored directly
-    (denormalized), same precedent `CellInstance.last_edited_by` already
-    sets, so a proposal still renders correctly after its proposer
-    disconnects. `base_source` is the accepted source this proposal was
-    diffed against at push time -- if `CellInstance`'s actual current
-    source has since moved on (another proposal was accepted first),
-    comparing against a stale `base_source` is exactly how a conflict is
-    detected (see `ws_handler.handle_message`'s `AcceptProposal`
-    handling)."""
-
-    source: str
-    display_name: str | None
-    created_at: datetime
-    base_source: str
-
-
-@dataclass
 class StructuralAction:
     """TODO.md #65-x: one staged structural change (rename, add/remove
     element, hide toggle, etc.), stored as the exact wire-format dict
@@ -113,13 +88,21 @@ class StructuralAction:
 
 @dataclass
 class StructuralBundle:
-    """TODO.md #65-x: a cell's one pending set of staged structural
-    changes on a `review_mode` document -- `session.py`'s
-    `CellInstance.structural_bundle` own docstring explains why this is
-    a separate mechanism from `CellProposal`/`proposals`. `actions` is
-    ordered and replayed in that exact order on accept (a later action
-    in the bundle may depend on an earlier one having already applied,
-    e.g. "add element" then "reorder elements" naming it)."""
+    """TODO.md #65/#65-x/#65-xi: a cell's one pending set of staged
+    changes on a `review_mode` document -- covers everything that can be
+    pushed for a cell (its primary source, any `tests` elements'
+    sources, and structural changes like rename/hide toggles/add-remove
+    element), all unified into this single per-cell mechanism as of
+    #65-xi (earlier revisions had a separate, now-removed `CellProposal`/
+    `proposals` mechanism specifically for source text, with its own
+    accept/reject/conflict UI -- found confusing in practice: it
+    broadcast to peers immediately on every Shift+Enter, with no
+    explicit push step, while structural changes already required one).
+    `actions` is ordered and replayed in that exact order on accept (a
+    later action in the bundle may depend on an earlier one having
+    already applied, e.g. "add element" then "reorder elements" naming
+    it, or an edited cell body followed by a rename of that same
+    cell)."""
 
     proposer_user_id: str
     display_name: str | None
@@ -136,56 +119,32 @@ class CellInstance:
     error: str | None = None
     collapsed: bool = False  # pure UI state (ARCHITECTURE.md section 8)
     elements: dict[str, ElementInstance] = field(default_factory=dict)
-    # TODO.md #65: pending proposals on a `review_mode` document, keyed by
-    # proposer `user_id`. Always empty on a non-review-mode document --
-    # nothing in `ws_handler.py` ever populates it unless
-    # `Session.review_mode` is set, so its emptiness alone is a reliable
-    # signal a document has no proposal workflow active, without needing
-    # every call site to separately check `review_mode` too.
-    proposals: dict[str, CellProposal] = field(default_factory=dict)
-    # TODO.md #65 follow-up: pending proposals for a `tests` element's
-    # own editable source, keyed by `element_id` then by proposer
-    # `user_id` -- kept separate from `proposals` above (which is only
-    # ever about the cell's *primary* source, `EditCell`/`PushCell`'s
-    # domain) rather than folded into the same dict, since a `tests`
-    # element's source is a completely different piece of state
-    # (`ElementInstance.value`, written by `Kernel.on_tests_edited`/
-    # `set_tests_default`, not `Kernel.on_cell_edited`) that a cell can
-    # have zero, one, or several of, independently of whether its
-    # primary source also has a pending proposal. Needed because many
-    # real decks (e.g. a lecture that sets `hide_code=True` on every
-    # cell) have no reachable primary-editor UI at all -- a `tests`
-    # element is the *only* editable surface a student/collaborator ever
-    # actually touches, so `review_mode` must cover it too, or review
-    # mode silently does nothing on such a deck (the gap this follow-up
-    # closes).
-    test_proposals: dict[str, dict[str, CellProposal]] = field(default_factory=dict)
-    # TODO.md #65-x: a pending bundle of *structural* changes to this
-    # cell (rename, add/remove element, hide toggles, add/remove
-    # primary editor, reorder elements, element config, main/setup-cell
-    # flags) on a `review_mode` document -- distinct from `proposals`/
-    # `test_proposals` above because these 15 message types each write
-    # straight to disk and reload the Kernel immediately today (unlike
-    # `EditCell`/`SetTestSource`, which only ever stage an in-memory
-    # `source_overrides` entry): there was no existing "hold this until
-    # Save" slot for any of them to intercept. Each pending action is
-    # stored as the *exact wire-format dict* `protocol.encode()` already
-    # produces for that client message (plus a human-readable
-    # `summary`), so accepting a bundle can decode and replay each one
-    # straight through the same `handle_message` dispatch every one of
-    # these types already goes through for a non-review-mode document --
-    # no parallel "apply this action" implementation to keep in sync.
-    # Only one bundle per cell at a time (unlike `proposals`, which is
-    # keyed by every proposer independently) -- the user's own explicit
-    # "atomic accept/reject" decision extends naturally to "one bundle,"
-    # since letting two different people's structural changes to the
-    # same cell coexist as independently-reviewable bundles raises far
-    # murkier conflict questions (two renames? two different added
-    # elements with the same name?) than #65's original per-cell-source
-    # conflict handling ever had to answer. A second push (by anyone)
-    # while one is already pending replaces it outright, same "re-
-    # pushing replaces, doesn't queue" rule `CellProposal` already
-    # follows for a single proposer's own repeated pushes.
+    # TODO.md #65/#65-x/#65-xi: this cell's one pending bundle of staged
+    # changes on a `review_mode` document -- covers everything pushable
+    # for a cell: an edit to its primary source, an edit to any `tests`
+    # element's source, and/or structural changes (rename, hide toggles,
+    # add/remove element, reorder elements, element config, add/remove
+    # primary editor, main/setup-cell flags). Every one of these message
+    # types writes straight to disk and reloads the Kernel immediately
+    # today when sent directly (`EditCell`/`SetTestSource` included, as
+    # of #65-xi -- earlier they staged into `source_overrides` and
+    # broadcast to peers immediately on every push with no separate
+    # "push" step, a separate mechanism from this one that #65-xi
+    # removed for being confusing in practice, inconsistent with the
+    # structural side's own explicit-push requirement). Each pending
+    # action is stored as the *exact wire-format dict*
+    # `protocol.encode()` already produces for that client message (plus
+    # a human-readable `summary`), so accepting a bundle can decode and
+    # replay each one straight through the same `handle_message`
+    # dispatch every one of these types already goes through for a
+    # non-review-mode document -- no parallel "apply this action"
+    # implementation to keep in sync. Only one bundle per cell at a time
+    # -- the user's own explicit "atomic accept/reject" decision extends
+    # naturally to "one bundle": letting two different people's changes
+    # to the same cell coexist as independently-reviewable bundles
+    # raises far murkier conflict questions (two edits? two renames?)
+    # than a single-bundle-per-cell model needs to answer. A second push
+    # (by anyone) while one is already pending replaces it outright.
     structural_bundle: StructuralBundle | None = None
     # TODO.md #46g-iii: who last made a structural/content change to this
     # cell, on a shared document -- `None` until the first attributable
@@ -371,22 +330,12 @@ class Session:
                 # reconstruction like this one invites.
                 last_edited_by=inst.last_edited_by,
                 last_edited_at=inst.last_edited_at,
-                # TODO.md #65: same "clone is a snapshot of current
+                # TODO.md #65/#65-x: same "clone is a snapshot of current
                 # state" reasoning as attribution just above -- a pending
-                # proposal is part of a cell's current state on a
-                # review_mode document, so it's copied by value
-                # (CellProposal is itself a plain dataclass of immutable-
-                # in-practice fields, but copied explicitly rather than
-                # shared by reference, same precedent `elements` dict
-                # comprehension above already sets) rather than silently
-                # dropped or aliased onto the source Session's own dict.
-                proposals={pid: CellProposal(**vars(p)) for pid, p in inst.proposals.items()},
-                test_proposals={
-                    element_id: {pid: CellProposal(**vars(p)) for pid, p in by_user.items()}
-                    for element_id, by_user in inst.test_proposals.items()
-                },
-                # TODO.md #65-x: same "clone is a snapshot of current
-                # state" reasoning as proposals/test_proposals above.
+                # bundle is part of a cell's current state on a
+                # review_mode document, so it's copied by value rather
+                # than silently dropped or aliased onto the source
+                # Session's own dict.
                 structural_bundle=(
                     StructuralBundle(
                         proposer_user_id=inst.structural_bundle.proposer_user_id,

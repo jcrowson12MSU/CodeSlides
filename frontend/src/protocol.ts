@@ -275,49 +275,15 @@ export interface SetElementConfig {
   config: Record<string, unknown>
 }
 
-// TODO.md #65: on a review_mode document, stage `source` as this
-// connection's proposed new content for `cell_id` -- does not re-run or
-// broadcast the way EditCell does, only stages a proposal for review.
-// `element_id`, when set, targets a `tests` element's own source
-// instead of the cell's primary source (TODO.md #65 follow-up).
-export interface PushCell {
-  type: 'push_cell'
-  session_id: string
-  cell_id: string
-  source: string
-  element_id?: string
-}
-
-export interface WithdrawProposal {
-  type: 'withdraw_proposal'
-  session_id: string
-  cell_id: string
-  element_id?: string
-}
-
-export interface AcceptProposal {
-  type: 'accept_proposal'
-  session_id: string
-  cell_id: string
-  proposer_user_id: string
-  element_id?: string
-}
-
-export interface RejectProposal {
-  type: 'reject_proposal'
-  session_id: string
-  cell_id: string
-  proposer_user_id: string
-  element_id?: string
-}
-
-// TODO.md #65-x: stage an ordered list of structural changes (rename,
-// hide toggles, add/remove element, reorder elements, element config,
-// add/remove primary editor, main/setup-cell flags) to `cell_id` --
-// none of it is applied until accept_cell_bundle replays it. Each
+// TODO.md #65/#65-x/#65-xi: stage an ordered list of changes to
+// `cell_id` -- an edit to its primary source (EditCell-shaped), an edit
+// to a tests element's source (SetTestSource-shaped), and/or structural
+// changes (rename, hide toggles, add/remove element, reorder elements,
+// element config, add/remove primary editor, main/setup-cell flags).
+// None of it is applied until accept_cell_bundle replays it. Each
 // action's `payload` is the exact client-message object App.tsx would
-// otherwise have sent immediately (e.g. a RenameCell shape), plus a
-// short human-readable `summary` for the reviewer's banner.
+// otherwise have sent immediately, plus a short human-readable
+// `summary` for the reviewer's banner.
 export interface PushCellBundle {
   type: 'push_cell_bundle'
   session_id: string
@@ -349,10 +315,6 @@ export type ClientMessage =
   | Join
   | SetPresence
   | EditCell
-  | PushCell
-  | WithdrawProposal
-  | AcceptProposal
-  | RejectProposal
   | PushCellBundle
   | WithdrawCellBundle
   | AcceptCellBundle
@@ -423,6 +385,18 @@ export interface CellSourceChanged {
   source: string
 }
 
+// TODO.md #65-xi: the tests-element analogue of CellSourceChanged --
+// SetTestSource's own reply never echoes the new source (only the
+// resulting pass/fail/print ElementOutput), which only became a gap
+// once test-source edits started replaying through accept_cell_bundle.
+export interface TestSourceChanged {
+  type: 'test_source_changed'
+  session_id: string
+  cell_id: string
+  element_id: string
+  source: string
+}
+
 // TODO.md #46g-iv: sent to sender and peers alike whenever an
 // attributable change (server.py's ATTRIBUTABLE_MESSAGE_TYPES) lands on
 // cell_id -- last_edited_at is an ISO 8601 string, display-only, never
@@ -464,57 +438,6 @@ export interface SessionCreated {
   // connect time. Always false for a solo (non-collaborative)
   // connection.
   review_mode: boolean
-}
-
-// TODO.md #65: broadcast (peers-only) when a push_cell stages or
-// replaces a pending proposal. `element_id` set means this proposal
-// targets a `tests` element's own source (TODO.md #65 follow-up).
-export interface CellProposed {
-  type: 'cell_proposed'
-  session_id: string
-  cell_id: string
-  proposer_user_id: string
-  proposer_display_name: string
-  source: string
-  created_at: string
-  element_id?: string
-}
-
-export interface ProposalWithdrawn {
-  type: 'proposal_withdrawn'
-  session_id: string
-  cell_id: string
-  proposer_user_id: string
-  element_id?: string
-}
-
-export interface ProposalAccepted {
-  type: 'proposal_accepted'
-  session_id: string
-  cell_id: string
-  source: string
-  accepted_from_user_id: string
-  accepted_by_user_id: string
-  element_id?: string
-}
-
-export interface ProposalRejected {
-  type: 'proposal_rejected'
-  session_id: string
-  cell_id: string
-  rejected_by_user_id: string
-  element_id?: string
-}
-
-// TODO.md #65/PROPOSAL_review_workflow.md decision #3: sent only to a
-// proposer whose still-pending proposal's base source just changed
-// because someone else's proposal for the same cell was accepted first.
-export interface ProposalConflict {
-  type: 'proposal_conflict'
-  session_id: string
-  cell_id: string
-  source: string
-  element_id?: string
 }
 
 // TODO.md #65-x: broadcast (peers-only) when a push_cell_bundle stages
@@ -790,12 +713,8 @@ export type ServerMessage =
   | CellStatus
   | CellOutput
   | CellSourceChanged
+  | TestSourceChanged
   | CellAttributionChanged
-  | CellProposed
-  | ProposalWithdrawn
-  | ProposalAccepted
-  | ProposalRejected
-  | ProposalConflict
   | CellBundleProposed
   | BundleWithdrawn
   | BundleAccepted

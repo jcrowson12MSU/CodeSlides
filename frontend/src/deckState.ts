@@ -46,28 +46,11 @@ export interface CellState {
   // this is only ever displayed, never computed with.
   lastEditedBy: string | null
   lastEditedAt: string | null
-  // TODO.md #65: pending proposals on a review_mode document, keyed by
-  // proposer user_id -- empty on a non-review-mode document, since
-  // nothing ever populates it there (mirrors CellInstance.proposals'
-  // own "emptiness is a reliable signal" property server-side).
-  // `conflict` (set by a proposal_conflict targeted at *this
-  // connection's own* pending proposal) carries the cell's new accepted
-  // source once someone else's proposal for the same cell got accepted
-  // first -- null until that happens, cleared again on withdraw/re-push.
-  proposals: Record<string, { displayName: string; source: string; createdAt: string }>
-  conflict: string | null
-  // TODO.md #65 follow-up: the same proposals/conflict concept as above,
-  // but for a `tests` element's own source rather than the cell's
-  // primary source -- keyed first by `element_id`, then by proposer
-  // user_id, since a cell can have zero, one, or several `tests`
-  // elements each with their own independent pending proposal(s).
-  elementProposals: Record<string, Record<string, { displayName: string; source: string; createdAt: string }>>
-  elementConflicts: Record<string, string>
-  // TODO.md #65-x: a pending *structural* bundle (rename, hide toggles,
-  // add/remove element, reorder elements, element config, add/remove
-  // primary editor, main/setup-cell flags) for this cell -- at most one
-  // at a time (a second push replaces it), unlike `proposals`'
-  // per-proposer keying. `null` when there's no pending bundle.
+  // TODO.md #65/#65-x/#65-xi: a pending bundle of staged changes (an
+  // edit to the primary source, an edit to a tests element's source,
+  // and/or structural changes) pushed for this cell on a review_mode
+  // document -- at most one bundle per cell at a time (a second push
+  // replaces it outright). `null` when there's no pending bundle.
   structuralBundle: { proposerUserId: string; displayName: string; actionSummaries: string[] } | null
 }
 
@@ -82,10 +65,6 @@ const EMPTY_CELL: CellState = {
   elementContent: {},
   lastEditedBy: null,
   lastEditedAt: null,
-  proposals: {},
-  conflict: null,
-  elementProposals: {},
-  elementConflicts: {},
   structuralBundle: null,
 }
 
@@ -94,7 +73,7 @@ export function reduceDeckState(messages: ServerMessage[]): DeckState {
 
   const cellFor = (cellId: string): CellState => {
     if (!state[cellId]) {
-      state[cellId] = { ...EMPTY_CELL, elementContent: {}, proposals: {}, elementProposals: {}, elementConflicts: {} }
+      state[cellId] = { ...EMPTY_CELL, elementContent: {} }
     }
     return state[cellId]
   }
@@ -128,93 +107,6 @@ export function reduceDeckState(messages: ServerMessage[]): DeckState {
         }
         break
       }
-      case 'cell_proposed': {
-        const cell = cellFor(message.cell_id)
-        const entry = {
-          displayName: message.proposer_display_name,
-          source: message.source,
-          createdAt: message.created_at,
-        }
-        if (message.element_id != null) {
-          const forElement = cell.elementProposals[message.element_id] ?? {}
-          state[message.cell_id] = {
-            ...cell,
-            elementProposals: {
-              ...cell.elementProposals,
-              [message.element_id]: { ...forElement, [message.proposer_user_id]: entry },
-            },
-          }
-        } else {
-          state[message.cell_id] = {
-            ...cell,
-            proposals: { ...cell.proposals, [message.proposer_user_id]: entry },
-          }
-        }
-        break
-      }
-      case 'proposal_withdrawn': {
-        const cell = cellFor(message.cell_id)
-        if (message.element_id != null) {
-          const forElement = { ...(cell.elementProposals[message.element_id] ?? {}) }
-          delete forElement[message.proposer_user_id]
-          state[message.cell_id] = {
-            ...cell,
-            elementProposals: { ...cell.elementProposals, [message.element_id]: forElement },
-          }
-        } else {
-          const proposals = { ...cell.proposals }
-          delete proposals[message.proposer_user_id]
-          state[message.cell_id] = { ...cell, proposals }
-        }
-        break
-      }
-      case 'proposal_accepted': {
-        const cell = cellFor(message.cell_id)
-        if (message.element_id != null) {
-          const forElement = { ...(cell.elementProposals[message.element_id] ?? {}) }
-          delete forElement[message.accepted_from_user_id]
-          const elementConflicts = { ...cell.elementConflicts }
-          delete elementConflicts[message.element_id]
-          state[message.cell_id] = {
-            ...cell,
-            elementProposals: { ...cell.elementProposals, [message.element_id]: forElement },
-            elementConflicts,
-          }
-        } else {
-          const proposals = { ...cell.proposals }
-          delete proposals[message.accepted_from_user_id]
-          state[message.cell_id] = { ...cell, proposals, conflict: null }
-        }
-        break
-      }
-      case 'proposal_rejected': {
-        const cell = cellFor(message.cell_id)
-        if (message.element_id != null) {
-          const forElement = { ...(cell.elementProposals[message.element_id] ?? {}) }
-          delete forElement[message.rejected_by_user_id]
-          state[message.cell_id] = {
-            ...cell,
-            elementProposals: { ...cell.elementProposals, [message.element_id]: forElement },
-          }
-        } else {
-          const proposals = { ...cell.proposals }
-          delete proposals[message.rejected_by_user_id]
-          state[message.cell_id] = { ...cell, proposals }
-        }
-        break
-      }
-      case 'proposal_conflict': {
-        const cell = cellFor(message.cell_id)
-        if (message.element_id != null) {
-          state[message.cell_id] = {
-            ...cell,
-            elementConflicts: { ...cell.elementConflicts, [message.element_id]: message.source },
-          }
-        } else {
-          state[message.cell_id] = { ...cell, conflict: message.source }
-        }
-        break
-      }
       case 'cell_bundle_proposed':
         state[message.cell_id] = {
           ...cellFor(message.cell_id),
@@ -227,13 +119,9 @@ export function reduceDeckState(messages: ServerMessage[]): DeckState {
         break
       case 'bundle_withdrawn':
       case 'bundle_rejected':
-        // TODO.md #65-x: only one bundle is ever pending per cell, so
-        // either message simply clears it -- no per-proposer bookkeeping
-        // needed the way `proposals`'s dict-keyed-by-user_id delete
-        // requires.
-        state[message.cell_id] = { ...cellFor(message.cell_id), structuralBundle: null }
-        break
       case 'bundle_accepted':
+        // TODO.md #65-x: only one bundle is ever pending per cell, so
+        // any of these three simply clears it.
         state[message.cell_id] = { ...cellFor(message.cell_id), structuralBundle: null }
         break
       default:
