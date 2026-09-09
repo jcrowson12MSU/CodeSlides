@@ -2620,15 +2620,54 @@ reshape the plan below and are called out explicitly where they apply:
       for the document id, no login, no accounts. Revisit only if a
       concrete future need for persistent per-student identity emerges.
 
-    Not done, left as explicit follow-on UX work (functionally safe
-    without it -- the server-side block is the actual security
-    boundary, per 46e-ii's own text): the frontend doesn't hide or
-    disable mutating controls (Save, Add cell, an editable cell's
-    editor) for a viewer, and doesn't roll back a viewer's own
-    just-typed-but-rejected keystrokes in their local editor view --
-    today a viewer sees a generic "viewers cannot make changes to this
-    document" error after acting, rather than never being offered the
-    control at all.
+    **Viewer UI polish -- since implemented** (functionally safe even
+    before this landed -- the server-side block was always the actual
+    security boundary, per 46e-ii's own text; this closes the UX gap on
+    top of it). Coarse approach confirmed with the user over threading a
+    viewer flag through every individual control: force every cell's
+    editor read-only and hide the top-level mutation entry points
+    entirely (`Cell.tsx`'s new `viewerMode` prop) -- the "Edit" toggle
+    (so `EditCellPanel`, with its own ~10 individual mutating controls,
+    never opens and needed no changes of its own), move-up/down/delete
+    (already conditional on `App.tsx` passing their callbacks at all;
+    simply omitted for a viewer), Save, Add cell, and Add slide/Edit
+    slide deck. Forwarded through `SlideShow.tsx` too (a new
+    `viewerMode` prop there, covering both the main cell's editor and
+    the title slide's separate `extraCodeAbove` setup-cell composition)
+    since Slides view -- an instructor "revealing and live-editing code
+    in front of a class," per VISION.md -- is exactly where a viewer
+    watching a presentation needs the same protection, not just Cells
+    view.
+
+    Deliberately does **not** touch slider/text-input elements
+    (`SetElementValue`) -- confirmed explicitly with the user: they want
+    a viewer to be able to move a slider or type into a text box, with
+    the result shown in *their own browser only*, never sent to the
+    shared Session or visible to any other connection. That's a
+    materially larger ask than UI-hiding -- it requires the cell's
+    Python code to actually execute client-side (nothing in this
+    codebase runs Python anywhere but server-side today), not just a
+    server-side per-connection value the way TODO.md #63 could in
+    principle be satisfied. Scoped as new TODO.md #64 rather than
+    building it here or silently disabling the controls as an
+    interim measure that doesn't match what was actually asked for.
+
+    Not done: rolling back a viewer's own just-typed-but-rejected
+    keystrokes in their local editor view is now moot for the coarse
+    controls this pass covers (the editor is read-only, so a viewer can
+    no longer type into it at all to trigger a rejection in the first
+    place) -- this was only ever a concern for the individually-disabled
+    approach that was explicitly not taken.
+
+    Verified end-to-end in a real two-browser Playwright session across
+    both Cells and Slides view: an editor connection sees every control
+    exactly as before (unaffected), a viewer connection sees none of the
+    hidden controls and has a read-only editor in both views, and the
+    slider stays fully interactive for the viewer as requested. Full
+    suite (605, unaffected -- no backend changes) and `ruff check src`
+    clean; frontend `tsc -b && vite build` and `oxlint` clean (same
+    pre-existing, unrelated `oxlint` warning as before, confirmed not
+    introduced by this change).
 
   - [x] **46f. Update ARCHITECTURE.md section 9** ("what's deliberately
     deferred") once a concrete design lands, and remove or revise the
@@ -4175,3 +4214,53 @@ reshape the plan below and are called out explicitly where they apply:
     5) and 46e's viewer role -- does a viewer even get to set a
     per-connection-local value at all, or is that itself still a
     "change" 46e-ii's allowlist should keep blocking?
+
+- [ ] **64. Client-side (in-browser) Python execution for fully local, never-server-touching slider/text-input exploration.**
+  Surfaced while scoping the "46e viewer UI polish" follow-on work
+  (TODO.md #46e's own "not done, left as explicit follow-on UX work"
+  note): the user explicitly wants a **viewer** to be able to move a
+  slider or type into a text input and see the resulting cell output
+  update in *their own browser only* -- never sent to the shared
+  Session, never visible to any other connection (editor or other
+  viewer), not even recorded server-side. This is a stronger
+  requirement than #63's "per-connection-local value" (which could in
+  principle still be satisfied server-side, e.g. a per-connection slot
+  in `Session`/`Kernel` state) -- "never touches the server" means the
+  cell's Python code must actually execute *in the browser*, not just
+  be isolated on the server per-connection.
+
+  Explicitly **not started, and not merely a UI task** -- confirmed
+  before scoping any implementation: nothing in this codebase executes
+  Python anywhere except server-side, via `Kernel.execute_cell`
+  (kernel.py). There is no in-browser Python interpreter, no Pyodide/
+  WASM runtime, no client-side execution path of any kind in
+  `frontend/src/`. Building this is a substantial new capability, not a
+  small addition to the viewer-role UI work -- real open questions to
+  resolve before implementation, not yet answered:
+  - What in-browser Python runtime to use (Pyodide is the most obvious
+    candidate -- a real WASM CPython build -- but it's a multi-MB
+    download, has its own startup-latency cost, and its own package/
+    import story that would need reconciling with this project's
+    `cs.*`/`turtle` modules, which are pure-Python today but written
+    assuming server-side execution, e.g. `codeslides.turtle`'s canvas
+    output path).
+  - How does a viewer's local re-run get the rest of the cell's
+    dependency graph's current values (`base`, or whatever upstream
+    cells the edited cell reads) without executing the *whole* deck's
+    graph client-side too, or re-fetching a snapshot of every upstream
+    value from the server first?
+  - Does this apply to every cell kind uniformly, or only cells with no
+    turtle/image/iframe viewer output (which would need their own
+    client-side rendering path to actually show anything, not just
+    computing a value)?
+  - Should an *editor* (not just a viewer) ever get this same "try it
+    locally without affecting anyone else" mode, or is it deliberately
+    viewer-only (a viewer, by definition, can never affect the shared
+    document anyway, so "local-only" is a completely safe default for
+    them in a way it wouldn't automatically be for an editor)?
+  - How does this interact with `SetPresence`/attribution (46d/46g) --
+    a purely local re-run has no reason to ever send a websocket message
+    at all, so does a viewer's local exploration show up in presence
+    (e.g. "Bob is exploring live_demo") at all, or is it invisible to
+    everyone else by design, matching "never touches the server"
+    literally?

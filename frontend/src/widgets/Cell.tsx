@@ -138,6 +138,26 @@ export interface CellProps {
    * with no way to expand it. Defaults to false for the flat "Cells"
    * view, which always shows the header. */
   hideHeader?: boolean
+  // TODO.md #46e: `?role=viewer` (App.tsx's `roleFromUrl`) -- a viewer's
+  // server-side allowlist (ws_handler.py's `VIEWER_ALLOWED_MESSAGE_TYPES`)
+  // already rejects every structural edit regardless of what the UI
+  // shows, so this is a UX improvement (never offer a control that will
+  // just fail with a generic error), not the actual security boundary.
+  // Coarse by design, confirmed with the user: forces the code editor
+  // read-only and hides the Edit toggle entirely (so `EditCellPanel`,
+  // with its own ~10 individual mutating controls, never opens and so
+  // needs no changes of its own) rather than threading a viewer flag
+  // through every individual control. Move-up/down/delete are already
+  // separately gated by whether `onMoveCellUp`/`onMoveCellDown`/
+  // `onDeleteCell` are passed at all (see their own props below) --
+  // App.tsx simply omits them for a viewer rather than needing a second
+  // mechanism here. Slider/text-input elements are deliberately NOT
+  // touched by this -- the user wants those to stay interactive for a
+  // viewer (locally, at least visually) even though they're currently
+  // still rejected server-side; see TODO.md #64 for the actual
+  // client-side-execution work that would make that interaction
+  // meaningful rather than a silently-no-op'd drag.
+  viewerMode?: boolean
   onRunCell: (source: string) => void
   onRunAll: (source: string) => void
   // TODO.md #46d-i: fired on this cell's primary editor gaining/losing
@@ -372,6 +392,7 @@ export function Cell({
   hideCode: hideCodeProp = false,
   extraCodeAbove,
   hideHeader = false,
+  viewerMode = false,
   onRunCell,
   onRunAll,
   onFocusChange,
@@ -841,7 +862,7 @@ export function Cell({
             source={meta.source}
             onRunCell={onRunCell}
             onRunAll={onRunAll}
-            readOnly={meta.instance === 'static'}
+            readOnly={meta.instance === 'static' || viewerMode}
             highlightedLines={highlightedLines}
             onToggleLineHighlight={toggleLineHighlight}
             lineOffset={lineOffset}
@@ -1106,7 +1127,7 @@ export function Cell({
             </span>
           )}
           {collapsed && <span className="cs-collapsed-preview">{firstLine(meta.source)}</span>}
-          {!collapsed && (
+          {!collapsed && !viewerMode && (
             <button
               type="button"
               className="cs-edit-cell-toggle"
