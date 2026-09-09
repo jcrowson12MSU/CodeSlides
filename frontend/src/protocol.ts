@@ -275,10 +275,44 @@ export interface SetElementConfig {
   config: Record<string, unknown>
 }
 
+// TODO.md #65: on a review_mode document, stage `source` as this
+// connection's proposed new content for `cell_id` -- does not re-run or
+// broadcast the way EditCell does, only stages a proposal for review.
+export interface PushCell {
+  type: 'push_cell'
+  session_id: string
+  cell_id: string
+  source: string
+}
+
+export interface WithdrawProposal {
+  type: 'withdraw_proposal'
+  session_id: string
+  cell_id: string
+}
+
+export interface AcceptProposal {
+  type: 'accept_proposal'
+  session_id: string
+  cell_id: string
+  proposer_user_id: string
+}
+
+export interface RejectProposal {
+  type: 'reject_proposal'
+  session_id: string
+  cell_id: string
+  proposer_user_id: string
+}
+
 export type ClientMessage =
   | Join
   | SetPresence
   | EditCell
+  | PushCell
+  | WithdrawProposal
+  | AcceptProposal
+  | RejectProposal
   | RunAll
   | SetElementValue
   | SetUiState
@@ -380,6 +414,57 @@ export interface SessionCloned {
 export interface SessionCreated {
   type: 'session_created'
   session_id: string
+  // TODO.md #65: whether this document uses the propose/review/accept
+  // workflow (PushCell/AcceptProposal/etc.) instead of always-live
+  // EditCell. Fixed for the document's whole lifetime, read once at
+  // connect time. Always false for a solo (non-collaborative)
+  // connection.
+  review_mode: boolean
+}
+
+// TODO.md #65: broadcast (peers-only) when a push_cell stages or
+// replaces a pending proposal.
+export interface CellProposed {
+  type: 'cell_proposed'
+  session_id: string
+  cell_id: string
+  proposer_user_id: string
+  proposer_display_name: string
+  source: string
+  created_at: string
+}
+
+export interface ProposalWithdrawn {
+  type: 'proposal_withdrawn'
+  session_id: string
+  cell_id: string
+  proposer_user_id: string
+}
+
+export interface ProposalAccepted {
+  type: 'proposal_accepted'
+  session_id: string
+  cell_id: string
+  source: string
+  accepted_from_user_id: string
+  accepted_by_user_id: string
+}
+
+export interface ProposalRejected {
+  type: 'proposal_rejected'
+  session_id: string
+  cell_id: string
+  rejected_by_user_id: string
+}
+
+// TODO.md #65/PROPOSAL_review_workflow.md decision #3: sent only to a
+// proposer whose still-pending proposal's base source just changed
+// because someone else's proposal for the same cell was accepted first.
+export interface ProposalConflict {
+  type: 'proposal_conflict'
+  session_id: string
+  cell_id: string
+  source: string
 }
 
 // TODO.md #46d-i: one connected peer's identity/presence, as bundled in
@@ -618,6 +703,11 @@ export type ServerMessage =
   | CellOutput
   | CellSourceChanged
   | CellAttributionChanged
+  | CellProposed
+  | ProposalWithdrawn
+  | ProposalAccepted
+  | ProposalRejected
+  | ProposalConflict
   | ElementOutput
   | GraphUpdated
   | SessionCloned

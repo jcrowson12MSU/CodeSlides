@@ -205,7 +205,7 @@ function App() {
   // separate, much larger client-side-execution work that would make
   // that interaction actually meaningful instead of a silent no-op.
   const isViewer = role === 'viewer'
-  const { sessionId, messages, send } = useCodeSlidesSocket(
+  const { sessionId, reviewMode, messages, send } = useCodeSlidesSocket(
     documentId
       ? `/ws?document=${encodeURIComponent(documentId)}${role === 'viewer' ? '&role=viewer' : ''}`
       : undefined,
@@ -216,13 +216,19 @@ function App() {
   // arrives -- null until then (and forever, for a solo connection,
   // which never sends Join in the first place per displayNamePrompt's
   // own gating below).
-  const [ownIdentity, setOwnIdentity] = useState<{ connectionId: string; color: string } | null>(
-    null,
-  )
+  const [ownIdentity, setOwnIdentity] = useState<{
+    connectionId: string
+    userId: string
+    color: string
+  } | null>(null)
   useEffect(() => {
     const lastJoinAck = [...messages].reverse().find((m) => m.type === 'join_ack')
     if (lastJoinAck && lastJoinAck.type === 'join_ack') {
-      setOwnIdentity({ connectionId: lastJoinAck.connection_id, color: lastJoinAck.color })
+      setOwnIdentity({
+        connectionId: lastJoinAck.connection_id,
+        userId: lastJoinAck.user_id,
+        color: lastJoinAck.color,
+      })
     }
   }, [messages])
   // TODO.md #46d-ii: the join-screen name prompt, shown only for a
@@ -608,6 +614,16 @@ function App() {
           if (cells[msg.cell_id]) {
             cells[msg.cell_id] = { ...cells[msg.cell_id], source: msg.source }
           }
+        } else if (msg.type === 'proposal_accepted') {
+          // TODO.md #65: same "every connection converges on the new
+          // source" reasoning as cell_source_changed above -- an
+          // accepted proposal becomes the document's actual current
+          // source for everyone, editor included.
+          if (!changed) cells = { ...cells }
+          changed = true
+          if (cells[msg.cell_id]) {
+            cells[msg.cell_id] = { ...cells[msg.cell_id], source: msg.source }
+          }
         } else if (msg.type === 'cell_removed') {
           if (!changed) cells = { ...cells }
           changed = true
@@ -690,6 +706,31 @@ function App() {
   function handleRunCell(cellId: string, source: string) {
     if (!sessionId) return
     send({ type: 'edit_cell', session_id: sessionId, cell_id: cellId, source })
+  }
+
+  // TODO.md #65: the review_mode analogue of handleRunCell above -- used
+  // instead of edit_cell whenever this document is in review mode
+  // (Cell.tsx picks between the two based on the reviewMode prop it's
+  // given). Does not touch the shared document at all until someone
+  // accepts it.
+  function handlePushCell(cellId: string, source: string) {
+    if (!sessionId) return
+    send({ type: 'push_cell', session_id: sessionId, cell_id: cellId, source })
+  }
+
+  function handleWithdrawProposal(cellId: string) {
+    if (!sessionId) return
+    send({ type: 'withdraw_proposal', session_id: sessionId, cell_id: cellId })
+  }
+
+  function handleAcceptProposal(cellId: string, proposerUserId: string) {
+    if (!sessionId) return
+    send({ type: 'accept_proposal', session_id: sessionId, cell_id: cellId, proposer_user_id: proposerUserId })
+  }
+
+  function handleRejectProposal(cellId: string, proposerUserId: string) {
+    if (!sessionId) return
+    send({ type: 'reject_proposal', session_id: sessionId, cell_id: cellId, proposer_user_id: proposerUserId })
   }
 
   function handleRunAll() {
@@ -1288,6 +1329,12 @@ function App() {
               onLayoutChange={(layout) => handleLayoutChange(cellId, layout)}
               editError={editErrors[cellId]}
               viewerMode={isViewer}
+              reviewMode={reviewMode}
+              ownUserId={ownIdentity?.userId ?? null}
+              onPushCell={(source) => handlePushCell(cellId, source)}
+              onWithdrawProposal={() => handleWithdrawProposal(cellId)}
+              onAcceptProposal={(proposerUserId) => handleAcceptProposal(cellId, proposerUserId)}
+              onRejectProposal={(proposerUserId) => handleRejectProposal(cellId, proposerUserId)}
               onDeleteCell={isViewer ? undefined : () => handleDeleteCell(cellId)}
               onMoveCellUp={isViewer ? undefined : () => handleReorderCells(cellId, -1)}
               onMoveCellDown={isViewer ? undefined : () => handleReorderCells(cellId, 1)}
@@ -1341,6 +1388,12 @@ function App() {
           onLayoutChange={handleLayoutChange}
           editErrors={editErrors}
           viewerMode={isViewer}
+          reviewMode={reviewMode}
+          ownUserId={ownIdentity?.userId ?? null}
+          onPushCell={handlePushCell}
+          onWithdrawProposal={handleWithdrawProposal}
+          onAcceptProposal={handleAcceptProposal}
+          onRejectProposal={handleRejectProposal}
         />
       )}
     </main>
