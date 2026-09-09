@@ -75,6 +75,15 @@ export interface CodeEditorProps {
   // contribute their own text as deck-wide symbols/imports, nor see
   // symbols named only inside some other cell's test scratch buffer.
   cellId?: string
+  // TODO.md #46d-i: fired true on focus, false on blur -- lets a caller
+  // send set_presence (via cellId above) so peers know which cell this
+  // person's cursor is currently in. Optional so every non-collaborative
+  // caller (the overwhelming majority) pays nothing for this -- no
+  // listener is even attached when omitted (see the extensions array
+  // below). Cursor *position* within the cell (46d-iv, the harder
+  // in-editor decoration work) is deliberately out of scope here --
+  // this is only ever "which cell has focus," not "where in it."
+  onFocusChange?: (focused: boolean) => void
 }
 
 // Ephemeral, presenter-driven line highlighting (not persisted, not
@@ -228,6 +237,7 @@ export function CodeEditor({
   lineOffset = 0,
   onLineCountChange,
   cellId,
+  onFocusChange,
 }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -237,6 +247,7 @@ export function CodeEditor({
   const onRunAllRef = useRef(onRunAll)
   const onToggleLineHighlightRef = useRef(onToggleLineHighlight)
   const onLineCountChangeRef = useRef(onLineCountChange)
+  const onFocusChangeRef = useRef(onFocusChange)
   // Read once by lineOffsetField.init() in the mount effect below (so a
   // cell that mounts with a non-zero offset -- the common case, any cell
   // after the first -- doesn't flash at 0 for a frame before the sync
@@ -246,6 +257,7 @@ export function CodeEditor({
   onRunAllRef.current = onRunAll
   onToggleLineHighlightRef.current = onToggleLineHighlight
   onLineCountChangeRef.current = onLineCountChange
+  onFocusChangeRef.current = onFocusChange
   lineOffsetRef.current = lineOffset
 
   useEffect(() => {
@@ -341,6 +353,23 @@ export function CodeEditor({
       dropCursor(),
       rectangularSelection(),
       crosshairCursor(),
+      // TODO.md #46d-i: only attached when a caller actually wants
+      // focus-tracking (App.tsx's collaborative mode) -- a solo editor
+      // pays nothing for this, not even an inert listener.
+      ...(onFocusChangeRef.current
+        ? [
+            EditorView.domEventHandlers({
+              focus: () => {
+                onFocusChangeRef.current?.(true)
+                return false
+              },
+              blur: () => {
+                onFocusChangeRef.current?.(false)
+                return false
+              },
+            }),
+          ]
+        : []),
       // Editing-only behavior: meaningless (and, for closeBrackets,
       // actively unwanted -- nothing should insert text) on a read-only
       // `instance="static"` cell.

@@ -2089,3 +2089,69 @@ body.cs-slides-locked {
   display: flex;
   gap: 0.5rem;
 }
+
+/* TODO.md #46d-ii: the join-screen gate shown only for a collaborative
+   (?document=<id>) connection before it's sent its own Join. Deliberately
+   minimal -- a name prompt, not a branded landing page -- since it's a
+   one-time, momentary step before the real app renders. */
+.cs-join-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+
+.cs-join-screen-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  width: 20rem;
+  max-width: calc(100vw - 2rem);
+  padding: 1.5rem;
+  border: 1px solid #ddd;
+  border-radius: 0.5rem;
+}
+
+.cs-join-screen-form h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.cs-join-screen-form p {
+  margin: 0;
+  color: #555;
+  font-size: 0.9rem;
+}
+
+.cs-join-screen-form input {
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 0.3rem;
+  font-size: 1rem;
+}
+
+.cs-join-screen-form button {
+  padding: 0.5rem 0.8rem;
+  border-radius: 0.3rem;
+}
+
+/* TODO.md #46d-iii: a small avatar row in the header's toolbar, next to
+   the help button -- who's currently connected to this shared document. */
+.cs-peer-list {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.cs-peer-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  color: white;
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1;
+}

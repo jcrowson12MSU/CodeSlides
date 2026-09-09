@@ -2371,12 +2371,23 @@ reshape the plan below and are called out explicitly where they apply:
       Full suite: 587 passed (586 pre-existing + 1 new), `ruff check
       src` clean.
 
-  - **46d. Presence UI.** Show which students/instructor are connected to
+  - [x] **46d. Presence UI.** Show which students/instructor are connected to
     a shared document and (ideally) a cursor/selection indicator per
     editor in the CodeMirror instance, similar to Google Docs' colored
     cursors.
 
-    - **46d-i. Add a presence protocol message pair**, since none exists
+    Implemented 46d-i/46d-ii/46d-iii in full, plus cell-level (not
+    character-position) focus tracking pulled forward from 46d-iv; full
+    cursor/selection *position* decoration remains deferred (see below).
+    Also built out the join-screen identity flow this required, which is
+    the bulk of 46g-i's own scope too (46d-ii's explicit "build one
+    identity concept, reuse for both" constraint) -- 46g-i itself is not
+    separately marked done since 46g-ii through 46g-vi (wiring
+    attribution into every mutating message, `last_edited_by` on
+    `CellInstance`, etc.) are still unimplemented, but the identity
+    foundation they'll build on now exists.
+
+    - [x] **46d-i. Add a presence protocol message pair**, since none exists
       today (confirmed: no message in `protocol.py`'s `ClientMessage`/
       `ServerMessage` unions carries cursor/focus/user info) -- e.g.
       `SetPresence` (client->server: `session_id, cell_id?,
@@ -2386,22 +2397,83 @@ reshape the plan below and are called out explicitly where they apply:
       sibling), and `PresenceUpdate` (server->client, broadcast via
       46a-ii: `connection_id/user_id, display_name, color, cell_id?,
       cursor_pos?`) fanned out to every other peer on the document.
-    - **46d-ii. Assign each connected peer a stable display identity +
+
+      Implemented as designed, plus a `Join`/`JoinAck` pair (46d-ii's
+      identity handshake) and `PresenceLeft` (broadcast on disconnect, so
+      a departed peer disappears from the list immediately rather than
+      waiting out the Session's much-longer keep-warm grace period from
+      46a-iii). Building this surfaced that the existing "every reply
+      goes to sender-and-peers alike" broadcast model (46a-ii) wasn't
+      sufficient: `JoinAck` must reach only the sender (a peer has no use
+      for another connection's own identity payload) and `PresenceUpdate`
+      about a new arrival must reach only peers (never echoed back to the
+      joiner, who already knows their own identity via `JoinAck`).
+      Added two small wrapper types in `ws_handler.py` -- `SenderOnly`
+      and `Broadcast` -- that `server.py`'s websocket loop now checks to
+      route each reply to exactly the right audience; every pre-#46d
+      message type is unaffected (no wrapper = sender-and-peers, as
+      before). Also documented a real, benign ordering case this exposed:
+      a connection can receive a `PresenceUpdate` about another peer's
+      join *before* its own `JoinAck`, if that peer joins while this
+      connection is still on the name prompt -- harmless, since
+      `JoinAck.existing_peers` is the authoritative catch-up regardless
+      of arrival order (see `PresenceUpdate`'s own docstring).
+    - [x] **46d-ii. Assign each connected peer a stable display identity +
       color** for the lifetime of the connection (ties directly into
       46g's attribution identity -- build one identity concept and reuse
       it for both presence coloring and edit attribution, don't invent
       two). A simple deterministic color-from-id hash is enough for v1;
       Google Docs-style user-choice avatar colors can come later.
-    - **46d-iii. Render a connected-peers list** (e.g. a small avatar/name
+
+      Implemented: a `Join` message (client -> server, `display_name`)
+      sent once by a connection right after `session_created`, only for
+      a collaborative (`?document=<id>`) connection -- confirmed a solo
+      `/ws` connection never sends this and is completely unaffected
+      (existing test suite plus a new dedicated regression test). The
+      server assigns a fresh `user_id` (`uuid.uuid4().hex`, same pattern
+      as `Session.session_id`) and a deterministic color
+      (`_color_for_connection`, hashing `connection_id` into a small
+      fixed palette) via `SessionRegistry.join`, stored on a new `Peer`
+      dataclass alongside the existing per-connection `send` callback.
+      Frontend: a `JoinScreen` component gates the whole app behind a
+      name prompt, shown *only* when `?document=` is present in the URL
+      -- confirmed via a real browser check that a plain `codeslides
+      edit`/`present` open never renders it and behaves byte-for-byte as
+      before this feature.
+    - [x] **46d-iii. Render a connected-peers list** (e.g. a small avatar/name
       row in `App.tsx`'s toolbar area) reacting to `PresenceUpdate`
       messages, independent of the harder per-cursor decoration work.
-    - **46d-iv. Render in-editor cursor/selection decorations per remote
+
+      Implemented: `presenceState.ts` (parallel to the existing
+      `deckState.ts`) reduces the message stream into a
+      `connection_id`-keyed peer map; a new `PeerList` widget renders one
+      colored avatar per connected peer in the header toolbar, next to
+      the help button. Verified end-to-end in a real two-browser-context
+      Playwright session: each side sees the other's avatar with the
+      correct color and initial, and a peer's avatar disappears
+      immediately when they disconnect (`PresenceLeft`).
+    - [x] **46d-iv. Render in-editor cursor/selection decorations per remote
       peer** in `CodeEditor.tsx` using CodeMirror 6's decoration API
       (`EditorView.decorations` / a `StateField` holding remote cursor
       positions) -- this is the hardest part of 46d and can ship after
       46d-iii; a text-only "Jane is editing this cell" banner (reusing
       46b-ii's indicator) is an acceptable intermediate step if
       real-time cursor rendering slips.
+
+      Partially implemented, deliberately scoped down after checking with
+      the user: added cell-level focus tracking (`CodeEditor.tsx`'s new
+      optional `onFocusChange` prop, wired through `Cell.tsx`, using
+      CodeMirror's `EditorView.domEventHandlers({focus, blur})` --
+      attached only when a caller actually provides the callback, so a
+      solo editor pays nothing for it) so `PeerList`'s avatar tooltips
+      show "Alice — editing live_demo", verified in a real browser.
+      Actual in-editor decorations at a specific character/cursor
+      *position* within a cell (the harder CodeMirror `StateField`/
+      `Decoration` work the sub-task's own text calls out as hardest)
+      remain unimplemented -- `SetPresence`/`PresenceUpdate` already
+      carry a `cursor_pos` field ready for this, but nothing renders it
+      yet. The text-only fallback this sub-task explicitly sanctions
+      ("Jane is editing this cell") is what shipped instead.
 
   - **46e. Access control for who can join a shared document.** At
     minimum a shareable session link; consider read-only "viewer" vs.

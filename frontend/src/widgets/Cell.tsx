@@ -140,6 +140,10 @@ export interface CellProps {
   hideHeader?: boolean
   onRunCell: (source: string) => void
   onRunAll: (source: string) => void
+  // TODO.md #46d-i: fired on this cell's primary editor gaining/losing
+  // focus -- optional so every non-collaborative caller pays nothing for
+  // this (see CodeEditorProps.onFocusChange's own docstring).
+  onFocusChange?: (focused: boolean) => void
   onSetElementValue: (elementId: string, value: unknown) => void
   onChangeNotesSource: (elementId: string, source: string) => void
   onChangeTestSource: (elementId: string, source: string) => void
@@ -365,6 +369,7 @@ export function Cell({
   hideHeader = false,
   onRunCell,
   onRunAll,
+  onFocusChange,
   onSetElementValue,
   onChangeNotesSource,
   onChangeTestSource,
@@ -835,6 +840,7 @@ export function Cell({
             lineOffset={lineOffset}
             onLineCountChange={onLineCountChange}
             cellId={cellId}
+            onFocusChange={onFocusChange}
           />
           {outputBelowEditor}
         </div>

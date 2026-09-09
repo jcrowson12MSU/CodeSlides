@@ -529,3 +529,136 @@ def test_websocket_shared_document_discarded_after_grace_period_expires():
             }
             # a fresh Session was created -- the old edit is gone
             assert outputs["live_demo"] == 15
+
+
+def test_websocket_join_assigns_identity_and_notifies_existing_peer():
+    """TODO.md #46d-i/#46d-ii: joining a shared document assigns a fresh
+    user_id + color for the connection's identity, acknowledges only the
+    joiner (JoinAck, sender-only -- a peer must never see it), and
+    broadcasts a PresenceUpdate about the new arrival to every already-
+    connected peer (never back to the joiner -- they already know their
+    own identity via JoinAck).
+
+    Bob's own join_ack and the presence_update he receives about Alice
+    (broadcast the moment she joined, before he sent his own Join) can
+    arrive in either order -- benign per PresenceUpdate's own docstring
+    -- so this collects his first two messages and checks them by type
+    rather than assuming one specific order."""
+    client = TestClient(create_app(_build_deck()))
+
+    with (
+        client.websocket_connect("/ws?document=class-1") as ws_a,
+        client.websocket_connect("/ws?document=class-1") as ws_b,
+    ):
+        ws_a.receive_json()  # session_created
+        ws_b.receive_json()  # session_created
+
+        ws_a.send_json({"type": "join", "session_id": "class-1", "display_name": "Alice"})
+        join_ack_a = ws_a.receive_json()
+        assert join_ack_a["type"] == "join_ack"
+        assert join_ack_a["connection_id"]
+        assert join_ack_a["user_id"]
+        assert join_ack_a["color"]
+        assert join_ack_a["existing_peers"] == []
+
+        ws_b.send_json({"type": "join", "session_id": "class-1", "display_name": "Bob"})
+        first, second = ws_b.receive_json(), ws_b.receive_json()
+        by_type = {m["type"]: m for m in (first, second)}
+        assert set(by_type) == {"presence_update", "join_ack"}
+        assert by_type["presence_update"]["display_name"] == "Alice"
+        bob_join_ack = by_type["join_ack"]
+        assert bob_join_ack["existing_peers"] == [
+            {
+                "connection_id": by_type["presence_update"]["connection_id"],
+                "user_id": by_type["presence_update"]["user_id"],
+                "display_name": "Alice",
+                "color": by_type["presence_update"]["color"],
+                "cell_id": None,
+                "cursor_pos": None,
+            }
+        ]
+
+        # Alice, meanwhile, must receive exactly one presence_update
+        # about Bob -- never Bob's own join_ack.
+        presence_to_alice = ws_a.receive_json()
+        assert presence_to_alice["type"] == "presence_update"
+        assert presence_to_alice["display_name"] == "Bob"
+        assert presence_to_alice["connection_id"] == bob_join_ack["connection_id"]
+
+
+def test_websocket_set_presence_broadcasts_cursor_position_to_peers_only():
+    """TODO.md #46d-i: moving a joined peer's cursor to a cell broadcasts
+    a PresenceUpdate carrying that cell_id/cursor_pos to every other
+    peer, never back to the mover."""
+    client = TestClient(create_app(_build_deck()))
+
+    with (
+        client.websocket_connect("/ws?document=class-2") as ws_a,
+        client.websocket_connect("/ws?document=class-2") as ws_b,
+    ):
+        ws_a.receive_json()
+        ws_b.receive_json()
+        ws_a.send_json({"type": "join", "session_id": "class-2", "display_name": "Alice"})
+        alice_join_ack = ws_a.receive_json()
+        ws_b.send_json({"type": "join", "session_id": "class-2", "display_name": "Bob"})
+        ws_b.receive_json()
+        ws_b.receive_json()
+        ws_a.receive_json()  # presence_update about Bob joining
+
+        ws_a.send_json(
+            {
+                "type": "set_presence",
+                "session_id": "class-2",
+                "cell_id": "live_demo",
+                "cursor_pos": 12,
+            }
+        )
+        presence_to_bob = ws_b.receive_json()
+        assert presence_to_bob["type"] == "presence_update"
+        assert presence_to_bob["connection_id"] == alice_join_ack["connection_id"]
+        assert presence_to_bob["cell_id"] == "live_demo"
+        assert presence_to_bob["cursor_pos"] == 12
+
+
+def test_websocket_disconnect_broadcasts_presence_left_to_remaining_peers():
+    """TODO.md #46d-i: a joined peer disconnecting must tell every
+    remaining peer immediately (presence_left), rather than leaving them
+    showing a peer who's no longer there until the Session's much-longer
+    keep-warm grace period (TODO.md #46a-iii) eventually expires."""
+    client = TestClient(create_app(_build_deck()))
+
+    with client.websocket_connect("/ws?document=class-3") as ws_a:
+        ws_a.receive_json()
+        ws_a.send_json({"type": "join", "session_id": "class-3", "display_name": "Alice"})
+        alice_join_ack = ws_a.receive_json()
+
+        with client.websocket_connect("/ws?document=class-3") as ws_b:
+            ws_b.receive_json()
+            ws_b.send_json({"type": "join", "session_id": "class-3", "display_name": "Bob"})
+            bob_join_ack = ws_b.receive_json()
+            ws_a.receive_json()  # presence_update about Bob joining
+        # ws_b's `with` block has now exited -- Bob's connection is closed
+
+        presence_left = ws_a.receive_json()
+        assert presence_left["type"] == "presence_left"
+        assert presence_left["connection_id"] == bob_join_ack["connection_id"]
+        # Bob's connection_id, not Alice's own -- confirms this is
+        # specifically about the peer who left, not a generic signal.
+        assert presence_left["connection_id"] != alice_join_ack["connection_id"]
+
+
+def test_websocket_solo_connection_never_sends_or_receives_presence():
+    """TODO.md #46d-ii: a solo (non-collaborative) /ws connection has no
+    join-screen and never sends Join -- confirms nothing about the
+    presence machinery leaks into or changes behavior for the existing,
+    non-collaborative connection path."""
+    client = TestClient(create_app(_build_deck()))
+
+    with client.websocket_connect("/ws") as ws:
+        hello = ws.receive_json()
+        session_id = hello["session_id"]
+        ws.send_json({"type": "run_all", "session_id": session_id})
+        received = [ws.receive_json() for _ in range(4)]
+        # exactly the pre-#46d message set -- no join_ack/presence_update
+        # ever appears for a solo connection that never sent Join.
+        assert {m["type"] for m in received} == {"cell_status", "cell_output"}

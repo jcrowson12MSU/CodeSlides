@@ -10,6 +10,7 @@ any transport.
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 
 from codeslides.kernel import ExecutionResult, Kernel
@@ -39,8 +40,12 @@ from codeslides.protocol import (
     ErrorMessage,
     HideCodeSet,
     HideDefSet,
+    Join,
+    JoinAck,
     MainCellSet,
     NavigateSlide,
+    PeerInfo,
+    PresenceUpdate,
     PrimaryEditorAdded,
     PrimaryEditorRemoved,
     RemoveCell,
@@ -60,6 +65,7 @@ from codeslides.protocol import (
     SetHideCode,
     SetHideDef,
     SetMainCell,
+    SetPresence,
     SetSetupCell,
     SetSlideOrder,
     SetTestSource,
@@ -85,6 +91,83 @@ from codeslides.session import Session
 # browser tab."
 ConnectionId = str
 
+# TODO.md #46d-ii: a small, deliberately low-effort deterministic
+# palette -- picked by hashing connection_id, not user choice (that's
+# explicitly left for later, per 46d-ii's own note). Distinct enough
+# hues to tell a handful of concurrent classroom peers apart at a
+# glance; doesn't need to be exhaustive or accessibility-audited for a
+# v1 presence indicator.
+_PEER_COLORS = (
+    "#e6194b",
+    "#3cb44b",
+    "#4363d8",
+    "#f58231",
+    "#911eb4",
+    "#46f0f0",
+    "#f032e6",
+    "#bcf60c",
+)
+
+
+def _color_for_connection(connection_id: ConnectionId) -> str:
+    return _PEER_COLORS[hash(connection_id) % len(_PEER_COLORS)]
+
+
+@dataclass
+class Peer:
+    """One live websocket connection attached to a Session -- identity
+    (TODO.md #46d-ii/#46g-i) plus live presence (#46d-i), alongside the
+    transport-level `send` callback #46a-ii's broadcast already needed.
+    `user_id`/`display_name` are unset (`None`) until this connection's
+    `Join` message arrives; a solo (non-collaborative) `/ws` connection
+    never sends one, so they stay `None` for its whole lifetime -- there
+    being no other peer to identify to, that's correct, not incomplete."""
+
+    # `Callable[[ServerMessage], Awaitable[None]]` in practice
+    # (server.py registers a `websocket.send_json`-wrapping closure
+    # here), kept untyped/Any so this module -- per its own module
+    # docstring -- stays free of any FastAPI/websockets dependency and
+    # fully unit-testable without a running transport.
+    send: object
+    user_id: str | None = None
+    display_name: str | None = None
+    color: str | None = None
+    cell_id: str | None = None
+    cursor_pos: int | None = None
+
+
+@dataclass
+class Broadcast:
+    """Wraps a `ServerMessage` that must reach every *other* connection on
+    the same document but never the sender -- `Join`'s `PresenceUpdate`
+    about the new arrival is the first message that needs this (the
+    sender gets its own identity via `JoinAck` instead, not a
+    `PresenceUpdate` about itself). Every other message type's replies
+    already go to sender-and-peers identically (harmless redundancy, per
+    TODO.md #46b-i's `CellSourceChanged` precedent) and don't need this
+    wrapper -- `handle_message` only ever returns one for `Join`/
+    `SetPresence`. Still a plain dataclass with no transport dependency,
+    consistent with this module's own "no FastAPI/websockets" docstring
+    -- `server.py`'s loop is what actually interprets it, unwrapping and
+    routing to `registry.peers(...)` instead of the sender."""
+
+    message: object
+
+
+@dataclass
+class SenderOnly:
+    """The mirror image of `Broadcast`: wraps a `ServerMessage` that must
+    reach only the connection that sent the triggering message, never any
+    peer -- `Join`'s own `JoinAck` (this connection's freshly-assigned
+    identity and the current peer list) is the only message that needs
+    this. Every other reply type defaults to sender-and-peers (no
+    wrapper needed) or peers-only (`Broadcast`); a peer has no use for,
+    and shouldn't see, another connection's own `JoinAck` payload, which
+    is why this exists rather than just letting `JoinAck` fall through
+    to the sender-and-peers default."""
+
+    message: object
+
 
 @dataclass
 class SessionRegistry:
@@ -96,19 +179,13 @@ class SessionRegistry:
     #46a) attaches a connection to an existing shared Session if one is
     already registered under that id, or creates one otherwise. Either
     way, `sessions` alone still fully determines "which Sessions exist";
-    `connections` is purely bookkeeping for `broadcast` and never itself
-    holds Session state.
+    `connections` is purely bookkeeping for `broadcast`/presence and
+    never itself holds Session state.
     """
 
     kernel: Kernel
     sessions: dict[str, Session] = field(default_factory=dict)
-    # session_id -> {connection_id -> a transport-level send callback}.
-    # The callback is `Callable[[ServerMessage], Awaitable[None]]` in
-    # practice (server.py registers `websocket.send_json`-wrapping
-    # closures here), but kept untyped/Any here so this module -- per its
-    # own module docstring -- stays free of any FastAPI/websockets
-    # dependency and fully unit-testable without a running transport.
-    connections: dict[str, dict[ConnectionId, object]] = field(default_factory=dict)
+    connections: dict[str, dict[ConnectionId, Peer]] = field(default_factory=dict)
 
     def create(self) -> Session:
         session = Session(deck=self.kernel.deck)
@@ -147,7 +224,7 @@ class SessionRegistry:
         return session
 
     def add_connection(self, session_id: str, connection_id: ConnectionId, send: object) -> None:
-        self.connections.setdefault(session_id, {})[connection_id] = send
+        self.connections.setdefault(session_id, {})[connection_id] = Peer(send=send)
 
     def remove_connection(self, session_id: str, connection_id: ConnectionId) -> bool:
         """Drop `connection_id` from `session_id`'s fan-out set. Returns
@@ -165,11 +242,45 @@ class SessionRegistry:
             return True
         return False
 
-    def peers(self, session_id: str, *, exclude: ConnectionId | None = None) -> list[object]:
-        """The send-callbacks for every connection on `session_id` other
-        than `exclude` -- what `broadcast` fans a reply out to."""
+    def get_peer(self, session_id: str, connection_id: ConnectionId) -> Peer | None:
+        return self.connections.get(session_id, {}).get(connection_id)
+
+    def join(self, session_id: str, connection_id: ConnectionId, display_name: str) -> Peer | None:
+        """TODO.md #46d-ii/#46g-i: assign `connection_id` its identity for
+        the life of this connection -- a fresh `user_id` and a
+        deterministic color, alongside the `display_name` the browser's
+        join-screen prompt collected. Returns `None` if `connection_id`
+        isn't a live connection on `session_id` (shouldn't happen in
+        practice -- `server.py` only ever calls this for a connection it
+        just itself registered -- but mirrors every other registry
+        lookup's "unknown id" handling rather than assuming)."""
+        peer = self.get_peer(session_id, connection_id)
+        if peer is None:
+            return None
+        peer.user_id = uuid.uuid4().hex
+        peer.display_name = display_name
+        peer.color = _color_for_connection(connection_id)
+        return peer
+
+    def set_presence(
+        self, session_id: str, connection_id: ConnectionId, cell_id: str | None, cursor_pos: int | None
+    ) -> Peer | None:
+        """TODO.md #46d-i: record where `connection_id`'s cursor currently
+        is, for `PresenceUpdate` broadcast and (once #46d-iv lands)
+        in-editor cursor decorations. Returns `None` for the same
+        "not a live connection" reason `join` does."""
+        peer = self.get_peer(session_id, connection_id)
+        if peer is None:
+            return None
+        peer.cell_id = cell_id
+        peer.cursor_pos = cursor_pos
+        return peer
+
+    def peers(self, session_id: str, *, exclude: ConnectionId | None = None) -> list[Peer]:
+        """Every `Peer` on `session_id` other than `exclude` -- what
+        `broadcast` fans a reply out to (via each `Peer.send`)."""
         peers = self.connections.get(session_id, {})
-        return [send for connection_id, send in peers.items() if connection_id != exclude]
+        return [peer for connection_id, peer in peers.items() if connection_id != exclude]
 
     def discard_session(self, session_id: str) -> None:
         """Tear down a Session once its keep-warm grace period (TODO.md
@@ -311,11 +422,101 @@ def _element_output_messages(session: Session, results: dict[str, ExecutionResul
     return messages
 
 
-def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[ServerMessage]:
+def handle_message(
+    registry: SessionRegistry, message: ClientMessage, connection_id: str | None = None
+) -> list[ServerMessage]:
     """Dispatch one client message against `registry`'s Kernel/Sessions and
     return the server messages it produces. Unknown session/cell/element
     ids produce a single ErrorMessage rather than raising -- a malformed
-    or stale client message must never crash the connection."""
+    or stale client message must never crash the connection.
+
+    `connection_id` is optional and unused by every message type except
+    `Join`/`SetPresence` (TODO.md #46d), which -- unlike every other
+    message here -- concern *this specific connection's* identity/
+    presence on a shared Session, not the Session's own state; every
+    other handler only ever needed `message.session_id`. Kept optional
+    (default `None`) rather than a new required positional/keyword
+    argument so the ~160 existing call sites across `test_ws_handler.py`
+    (none of which exercise Join/SetPresence) don't all need updating for
+    an argument they'd never use -- `Join`/`SetPresence` themselves
+    return an `ErrorMessage` if `connection_id` is omitted, which
+    shouldn't happen in practice since `server.py` always passes its own
+    connection's id for every call it makes."""
+    if isinstance(message, Join):
+        if connection_id is None:
+            return [ErrorMessage(message="join requires a connection_id", session_id=message.session_id)]
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        existing_peers = [
+            PeerInfo(
+                connection_id=other_connection_id,
+                user_id=other_peer.user_id,
+                display_name=other_peer.display_name,
+                color=other_peer.color,
+                cell_id=other_peer.cell_id,
+                cursor_pos=other_peer.cursor_pos,
+            )
+            for other_connection_id, other_peer in registry.connections.get(message.session_id, {}).items()
+            if other_connection_id != connection_id and other_peer.user_id is not None
+        ]
+        peer = registry.join(message.session_id, connection_id, message.display_name)
+        if peer is None:
+            return [ErrorMessage(message="unknown connection", session_id=message.session_id)]
+        return [
+            SenderOnly(
+                JoinAck(
+                    session_id=message.session_id,
+                    connection_id=connection_id,
+                    user_id=peer.user_id,
+                    color=peer.color,
+                    existing_peers=existing_peers,
+                )
+            ),
+            Broadcast(
+                PresenceUpdate(
+                    session_id=message.session_id,
+                    connection_id=connection_id,
+                    user_id=peer.user_id,
+                    display_name=peer.display_name,
+                    color=peer.color,
+                    cell_id=peer.cell_id,
+                    cursor_pos=peer.cursor_pos,
+                )
+            ),
+        ]
+
+    if isinstance(message, SetPresence):
+        if connection_id is None:
+            return [
+                ErrorMessage(message="set_presence requires a connection_id", session_id=message.session_id)
+            ]
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        peer = registry.set_presence(message.session_id, connection_id, message.cell_id, message.cursor_pos)
+        if peer is None or peer.user_id is None:
+            # Either an unknown connection, or a connection that never
+            # sent Join (e.g. a solo /ws connection with no identity) --
+            # presence without an identity to attach it to isn't
+            # meaningful, so this is a silent no-op rather than an error:
+            # a solo session's CodeEditor.tsx has no reason to ever send
+            # set_presence, but nothing stops it from existing here.
+            return []
+        return [
+            Broadcast(
+                PresenceUpdate(
+                    session_id=message.session_id,
+                    connection_id=connection_id,
+                    user_id=peer.user_id,
+                    display_name=peer.display_name,
+                    color=peer.color,
+                    cell_id=peer.cell_id,
+                    cursor_pos=peer.cursor_pos,
+                )
+            )
+        ]
+
     if isinstance(message, RunAll):
         session = registry.get(message.session_id)
         if session is None:

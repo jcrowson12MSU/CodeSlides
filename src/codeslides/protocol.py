@@ -22,6 +22,41 @@ from typing import Any, ClassVar
 
 
 @dataclass
+class Join:
+    """TODO.md #46d-ii/#46g-i: a connection's one-time identity handshake
+    on a shared document -- sent once, right after `session_created`,
+    only by connections that opened `/ws?document=<id>` (a solo `/ws`
+    connection has no other peer to be identified to, so it never sends
+    this). `display_name` is whatever the browser's join-screen prompt
+    collected; the server assigns a fresh `user_id` and a deterministic
+    color for the life of this connection (`JoinAck`, below) and
+    broadcasts `PresenceUpdate` to every existing peer so they learn
+    about the new arrival. Reusing this same identity for edit
+    attribution (46g-ii) rather than inventing a second identity concept
+    is 46d-ii's explicit design constraint."""
+
+    type: ClassVar[str] = "join"
+    session_id: str
+    display_name: str
+
+
+@dataclass
+class SetPresence:
+    """TODO.md #46d-i: this connection's cursor moved to `cell_id` (or
+    left every cell, `cell_id=None`, e.g. blurring the editor). Broadcast
+    to every other peer on the document as `PresenceUpdate` so their
+    peer-list UI and (once 46d-iv lands) in-editor cursor decorations
+    reflect it. `cursor_pos` is the character offset within the cell's
+    source the browser's CodeMirror selection reports; optional since a
+    v1 "which cell has focus" indicator doesn't require it."""
+
+    type: ClassVar[str] = "set_presence"
+    session_id: str
+    cell_id: str | None = None
+    cursor_pos: int | None = None
+
+
+@dataclass
 class EditCell:
     """Author/instructor changed a cell's source. Scoped to `session_id`
     only -- for `instance="editable"` cells this becomes a per-Session
@@ -794,6 +829,80 @@ class SessionCreated:
 
 
 @dataclass
+class PeerInfo:
+    """One connected peer's identity/presence, as included in `JoinAck`'s
+    `existing_peers` list -- the same fields `PresenceUpdate` broadcasts
+    per-peer as they change, bundled here so a newly-joining connection
+    learns about everyone already present in one message instead of
+    replaying every prior `PresenceUpdate` there ever was."""
+
+    connection_id: str
+    user_id: str
+    display_name: str
+    color: str
+    cell_id: str | None = None
+    cursor_pos: int | None = None
+
+
+@dataclass
+class JoinAck:
+    """Reply to this connection's own `Join`: the identity
+    (`user_id`/`color`) the server assigned, plus every already-connected
+    peer's current identity/presence (`existing_peers`) so a newly-joined
+    browser's peer-list UI isn't empty until someone else's presence
+    happens to change. Sent only to the joining connection, never
+    broadcast -- other peers instead receive a `PresenceUpdate` for the
+    new arrival (TODO.md #46d-i)."""
+
+    type: ClassVar[str] = "join_ack"
+    session_id: str
+    connection_id: str
+    user_id: str
+    color: str
+    existing_peers: list[PeerInfo]
+
+
+@dataclass
+class PresenceUpdate:
+    """Broadcast (TODO.md #46a-ii) to every *other* connection on a
+    shared document whenever a peer joins or moves its cursor
+    (`SetPresence`) -- never sent back to the peer it's about. Carries
+    that peer's full current identity/presence, not just the delta, so a
+    receiving client can always replace its whole peer-list entry for
+    `connection_id` rather than needing to merge partial updates.
+
+    Can legitimately arrive at a connection *before* that connection's own
+    `JoinAck`, if another peer joins while this one is still connected but
+    hasn't sent its own `Join` yet (e.g. still on the name-prompt
+    screen) -- benign, since `JoinAck`'s own `existing_peers` list is the
+    authoritative catch-up regardless of arrival order; a receiving
+    client's peer-list state just needs to be a plain
+    `connection_id`-keyed map that doesn't care what order entries
+    arrive in, not a fresh screen gated on `JoinAck` landing first."""
+
+    type: ClassVar[str] = "presence_update"
+    session_id: str
+    connection_id: str
+    user_id: str
+    display_name: str
+    color: str
+    cell_id: str | None = None
+    cursor_pos: int | None = None
+
+
+@dataclass
+class PresenceLeft:
+    """Broadcast when a peer disconnects from a shared document, so
+    every other connection's peer-list UI drops them immediately rather
+    than showing a peer who's no longer there until the keep-warm grace
+    period (TODO.md #46a-iii) eventually expires the whole Session."""
+
+    type: ClassVar[str] = "presence_left"
+    session_id: str
+    connection_id: str
+
+
+@dataclass
 class ErrorMessage:
     """A client message could not be handled (unknown session/cell id,
     malformed payload, etc.) -- distinct from a cell's own execution error
@@ -806,7 +915,9 @@ class ErrorMessage:
 
 
 ClientMessage = (
-    EditCell
+    Join
+    | SetPresence
+    | EditCell
     | RunAll
     | SetElementValue
     | SetUiState
@@ -842,6 +953,9 @@ ServerMessage = (
     | GraphUpdated
     | SessionCloned
     | SessionCreated
+    | JoinAck
+    | PresenceUpdate
+    | PresenceLeft
     | DeckSaved
     | CellAdded
     | SlideAdded
@@ -866,6 +980,8 @@ ServerMessage = (
 _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
     cls.type: cls
     for cls in (
+        Join,
+        SetPresence,
         EditCell,
         RunAll,
         SetElementValue,

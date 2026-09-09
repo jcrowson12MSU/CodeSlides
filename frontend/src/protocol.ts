@@ -72,6 +72,25 @@ export interface CellLayout {
 
 // -- Client -> server messages ----------------------------------------------
 
+// TODO.md #46d-ii/#46g-i: sent once, right after session_created, only by
+// a connection that opened `/ws?document=<id>` -- a solo connection has
+// no join-screen and never sends this.
+export interface Join {
+  type: 'join'
+  session_id: string
+  display_name: string
+}
+
+// TODO.md #46d-i: this connection's cursor moved to cell_id (or left
+// every cell, cell_id undefined). Ignored server-side for a connection
+// that never sent Join (no identity to attach presence to).
+export interface SetPresence {
+  type: 'set_presence'
+  session_id: string
+  cell_id?: string | null
+  cursor_pos?: number | null
+}
+
 export interface EditCell {
   type: 'edit_cell'
   session_id: string
@@ -257,6 +276,8 @@ export interface SetElementConfig {
 }
 
 export type ClientMessage =
+  | Join
+  | SetPresence
   | EditCell
   | RunAll
   | SetElementValue
@@ -347,6 +368,55 @@ export interface SessionCloned {
 export interface SessionCreated {
   type: 'session_created'
   session_id: string
+}
+
+// TODO.md #46d-i: one connected peer's identity/presence, as bundled in
+// JoinAck.existing_peers.
+export interface PeerInfo {
+  connection_id: string
+  user_id: string
+  display_name: string
+  color: string
+  cell_id: string | null
+  cursor_pos: number | null
+}
+
+// Reply to this connection's own Join: the identity the server assigned,
+// plus every already-connected peer's current identity/presence. Sent
+// only to the joining connection, never to any peer.
+export interface JoinAck {
+  type: 'join_ack'
+  session_id: string
+  connection_id: string
+  user_id: string
+  color: string
+  existing_peers: PeerInfo[]
+}
+
+// Broadcast to every *other* connection whenever a peer joins or moves
+// its cursor -- never sent back to the peer it's about. Can legitimately
+// arrive before this connection's own JoinAck (see the Python
+// protocol.py docstring for why) -- a receiving client's peer-list state
+// should be a plain connection_id-keyed map, not gated on JoinAck
+// landing first.
+export interface PresenceUpdate {
+  type: 'presence_update'
+  session_id: string
+  connection_id: string
+  user_id: string
+  display_name: string
+  color: string
+  cell_id: string | null
+  cursor_pos: number | null
+}
+
+// Broadcast when a peer disconnects, so peer-list UI drops them
+// immediately rather than waiting out the Session's much longer
+// keep-warm grace period (TODO.md #46a-iii).
+export interface PresenceLeft {
+  type: 'presence_left'
+  session_id: string
+  connection_id: string
 }
 
 export interface DeckSaved {
@@ -539,6 +609,9 @@ export type ServerMessage =
   | GraphUpdated
   | SessionCloned
   | SessionCreated
+  | JoinAck
+  | PresenceUpdate
+  | PresenceLeft
   | DeckSaved
   | CellAdded
   | SlideAdded

@@ -17,9 +17,15 @@ from watchfiles import Change, awatch
 
 from codeslides.deck import Deck
 from codeslides.kernel import Kernel
-from codeslides.protocol import ErrorMessage, SessionCreated, decode_client_message, encode
+from codeslides.protocol import (
+    ErrorMessage,
+    PresenceLeft,
+    SessionCreated,
+    decode_client_message,
+    encode,
+)
 from codeslides.serialization import display_source
-from codeslides.ws_handler import SessionRegistry, handle_message
+from codeslides.ws_handler import Broadcast, SenderOnly, SessionRegistry, handle_message
 
 FRONTEND_DIST = Path(__file__).parent / "static"
 
@@ -146,7 +152,10 @@ def create_app(
         connection sharing an id shares that Session's namespace and
         `source_overrides`, and every reply is fanned out to all of them
         (`registry.peers`/`broadcast`, TODO.md #46a-ii), not just the
-        connection whose message triggered it."""
+        connection whose message triggered it -- except a
+        `ws_handler.Broadcast`-wrapped reply (TODO.md #46d's `Join`/
+        `SetPresence` handling), which goes to peers only, never back to
+        the sender."""
         await websocket.accept()
         registry: SessionRegistry = api.state.registry
         session = registry.create_or_join(document)
@@ -165,17 +174,53 @@ def create_app(
                 except ValueError as exc:
                     await send(ErrorMessage(message=str(exc)))
                     continue
-                replies = handle_message(registry, message)
+                replies = handle_message(registry, message, connection_id)
+                # Every reply routes to exactly one audience (TODO.md
+                # #46d introduced the first two message types needing
+                # anything other than the third, original, default):
+                # `SenderOnly` -> only the connection that sent the
+                #   triggering message (Join's own JoinAck: a peer has no
+                #   use for, and shouldn't see, another connection's own
+                #   freshly-assigned identity payload).
+                # `Broadcast` -> every *other* connection, never the
+                #   sender (Join's PresenceUpdate about the new arrival --
+                #   broadcasting a peer's own join event back to them is
+                #   meaningless, they already know their own identity via
+                #   JoinAck).
+                # unwrapped -> sender AND every peer alike (every
+                #   pre-#46d message type: CellStatus/CellOutput/
+                #   CellSourceChanged/etc. -- everyone on a shared
+                #   document needs to see the same resulting state).
                 for reply in replies:
-                    await send(reply)
-                if replies:
-                    for peer_send in registry.peers(session.session_id, exclude=connection_id):
-                        for reply in replies:
-                            await peer_send(reply)
+                    if isinstance(reply, Broadcast):
+                        continue
+                    await send(reply.message if isinstance(reply, SenderOnly) else reply)
+                peer_replies = [r.message for r in replies if isinstance(r, Broadcast)] + [
+                    r for r in replies if not isinstance(r, (Broadcast, SenderOnly))
+                ]
+                if peer_replies:
+                    for peer in registry.peers(session.session_id, exclude=connection_id):
+                        for reply in peer_replies:
+                            await peer.send(reply)
         except WebSocketDisconnect:
             pass
         finally:
+            departing_peer = registry.get_peer(session.session_id, connection_id)
+            had_identity = departing_peer is not None and departing_peer.user_id is not None
             was_last = registry.remove_connection(session.session_id, connection_id)
+            if had_identity:
+                # TODO.md #46d-i: tell every remaining peer this
+                # connection is gone so their peer-list UI drops it
+                # immediately, rather than waiting out the keep-warm
+                # grace period below (which is about the shared *Session*
+                # surviving a reload, not about presence -- the two are
+                # independent: the Session can stay warm for a
+                # reconnect while this specific departed connection's
+                # presence is still stale info for everyone else).
+                for peer in registry.peers(session.session_id, exclude=connection_id):
+                    await peer.send(
+                        PresenceLeft(session_id=session.session_id, connection_id=connection_id)
+                    )
             if was_last:
                 asyncio.create_task(_expire_session_if_unclaimed(registry, session.session_id))
 
