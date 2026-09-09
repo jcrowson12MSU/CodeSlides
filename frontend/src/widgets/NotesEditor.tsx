@@ -743,12 +743,14 @@ export function NotesEditor({ source, onChangeSource, locked }: NotesEditorProps
         editableCompartment.reconfigure([EditorView.editable.of(!locked), EditorState.readOnly.of(locked)]),
       ],
     })
-    // Unlocking (e.g. NotesViewer's double-click handler) makes the
-    // editor contenteditable again, but the DOM click that triggered it
-    // happened before that -- nothing has focus yet, so without this the
-    // note would sit unlocked but inert until a second click. Locking
-    // needs no such call: NotesViewer re-locks on blur, i.e. focus has
-    // already left by the time locked flips back to true.
+    // Unlocking (e.g. NotesViewer's double-click-to-toggle handler) makes
+    // the editor contenteditable again, but the DOM click that triggered
+    // it happened before that -- nothing has focus yet, so without this
+    // the note would sit unlocked but inert until a second click. Locking
+    // needs no such call: it either happens via blur (focus has already
+    // left) or via double-click while focused, in which case dropping
+    // `editable` to false naturally removes/blurs the DOM cursor on its
+    // own -- there's nothing to focus *to*.
     if (!locked) view.focus()
   }, [locked])
 

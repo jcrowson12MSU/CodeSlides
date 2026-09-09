@@ -125,13 +125,18 @@ export interface NotesViewerProps {
 // simply clicking/tabbing through a slide (or moving the cursor near a
 // line) can never flip a line back to raw markdown -- that reveal-on-
 // cursor behavior lives entirely inside NotesEditor and only applies
-// once unlocked. Double-click unlocks for editing; losing focus (e.g.
-// clicking elsewhere, or moving to the next slide) re-locks it, mirroring
-// how the old Edit/Preview toggle always returned to Preview once you
-// clicked away. This lock state is purely local UI state, same category
-// as the collapse/minimize toggle other viewer elements have -- it never
-// needs to reach set_ui_state or persist, since it only gates *this
-// browser tab's* editability, not the note's content.
+// once unlocked. Double-click *toggles* lock state (not just unlocks --
+// double-clicking again while already unlocked re-locks it; an editor
+// that could only ever be unlocked by double-click, with no matching way
+// to double-click it back, would strand anyone who wants to stop editing
+// without also blurring/clicking away). Losing focus (e.g. clicking
+// elsewhere, or moving to the next slide) also re-locks it as a safety
+// net, mirroring how the old Edit/Preview toggle always returned to
+// Preview once you clicked away. This lock state is purely local UI
+// state, same category as the collapse/minimize toggle other viewer
+// elements have -- it never needs to reach set_ui_state or persist,
+// since it only gates *this browser tab's* editability, not the note's
+// content.
 export function NotesViewer({ content, onChangeSource }: NotesViewerProps) {
   const source = typeof content === 'string' ? content : ''
   const [locked, setLocked] = useState(true)
@@ -139,7 +144,7 @@ export function NotesViewer({ content, onChangeSource }: NotesViewerProps) {
   return (
     <div
       className="cs-element cs-element-viewer cs-notes-viewer"
-      onDoubleClick={() => setLocked(false)}
+      onDoubleClick={() => setLocked((prev) => !prev)}
       onBlur={(event) => {
         // currentTarget is this wrapper div; relatedTarget is where focus
         // is going. Skip re-locking when focus is just moving between
