@@ -2035,7 +2035,7 @@ reshape the plan below and are called out explicitly where they apply:
   `source_overrides` while still running reactively. Sub-tasks, roughly
   in dependency order:
 
-  - **46a. Design a shared-document Session model** that coexists with
+  - [x] **46a. Design a shared-document Session model** that coexists with
     today's isolated-clone model rather than replacing it -- cloning
     (independent scratch copies) and collaboration (shared live editing)
     are different use cases and both need to keep working. Likely shape:
@@ -2043,6 +2043,47 @@ reshape the plan below and are called out explicitly where they apply:
     websocket connections attach to the same `Session`/namespace instead
     of each getting its own, while `SessionRegistry.clone` keeps
     producing fully independent copies as it does now.
+
+    Implemented: `SessionRegistry.create_or_join(document_id)`
+    (ws_handler.py) resolves the Session a new connection attaches to --
+    `document_id is None` (a plain `/ws` connect) preserves today's
+    behavior exactly (a fresh, fully isolated Session, verified by a new
+    regression test), while a given id doubles as that Session's
+    `session_id`: the first connection with a given id creates the shared
+    Session, every later one with the same id joins the same
+    namespace/`source_overrides`. `SessionRegistry.clone` is untouched, so
+    cloning still produces fully independent copies as before. Chose the
+    query-param routing scheme from 46a-iv (`/ws?document=<id>`) over a
+    first-message join envelope, since it matches this project's existing
+    "open a URL, that's your session" model (`codeslides edit`/`present`
+    already just print a URL) rather than introducing new protocol
+    surface. Chose the keep-warm-with-timeout policy from 46a-iii (a
+    configurable grace period, defaulting to 120s, exposed as
+    `create_app`'s `shared_session_grace_period_seconds` purely so tests
+    can use a short window) over immediate teardown, so a reload or brief
+    network drop doesn't discard in-progress collaborative edits; this
+    also happens to fix the pre-existing disconnect leak (`server.py`'s
+    `except WebSocketDisconnect: pass` did nothing before this) for solo
+    sessions too, since they now go through the same
+    `remove_connection`/`discard_session` path. Broadcast
+    (`registry.peers(session_id, exclude=connection_id)`) fans every
+    reply out to every other connection on a shared document, not just
+    the sender -- verified end-to-end with two simultaneous
+    `TestClient.websocket_connect` connections sharing a `?document=` id.
+    5 new tests in `tests/test_server_ws.py` cover: solo isolation is
+    unaffected, two connections joining the same document id share one
+    Session, broadcast reaches peers, a reconnect within the grace period
+    resumes shared state, and the Session is actually discarded once the
+    grace period expires with nobody reconnecting. Full suite: 585
+    passed (580 pre-existing + 5 new), `ruff check src` clean.
+
+    Not yet done, left for 46b-46g: no identity/attribution on
+    broadcast messages yet (any peer's edit just looks like it came from
+    "the document" to everyone else), no conflict resolution beyond
+    whatever order messages happen to arrive in, and no UI/CLI surface
+    yet for actually generating or opening a `?document=` join link
+    (46e's job) -- this sub-task was scoped to the backend
+    connection/broadcast/lifecycle plumbing only.
 
     - **46a-i. Add a connection layer above `Session`.** Today
       `server.py`'s `websocket_endpoint` (lines 118-138) does

@@ -1,3 +1,5 @@
+import time
+
 from fastapi.testclient import TestClient
 
 from codeslides import App, ui
@@ -115,3 +117,205 @@ def test_websocket_clone_session_isolation_end_to_end():
         received = [ws.receive_json() for _ in range(4)]
         outputs = {m["cell_id"]: m["output"]["value"] for m in received if m["type"] == "cell_output"}
         assert outputs["live_demo"] == 15
+
+
+def test_websocket_no_document_param_still_gets_a_fully_isolated_session():
+    """TODO.md #46a: a plain `/ws` connection (no `?document=`) must keep
+    behaving exactly as before -- two such connections never share a
+    Session, even though `create_or_join` is now involved under the
+    hood."""
+    client = TestClient(create_app(_build_deck()))
+
+    with client.websocket_connect("/ws") as ws_a, client.websocket_connect("/ws") as ws_b:
+        session_a = ws_a.receive_json()["session_id"]
+        session_b = ws_b.receive_json()["session_id"]
+        assert session_a != session_b
+
+        ws_a.send_json({"type": "run_all", "session_id": session_a})
+        for _ in range(4):
+            ws_a.receive_json()
+
+        ws_a.send_json(
+            {
+                "type": "set_element_value",
+                "session_id": session_a,
+                "cell_id": "live_demo",
+                "element_id": "speed",
+                "value": 999,
+            }
+        )
+        ws_a.receive_json()  # cell_status
+        ws_a.receive_json()  # cell_output
+
+        # ws_b never asked for anything and must receive nothing from
+        # ws_a's edit -- no broadcast happens outside a shared document.
+        ws_b.send_json({"type": "run_all", "session_id": session_b})
+        received_b = [ws_b.receive_json() for _ in range(4)]
+        outputs_b = {
+            m["cell_id"]: m["output"]["value"] for m in received_b if m["type"] == "cell_output"
+        }
+        assert outputs_b["live_demo"] == 15  # untouched by ws_a's edit
+
+
+def test_websocket_shared_document_joins_the_same_session():
+    """TODO.md #46a-iv/#46a-i: two connections passing the same
+    `?document=` id must resolve to the *same* Session -- the whole point
+    of a shared document is one namespace, not two isolated copies."""
+    client = TestClient(create_app(_build_deck()))
+
+    with (
+        client.websocket_connect("/ws?document=classroom-1") as ws_a,
+        client.websocket_connect("/ws?document=classroom-1") as ws_b,
+    ):
+        session_a = ws_a.receive_json()["session_id"]
+        session_b = ws_b.receive_json()["session_id"]
+        assert session_a == session_b == "classroom-1"
+
+
+def test_websocket_shared_document_broadcasts_edits_to_other_peers():
+    """TODO.md #46a-ii: an edit one peer makes on a shared document must
+    be pushed to every *other* connected peer too, not just echoed back
+    to the sender -- this is the core behavior distinguishing a shared
+    document from today's one-connection-per-Session model."""
+    client = TestClient(create_app(_build_deck()))
+
+    with (
+        client.websocket_connect("/ws?document=classroom-2") as ws_a,
+        client.websocket_connect("/ws?document=classroom-2") as ws_b,
+    ):
+        ws_a.receive_json()  # session_created
+        ws_b.receive_json()  # session_created
+
+        ws_a.send_json({"type": "run_all", "session_id": "classroom-2"})
+        # ws_a gets its own reply...
+        received_a = [ws_a.receive_json() for _ in range(4)]
+        # ...and ws_b, which asked for nothing, gets the same broadcast.
+        received_b = [ws_b.receive_json() for _ in range(4)]
+
+        outputs_a = {
+            m["cell_id"]: m["output"]["value"] for m in received_a if m["type"] == "cell_output"
+        }
+        outputs_b = {
+            m["cell_id"]: m["output"]["value"] for m in received_b if m["type"] == "cell_output"
+        }
+        assert outputs_a == outputs_b == {"setup": 5, "live_demo": 15}
+
+        # Now ws_b edits the slider; ws_a (which sent nothing this time)
+        # must still see the resulting output via broadcast.
+        ws_b.send_json(
+            {
+                "type": "set_element_value",
+                "session_id": "classroom-2",
+                "cell_id": "live_demo",
+                "element_id": "speed",
+                "value": 8,
+            }
+        )
+        ws_b.receive_json()  # cell_status (own reply)
+        own_output = ws_b.receive_json()
+        assert own_output["output"]["value"] == 40
+
+        peer_status = ws_a.receive_json()  # broadcast cell_status
+        peer_output = ws_a.receive_json()  # broadcast cell_output
+        assert peer_status["type"] == "cell_status"
+        assert peer_output["output"]["value"] == 40
+
+
+def test_websocket_shared_document_survives_reconnect_within_grace_period():
+    """TODO.md #46a-iii: the last connection leaving a shared document
+    must not discard its Session immediately -- a reconnect within the
+    grace period should resume the same namespace/source_overrides, not
+    start over from the deck's on-disk baseline.
+
+    Doesn't need `with client:` (see the discard-after-expiry test's
+    docstring for why that matters there): this test only needs the
+    Session itself to survive on `api.state.registry`, which it does
+    regardless of any one connection's event-loop portal lifecycle --
+    it never depends on the grace-period timer task actually firing."""
+    client = TestClient(
+        create_app(_build_deck(), shared_session_grace_period_seconds=5),
+    )
+
+    with client.websocket_connect("/ws?document=classroom-3") as ws:
+        ws.receive_json()  # session_created
+        ws.send_json({"type": "run_all", "session_id": "classroom-3"})
+        for _ in range(4):
+            ws.receive_json()
+
+        ws.send_json(
+            {
+                "type": "edit_cell",
+                "session_id": "classroom-3",
+                "cell_id": "live_demo",
+                "source": (
+                    "def live_demo(speed):\n"
+                    "    result = base * speed + 1000\n"
+                    "    return result\n"
+                ),
+            }
+        )
+        ws.receive_json()  # cell_status
+        edited_output = ws.receive_json()
+        assert edited_output["output"]["value"] == 1015
+    # connection closed here; Session should be kept warm, not discarded
+
+    with client.websocket_connect("/ws?document=classroom-3") as ws:
+        hello = ws.receive_json()
+        assert hello["session_id"] == "classroom-3"
+        ws.send_json({"type": "run_all", "session_id": "classroom-3"})
+        received = [ws.receive_json() for _ in range(4)]
+        outputs = {m["cell_id"]: m["output"]["value"] for m in received if m["type"] == "cell_output"}
+        # the edit from the first connection is still in effect
+        assert outputs["live_demo"] == 1015
+
+
+def test_websocket_shared_document_discarded_after_grace_period_expires():
+    """TODO.md #46a-iii: once nobody reconnects within the grace period,
+    the Session must actually be torn down -- a later connection using
+    the same document id starts fresh from the deck's on-disk baseline,
+    not a leaked copy of the old namespace.
+
+    Uses `with client:` (not just `with client.websocket_connect(...)`)
+    so both connections share one persistent event-loop portal --
+    otherwise each `websocket_connect` call tears down its own portal on
+    exit, killing the `asyncio.create_task`-scheduled grace-period timer
+    before it ever runs. The real server has exactly one long-lived event
+    loop for the whole process, so this is a test-harness detail, not
+    something the implementation itself needs to account for."""
+    client = TestClient(
+        create_app(_build_deck(), shared_session_grace_period_seconds=0.2),
+    )
+
+    with client:
+        with client.websocket_connect("/ws?document=classroom-4") as ws:
+            ws.receive_json()  # session_created
+            ws.send_json({"type": "run_all", "session_id": "classroom-4"})
+            for _ in range(4):
+                ws.receive_json()
+
+            ws.send_json(
+                {
+                    "type": "edit_cell",
+                    "session_id": "classroom-4",
+                    "cell_id": "live_demo",
+                    "source": (
+                        "def live_demo(speed):\n"
+                        "    result = base * speed + 1000\n"
+                        "    return result\n"
+                    ),
+                }
+            )
+            ws.receive_json()  # cell_status
+            ws.receive_json()  # cell_output
+
+        time.sleep(0.5)  # let the grace-period expiry task actually run
+
+        with client.websocket_connect("/ws?document=classroom-4") as ws:
+            ws.receive_json()  # session_created
+            ws.send_json({"type": "run_all", "session_id": "classroom-4"})
+            received = [ws.receive_json() for _ in range(4)]
+            outputs = {
+                m["cell_id"]: m["output"]["value"] for m in received if m["type"] == "cell_output"
+            }
+            # a fresh Session was created -- the old edit is gone
+            assert outputs["live_demo"] == 15
