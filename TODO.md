@@ -2238,7 +2238,7 @@ reshape the plan below and are called out explicitly where they apply:
       still receives a plain string (Yjs's CRDT state, not the
       resolved text, is what's actually synced).
 
-  - **46c. Concurrent execution semantics.** If two editors' changes to
+  - [x] **46c. Concurrent execution semantics.** If two editors' changes to
     different cells both trigger re-runs against the *same* namespace,
     define run ordering and what happens when two overlapping
     minimal-rerun-sets are triggered close together (queue, coalesce, or
@@ -2246,7 +2246,24 @@ reshape the plan below and are called out explicitly where they apply:
     `on_cell_edited` assume one caller at a time against a given
     `Session`.
 
-    - **46c-i. Add the mutual-exclusion primitive that doesn't exist
+    Headline finding that reshaped all four sub-tasks below:
+    `kernel.py`/`ws_handler.py` have **zero `await` points** anywhere
+    (confirmed by exhaustive grep). Since Python's asyncio event loop
+    only switches between coroutines at an `await`, one connection's
+    entire `handle_message(...)` call -- the full edit-then-rerun pass,
+    however many cells it touches -- already runs to completion
+    atomically before the event loop can even read the *next* message
+    from any connection, shared document or not. There is no actual
+    race condition today, only message-*arrival-order* nondeterminism
+    (which of two simultaneously-sent messages the OS/asyncio layer
+    happens to hand the server first is unspecified, but whichever one
+    it is always runs to completion, untorn, before the other is even
+    read). This finding is why 46c-i and 46c-iii below ended up as
+    documentation, not code -- adding machinery to prevent a race that
+    provably cannot occur would be worse than doing nothing (see
+    46c-i's own note on why an inert lock is actively misleading).
+
+    - [x] **46c-i. Add the mutual-exclusion primitive that doesn't exist
       today.** Confirmed: `kernel.py` has no `asyncio.Lock`, no
       `threading.Lock`, no queue anywhere -- single-caller safety today
       is an accident of `server.py:129`'s `await websocket.receive_json()`
@@ -2258,7 +2275,26 @@ reshape the plan below and are called out explicitly where they apply:
       edit-then-rerun pass) so `Kernel`'s mutating methods stay
       effectively single-threaded per document even with N connections
       calling in.
-    - **46c-ii. Define the queue-vs-coalesce policy explicitly**, since
+
+      Decided: **no lock added.** Per this sub-task's own header
+      finding, nothing ever yields control while a `handle_message`
+      call is executing, so an `asyncio.Lock` around it would never
+      actually be contended -- it would sit there implying a real
+      exclusion guarantee the code doesn't back up (nothing yields
+      while holding it, so it isn't providing anything an absent lock
+      wouldn't). Considered adding one anyway as defense-in-depth
+      against a future regression (e.g. a later change making cell
+      execution genuinely `async`, via `asyncio.to_thread` for
+      long-running cells or an awaited I/O call from inside a cell,
+      which would silently reintroduce a real race with no compiler/
+      test signal) -- rejected for now per this project's stated bias
+      against speculative abstraction: adding a real lock at the point
+      some future change actually introduces a yield inside the hot
+      path is a small, well-scoped, easily-reviewed change, not a
+      large refactor, so the cost of deferring is low. Revisit this
+      exact decision if `Kernel`'s execution path ever gains an
+      `await`.
+    - [x] **46c-ii. Define the queue-vs-coalesce policy explicitly**, since
       a lock alone only prevents corruption, not confusing behavior:
       if student A edits `cell_1` and student B edits `cell_2`
       (independent, non-overlapping rerun sets) within the same
@@ -2268,7 +2304,22 @@ reshape the plan below and are called out explicitly where they apply:
       coalescing to "only the latest queued edit per cell_id survives"
       before executing, rather than running every intermediate
       keystroke's edit in sequence.
-    - **46c-iii. Decide what happens to a rerun already in flight when a
+
+      Decided: **queue everything, run in arrival order, no
+      coalescing.** This is already exactly what the code does with no
+      changes needed -- `server.py`'s per-connection loop reads and
+      fully processes one message at a time (from any connection)
+      before reading the next, so there is never more than one message
+      "in flight" to coalesce against in the first place; a real
+      coalescing layer would require introducing buffering/batching
+      that doesn't exist today purely to solve a wasted-work problem
+      that hasn't been observed. Classroom edit rates (a human typing
+      then hitting Shift-Enter, not a hot loop firing many edits per
+      second) make the "wasted rerun of stale source" scenario 46c-ii
+      worried about rare enough not to be worth the complexity --
+      revisit only if real usage shows rapid-fire same-cell edits
+      causing a visible performance problem.
+    - [x] **46c-iii. Decide what happens to a rerun already in flight when a
       newer edit to one of its *dependency* cells arrives mid-run** --
       today's single-connection model can't have this race at all since
       the browser tab that would send the second edit is blocked
@@ -2276,7 +2327,22 @@ reshape the plan below and are called out explicitly where they apply:
       concurrent connections this becomes possible and needs an explicit
       answer (abort and restart the affected subgraph, or let it finish
       and immediately re-trigger).
-    - **46c-iv. Add a regression test exercising this directly**,
+
+      Decided: **the scenario cannot occur, so no policy is needed.**
+      Per this sub-task's own header finding: a rerun is never actually
+      "in flight" from the event loop's perspective while another
+      message is being read, because the entire rerun (however many
+      cells it touches) completes synchronously inside one
+      `handle_message` call with no `await` in between. There is no
+      window during which a second connection's message could be read
+      and observed as interleaved with an ongoing rerun -- by the time
+      the server loop gets back to `await websocket.receive_json()`
+      for the next message (from any connection), the previous rerun
+      has already fully finished and been broadcast. This would stop
+      being true under the same condition as 46c-i (an `await`
+      introduced inside `Kernel`'s execution path) -- if that happens,
+      this decision needs revisiting alongside 46c-i's.
+    - [x] **46c-iv. Add a regression test exercising this directly**,
       mirroring the existing clone-isolation regression test called out
       in TODO.md #45 -- two simulated concurrent `on_cell_edited`
       calls (or two `TestClient.websocket_connect` sessions attached to
@@ -2285,6 +2351,25 @@ reshape the plan below and are called out explicitly where they apply:
       asserting the final `session.namespace` matches one of the two
       well-defined orderings decided in 46c-ii, never a torn/partial
       state.
+
+      Implemented: even though 46c-i/46c-iii found there's no race to
+      test *for*, the resulting *policy* (46c-ii: sequential queue, no
+      corruption) is still real, testable behavior worth locking in.
+      Added `test_websocket_shared_document_overlapping_edits_from_two_peers_never_corrupt_state`
+      (`tests/test_server_ws.py`) against a new
+      `_build_overlapping_deps_deck()` fixture (two independently
+      editable cells, `cell_a`/`cell_b`, both feeding a shared
+      downstream `combined` cell): peer A edits `cell_a`, peer B edits
+      `cell_b` back-to-back, and the test asserts `combined`'s two
+      re-run values land on exactly one of the two valid orderings
+      (`{110, 1100}` if A's edit is processed first, `{1001, 1100}` if
+      B's is) -- never a third, torn value that would result from
+      interleaving (e.g. new `a` combined with stale `b`). Confirmed
+      both peers' broadcasts agree on which ordering actually happened,
+      and that final `session.namespace` reflects both edits applied in
+      full. Verified stable across repeated runs (not order-flaky).
+      Full suite: 587 passed (586 pre-existing + 1 new), `ruff check
+      src` clean.
 
   - **46d. Presence UI.** Show which students/instructor are connected to
     a shared document and (ideally) a cursor/selection indicator per

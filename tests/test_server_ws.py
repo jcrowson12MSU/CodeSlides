@@ -22,6 +22,33 @@ def _build_deck():
     return app.deck
 
 
+def _build_overlapping_deps_deck():
+    """Two independently editable cells (`cell_a`, `cell_b`) that both
+    feed a shared downstream `combined` cell -- TODO.md #46c-iv needs
+    genuinely overlapping rerun sets (editing either upstream cell
+    affects `combined`) to test that concurrent edits from two peers
+    queue and apply cleanly rather than corrupting the shared
+    namespace."""
+    app = App()
+
+    @app.cell(instance="editable")
+    def cell_a():
+        a = 1
+        return a
+
+    @app.cell(instance="editable")
+    def cell_b():
+        b = 10
+        return b
+
+    @app.cell
+    def combined():
+        total = a + b  # noqa: F821
+        return total
+
+    return app.deck
+
+
 def test_websocket_handshake_and_run_all():
     client = TestClient(create_app(_build_deck()))
 
@@ -300,6 +327,106 @@ def test_websocket_shared_document_concurrent_cell_edits_last_write_wins():
         session = client.app.state.registry.get("classroom-5")
         assert "result = base * speed + 2" in session.source_overrides["live_demo"]
         assert "+ 1" not in session.source_overrides["live_demo"]
+
+
+def test_websocket_shared_document_overlapping_edits_from_two_peers_never_corrupt_state():
+    """TODO.md #46c-iv: two peers editing *different* upstream cells that
+    both feed a shared downstream cell (overlapping rerun sets) must
+    queue and apply cleanly -- no torn/partial state in the shared
+    namespace, and the final downstream value reflects both edits.
+
+    Per TODO.md #46c-i/46c-iii's documented findings: this isn't actually
+    testing for a race (there isn't one -- kernel.py/ws_handler.py have
+    no `await` points, so one connection's full edit-then-rerun pass
+    always finishes before the event loop can read the next message from
+    *any* connection; there's no "mid-run" window for interleaving). This
+    test instead locks in the resulting behavior: back-to-back edits from
+    different peers each run to completion in arrival order (46c-ii's
+    "queue everything, no coalescing" policy), and the shared
+    `session.namespace`/`session.instances` never end up with a value
+    from only one of the two edits applied halfway."""
+    client = TestClient(create_app(_build_overlapping_deps_deck()))
+
+    with (
+        client.websocket_connect("/ws?document=race-1") as ws_a,
+        client.websocket_connect("/ws?document=race-1") as ws_b,
+    ):
+        ws_a.receive_json()  # session_created
+        ws_b.receive_json()  # session_created
+
+        ws_a.send_json({"type": "run_all", "session_id": "race-1"})
+        for _ in range(6):
+            ws_a.receive_json()
+        for _ in range(6):
+            ws_b.receive_json()  # broadcast of ws_a's run_all
+
+        # Peer A edits cell_a, peer B edits cell_b -- different cells,
+        # but both feed `combined`, so their rerun sets overlap on it.
+        ws_a.send_json(
+            {
+                "type": "edit_cell",
+                "session_id": "race-1",
+                "cell_id": "cell_a",
+                "source": "def cell_a():\n    a = 100\n    return a\n",
+            }
+        )
+        ws_b.send_json(
+            {
+                "type": "edit_cell",
+                "session_id": "race-1",
+                "cell_id": "cell_b",
+                "source": "def cell_b():\n    b = 1000\n    return b\n",
+            }
+        )
+
+        # Each edit_cell produces exactly 5 messages (cell_source_changed
+        # + cell_status/cell_output for the edited cell + cell_status/
+        # cell_output for combined), sent to sender and peer alike (10
+        # total per edit, sender + peer). Both connections must see both
+        # edits' full message sequences, in full, with no message from
+        # one edit's rerun interleaved with the other's -- collect all 20
+        # and check the *sets* of (cell_id, type) pairs group cleanly by
+        # edit rather than asserting a specific interleave order, since
+        # which of the two queued messages the server happened to read
+        # first is legitimately unspecified (46c-ii: FIFO by arrival,
+        # not by which peer "should" go first).
+        a_messages = [ws_a.receive_json() for _ in range(10)]
+        b_messages = [ws_b.receive_json() for _ in range(10)]
+
+        # Both connections must have received every message from both
+        # edits (broadcast means sender-and-peer both see everything).
+        # Whichever peer's edit_cell the server happens to read first is
+        # unspecified (46c-ii: FIFO by arrival, not by peer), so
+        # `combined`'s two re-run values are one of exactly two valid
+        # sequences depending on that arrival order -- either is
+        # correct, but nothing else is: a torn state combining new `a`
+        # with stale `b` (or vice versa) would show up as a *third*,
+        # wrong, intermediate value (e.g. 101 or 1001) that belongs to
+        # neither valid ordering.
+        valid_combined_sequences = ({110, 1100}, {1001, 1100})
+        combined_outputs_a = {
+            m["output"]["value"]
+            for m in a_messages
+            if m["type"] == "cell_output" and m["cell_id"] == "combined"
+        }
+        combined_outputs_b = {
+            m["output"]["value"]
+            for m in b_messages
+            if m["type"] == "cell_output" and m["cell_id"] == "combined"
+        }
+        assert combined_outputs_a in valid_combined_sequences
+        # Both connections are broadcasts of the same underlying event
+        # sequence -- they must agree on which ordering actually
+        # happened, not just each independently land on *some* valid one.
+        assert combined_outputs_a == combined_outputs_b
+
+        # Final namespace state, from either connection's Session
+        # reference, reflects both edits applied in full -- not a
+        # mid-edit torn combination of the two.
+        session = client.app.state.registry.get("race-1")
+        assert session.namespace["a"] == 100
+        assert session.namespace["b"] == 1000
+        assert session.namespace["total"] == 1100
 
 
 def test_websocket_shared_document_survives_reconnect_within_grace_period():
