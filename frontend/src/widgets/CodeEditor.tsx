@@ -24,6 +24,7 @@ import {
   highlightActiveLineGutter,
   keymap,
   rectangularSelection,
+  WidgetType,
 } from '@codemirror/view'
 import { useEffect, useRef } from 'react'
 import { deckSymbolCompletion, dotCompletion } from './deckCompletion'
@@ -80,10 +81,31 @@ export interface CodeEditorProps {
   // person's cursor is currently in. Optional so every non-collaborative
   // caller (the overwhelming majority) pays nothing for this -- no
   // listener is even attached when omitted (see the extensions array
-  // below). Cursor *position* within the cell (46d-iv, the harder
-  // in-editor decoration work) is deliberately out of scope here --
-  // this is only ever "which cell has focus," not "where in it."
+  // below).
   onFocusChange?: (focused: boolean) => void
+  // TODO.md #46d-iv: fired with the caret's plain character offset into
+  // the document (not line/column -- matches SetPresence/PresenceUpdate's
+  // own `cursor_pos` shape, protocol.py) whenever the selection changes,
+  // debounced by the caller (App.tsx, ~200ms) before it ever reaches a
+  // send. Deliberately reports only the primary cursor's head position,
+  // not the full selection range -- a lightweight presence indicator,
+  // not collaborative multi-range selection sync. Optional, same
+  // pay-nothing-when-omitted shape as onFocusChange.
+  onCursorChange?: (pos: number) => void
+  // TODO.md #46d-iv: remote peers currently known to be in *this* cell
+  // (App.tsx filters presenceState by cellId before passing this down),
+  // each rendered as a colored vertical bar at their own cursorPos with
+  // their name in a hover tooltip. `null`/omitted or an empty array
+  // renders nothing -- a solo editor, or a cell nobody else is in, pays
+  // for an empty StateField update at most, never a visible decoration.
+  remotePeers?: RemotePeerCursor[]
+}
+
+export interface RemotePeerCursor {
+  connectionId: string
+  color: string
+  displayName: string
+  cursorPos: number
 }
 
 // Ephemeral, presenter-driven line highlighting (not persisted, not
@@ -120,6 +142,90 @@ const highlightField = StateField.define<DecorationSet>({
     // (e.g. a line inserted above it) follows the same source line's
     // content rather than the highlight silently freezing on a line
     // *number* that now points at different text.
+    return decorations.map(tr.changes)
+  },
+  provide: (field) => EditorView.decorations.from(field),
+})
+
+// TODO.md #46d-iv: a remote peer's cursor -- a thin colored vertical bar
+// at their reported position, with their name shown only on hover (a
+// `title`-less approach: CSS ::after content from a data- attribute, not
+// the native `title` tooltip, since a native tooltip has an
+// OS-controlled show delay and can't be styled to match this app's own
+// small-flag look). Same StateEffect+StateField+re-map-through-edits
+// shape as setHighlightedLines/highlightField just above -- this is a
+// widget decoration (a zero-width marker at a single position, CodeMirror's
+// own term for "not a range"), not a line decoration, since a cursor is a
+// point in the document, not a whole line.
+const setRemoteCursors = StateEffect.define<RemotePeerCursor[]>()
+
+class RemoteCursorWidget extends WidgetType {
+  color: string
+  displayName: string
+  constructor(color: string, displayName: string) {
+    super()
+    this.color = color
+    this.displayName = displayName
+  }
+
+  eq(other: RemoteCursorWidget) {
+    return other.color === this.color && other.displayName === this.displayName
+  }
+
+  toDOM() {
+    const el = document.createElement('span')
+    el.className = 'cs-remote-cursor'
+    el.style.setProperty('--cs-remote-cursor-color', this.color)
+    // TODO.md #46d-iv: the hover-only name flag is pure CSS
+    // (`.cs-remote-cursor-flag::after { content: attr(data-name) }`,
+    // App.css) reading this attribute, rather than a second child
+    // element -- keeps the widget's DOM to one node, and CSS
+    // `:hover`/`content` needs no JS to show/hide it.
+    el.dataset.name = this.displayName
+    return el
+  }
+
+  // A cursor widget is purely visual chrome floating at a text
+  // position -- it must never itself become a cursor stop or be
+  // selectable, or arrow-key/click navigation would land inside it
+  // instead of moving through the actual document.
+  ignoreEvent() {
+    return true
+  }
+}
+
+function buildRemoteCursorDecorations(state: EditorState, peers: RemotePeerCursor[]): DecorationSet {
+  if (peers.length === 0) return Decoration.none
+  const docLength = state.doc.length
+  const builder = peers
+    .filter((peer) => peer.cursorPos >= 0 && peer.cursorPos <= docLength)
+    .map((peer) =>
+      Decoration.widget({
+        widget: new RemoteCursorWidget(peer.color, peer.displayName),
+        // Renders immediately before the character at cursorPos, matching
+        // where a real text-input caret sits relative to the surrounding
+        // text -- `side: 1` would instead pin it to the *following*
+        // position on ties, which reads as "after the character" rather
+        // than "at the position," the wrong side for a caret.
+        side: -1,
+      }).range(peer.cursorPos),
+    )
+  builder.sort((a, b) => a.from - b.from)
+  return Decoration.set(builder)
+}
+
+const remoteCursorField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(decorations, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setRemoteCursors)) return buildRemoteCursorDecorations(tr.state, effect.value)
+    }
+    // Re-map through local edits so a remote peer's marker stays attached
+    // to the same document position as text is inserted/deleted around
+    // it, same precedent as highlightField above -- it'll only actually
+    // move to the *correct* new position once that peer's own next
+    // SetPresence updates it, but re-mapping avoids it visibly jumping to
+    // a wrong, stale offset in the meantime.
     return decorations.map(tr.changes)
   },
   provide: (field) => EditorView.decorations.from(field),
@@ -238,6 +344,8 @@ export function CodeEditor({
   onLineCountChange,
   cellId,
   onFocusChange,
+  onCursorChange,
+  remotePeers,
 }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -248,6 +356,13 @@ export function CodeEditor({
   const onToggleLineHighlightRef = useRef(onToggleLineHighlight)
   const onLineCountChangeRef = useRef(onLineCountChange)
   const onFocusChangeRef = useRef(onFocusChange)
+  const onCursorChangeRef = useRef(onCursorChange)
+  // Read once by remoteCursorField.init() in the mount effect below --
+  // same "read the ref for the mount-time initial value, dispatch a sync
+  // effect for later changes" shape lineOffsetRef/lineOffsetField already
+  // establish just below.
+  const remotePeersRef = useRef(remotePeers)
+  remotePeersRef.current = remotePeers
   // Read once by lineOffsetField.init() in the mount effect below (so a
   // cell that mounts with a non-zero offset -- the common case, any cell
   // after the first -- doesn't flash at 0 for a frame before the sync
@@ -258,6 +373,7 @@ export function CodeEditor({
   onToggleLineHighlightRef.current = onToggleLineHighlight
   onLineCountChangeRef.current = onLineCountChange
   onFocusChangeRef.current = onFocusChange
+  onCursorChangeRef.current = onCursorChange
   lineOffsetRef.current = lineOffset
 
   useEffect(() => {
@@ -293,6 +409,11 @@ export function CodeEditor({
     const extensions: Extension[] = [
       lineOffsetField.init(() => lineOffsetRef.current),
       offsetLineNumberGutter(),
+      // TODO.md #46d-iv: initialized from whatever remotePeers holds at
+      // mount (mirrors lineOffsetField.init's own precedent just above),
+      // updated via the sync effect further down when the prop changes
+      // after mount.
+      remoteCursorField.init((state) => buildRemoteCursorDecorations(state, remotePeersRef.current ?? [])),
       python(),
       // CodeMirror's own default `indentUnit` is 2 spaces; every deck's
       // .py source (and Python convention generally, PEP 8) uses 4 --
@@ -427,6 +548,17 @@ export function CodeEditor({
       EditorView.updateListener.of((update) => {
         if (update.docChanged) onLineCountChangeRef.current?.(update.state.doc.lines)
         if (update.docChanged) publishSource?.(update.state.doc.toString())
+        // TODO.md #46d-iv: fires on every cursor/selection move, not just
+        // typing (selectionSet is true for typing too, since inserting
+        // text also moves the selection, but also for a plain arrow-key
+        // move or a mouse click with no doc change) -- the caller
+        // (App.tsx) is expected to debounce before this reaches a
+        // set_presence send, so this listener itself fires eagerly and
+        // cheaply on every change rather than trying to debounce inside
+        // CodeMirror's own update cycle.
+        if (update.selectionSet) {
+          onCursorChangeRef.current?.(update.state.selection.main.head)
+        }
       }),
     ]
 
@@ -498,6 +630,17 @@ export function CodeEditor({
     if (!view) return
     view.dispatch({ effects: setLineOffset.of(lineOffset) })
   }, [lineOffset])
+
+  // TODO.md #46d-iv: same dispatch-on-change shape as the two sync
+  // effects above -- a peer's cursor moving (App.tsx's presenceState
+  // update) or joining/leaving this cell re-renders with a new
+  // `remotePeers` array, and the decorations need to follow without
+  // re-mounting the view.
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({ effects: setRemoteCursors.of(remotePeers ?? []) })
+  }, [remotePeers])
 
   return <div className="cs-code-editor" ref={containerRef} />
 }

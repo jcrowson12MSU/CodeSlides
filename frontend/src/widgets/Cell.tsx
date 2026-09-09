@@ -3,7 +3,7 @@ import type { CellState } from '../deckState'
 import { CODE_TAB_ID, INPUTS_TAB_ID, type CellLayout, type Quadrant } from '../protocol'
 import { CellOutputView } from './CellOutputView'
 import { hasCellOutput } from './cellOutput'
-import { CodeEditor } from './CodeEditor'
+import { CodeEditor, type RemotePeerCursor } from './CodeEditor'
 import { EditCellPanel } from './EditCellPanel'
 import { ElementWidget } from './ElementWidget'
 import { TestsElementWidget } from './TestsElementWidget'
@@ -144,6 +144,11 @@ export interface CellProps {
   // focus -- optional so every non-collaborative caller pays nothing for
   // this (see CodeEditorProps.onFocusChange's own docstring).
   onFocusChange?: (focused: boolean) => void
+  // TODO.md #46d-iv: see CodeEditorProps.onCursorChange/remotePeers' own
+  // docstrings -- both optional, same pay-nothing-when-omitted shape as
+  // onFocusChange above.
+  onCursorChange?: (pos: number) => void
+  remotePeers?: RemotePeerCursor[]
   onSetElementValue: (elementId: string, value: unknown) => void
   onChangeNotesSource: (elementId: string, source: string) => void
   onChangeTestSource: (elementId: string, source: string) => void
@@ -370,6 +375,8 @@ export function Cell({
   onRunCell,
   onRunAll,
   onFocusChange,
+  onCursorChange,
+  remotePeers,
   onSetElementValue,
   onChangeNotesSource,
   onChangeTestSource,
@@ -841,6 +848,8 @@ export function Cell({
             onLineCountChange={onLineCountChange}
             cellId={cellId}
             onFocusChange={onFocusChange}
+            onCursorChange={onCursorChange}
+            remotePeers={remotePeers}
           />
           {outputBelowEditor}
         </div>

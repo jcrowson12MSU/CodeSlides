@@ -493,11 +493,16 @@ even read).
 (`display_name` → server-assigned `user_id` + a deterministic color,
 `SessionRegistry.join`) — a solo connection never sends this. Presence
 (`set_presence`, broadcasting a connection's current `cell_id`/`cursor_pos`
-to peers, and on-focus/blur in `CodeEditor.tsx`) and a peer-list UI
-(`PeerList.tsx`, reduced from the message stream by `presenceState.ts`) let
-each connection see who else is present and, at cell granularity, what
-they're doing — full character-position cursor decorations remain
-unimplemented (`TODO.md` #46d-iv).
+to peers, and on-focus/blur plus live cursor-position tracking in
+`CodeEditor.tsx`) and a peer-list UI (`PeerList.tsx`, reduced from the
+message stream by `presenceState.ts`) let each connection see who else is
+present and exactly where their cursor is: a colored vertical-bar
+decoration at the peer's live character offset inside the cell they're
+in, rendered via a `StateField`/`Decoration.widget` pair
+(`CodeEditor.tsx`'s `remoteCursorField`/`RemoteCursorWidget`), with the
+peer's name shown on hover, not always-visible (`TODO.md` #46d-iv).
+Outgoing cursor-position updates are debounced client-side (~200ms)
+rather than sent on every keystroke.
 
 **Access control.** A connection's role (`editor`, the default, or
 `viewer`, via `?role=viewer`) is fixed for the connection's lifetime and
@@ -676,21 +681,24 @@ triggers execution:
 ## 9. What's deliberately deferred
 
 - Multi-user real-time collaborative editing is **no longer on this
-  list** — it shipped (`TODO.md` #46a–#46e; see §5a for the design that
-  landed). What remains genuinely deferred within that feature, called
-  out specifically rather than bundled into a single stale bullet: full
-  character-position cursor/selection decorations in the editor
-  (`TODO.md` #46d-iv — presence today is cell-granularity only, "Alice is
-  editing this cell," not a rendered cursor at a specific offset);
-  character-level CRDT/OT merging for concurrent edits to the same cell
-  (`TODO.md` #46b-iv — last-write-wins was judged acceptable for
-  classroom-scale collision rates instead); frontend UI that hides or
-  disables mutating controls for a `viewer`-role connection (`TODO.md`
-  #46e — today's server-side rejection is the actual security boundary
-  and works correctly regardless, but a viewer's UI doesn't yet reflect
-  their own read-only status); and persistent per-student identity
-  across sessions / real accounts (`TODO.md` #46e-iii's explicit punt,
-  unless a concrete future need like gradebook integration arises).
+  list** — it shipped (`TODO.md` #46a–#46g; see §5a for the design that
+  landed, including character-position cursor decorations, `TODO.md`
+  #46d-iv, and edit attribution, `TODO.md` #46g). What remains genuinely
+  deferred within that feature, called out specifically rather than
+  bundled into a single stale bullet: character-level CRDT/OT merging
+  for concurrent edits to the same cell (`TODO.md` #46b-iv —
+  last-write-wins was judged acceptable for classroom-scale collision
+  rates instead); frontend UI that hides or disables mutating controls
+  for a `viewer`-role connection (`TODO.md` #46e — today's server-side
+  rejection is the actual security boundary and works correctly
+  regardless, but a viewer's UI doesn't yet reflect their own read-only
+  status); persistent per-student identity across sessions / real
+  accounts (`TODO.md` #46e-iii's explicit punt, unless a concrete future
+  need like gradebook integration arises); and making input-element
+  values (sliders, text inputs) per-connection-local rather than shared
+  on a collaborative document (`TODO.md` #63 — a distinct, larger
+  architectural change against this section's own shared-namespace
+  model, not yet designed).
 - Persisting Session state across server restarts — Sessions are
   in-memory; only the Deck's source file is durable. (Unaffected by
   collaborative editing: a shared document's Session is still in-memory

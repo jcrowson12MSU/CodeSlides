@@ -685,18 +685,74 @@ function App() {
     send({ type: 'run_all', session_id: sessionId })
   }
 
+  // TODO.md #46d-i/#46d-iv: which cell (if any) this connection's own
+  // cursor is currently in -- tracked locally rather than only inferred
+  // from the last set_presence sent, because `SetPresence` is NOT a
+  // partial patch (ws_handler.py's `SessionRegistry.set_presence`
+  // unconditionally overwrites both `cell_id` and `cursor_pos` together,
+  // per its own docstring/implementation): sending a cursor-only update
+  // with no `cell_id` would silently clobber this connection's own
+  // already-broadcast `cell_id` back to `null` for every peer watching
+  // it. Keeping this in local state (updated by handleCellFocusChange)
+  // lets handleCursorChange always resend the *current* cell_id
+  // alongside a new cursor_pos, rather than needing to omit it.
+  const focusedCellIdRef = useRef<string | null>(null)
+  // TODO.md #46d-iv: debounces cursor_pos updates (~200ms, confirmed
+  // with the user) so a fast typist doesn't send one set_presence per
+  // keystroke -- focus/blur (cell_id alone, no cursor_pos) is still sent
+  // immediately below, since that's a much rarer event than every
+  // keystroke/cursor move and the peer list should reflect "who's in
+  // this cell" without a visible lag.
+  const cursorDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   // TODO.md #46d-i: only meaningful on a collaborative connection --
   // set_presence is ignored server-side for a connection that never sent
   // Join anyway (see ws_handler.py's SetPresence handling), so this is a
   // no-op for the overwhelmingly common solo case regardless, but the
   // documentId check avoids sending a message nobody will ever act on.
   function handleCellFocusChange(cellId: string, focused: boolean) {
+    focusedCellIdRef.current = focused ? cellId : null
     if (!sessionId || !documentId) return
     send({
       type: 'set_presence',
       session_id: sessionId,
       cell_id: focused ? cellId : null,
     })
+  }
+
+  // TODO.md #46d-iv: fired on every cursor/selection move inside
+  // whichever cell currently has focus -- always paired with
+  // focusedCellIdRef's current value (see its own comment above for
+  // why this must never be cursor_pos alone).
+  function handleCursorChange(pos: number) {
+    if (!sessionId || !documentId || !focusedCellIdRef.current) return
+    const cellId = focusedCellIdRef.current
+    if (cursorDebounceRef.current) clearTimeout(cursorDebounceRef.current)
+    cursorDebounceRef.current = setTimeout(() => {
+      send({ type: 'set_presence', session_id: sessionId, cell_id: cellId, cursor_pos: pos })
+    }, 200)
+  }
+
+  // TODO.md #46d-iv: every *other* connected peer currently reporting
+  // `cellId` as their own focused cell, with a known cursor position --
+  // excludes this connection's own entry (ownIdentity.connectionId,
+  // 46d-ii) since a person never needs to see their own cursor rendered
+  // as a remote one, and excludes a peer with `cursorPos: null` (joined,
+  // or in some other cell, but never actually reported a position in
+  // this one) rather than rendering a decoration at a meaningless
+  // fallback position like 0.
+  function remotePeersForCell(cellId: string) {
+    return Object.entries(presenceState)
+      .filter(
+        ([connectionId, peer]) =>
+          connectionId !== ownIdentity?.connectionId && peer.cellId === cellId && peer.cursorPos !== null,
+      )
+      .map(([connectionId, peer]) => ({
+        connectionId,
+        color: peer.color,
+        displayName: peer.displayName,
+        cursorPos: peer.cursorPos as number,
+      }))
   }
 
   function handleSaveDeck() {
@@ -1198,6 +1254,8 @@ function App() {
               onRunCell={(source) => handleRunCell(cellId, source)}
               onRunAll={handleRunAll}
               onFocusChange={(focused) => handleCellFocusChange(cellId, focused)}
+              onCursorChange={handleCursorChange}
+              remotePeers={remotePeersForCell(cellId)}
               onSetElementValue={(elementId, value) => handleSetElementValue(cellId, elementId, value)}
               onChangeNotesSource={(elementId, source) => handleChangeNotesSource(cellId, elementId, source)}
               onChangeTestSource={(elementId, source) => handleChangeTestSource(cellId, elementId, source)}
