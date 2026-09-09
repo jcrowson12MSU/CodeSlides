@@ -58,6 +58,22 @@ own. CodeSlides makes "new Session = new namespace + new element state,
 full stop" a structural guarantee enforced by the kernel (§3) and the
 element model (§3a), not a convention authors have to get right.
 
+The one deliberate exception, added for collaborative editing (§5a,
+`TODO.md` #46): a **shared document** attaches multiple websocket
+*connections* to one Session, so those connections do intentionally
+share that Session's namespace/cell-instance/element-instance state with
+each other — this is a different axis from cloning, not a relaxation of
+the invariant above. A clone still always produces a brand-new,
+completely independent Session (`SessionRegistry.clone`, unaffected by
+§5a); a shared document instead lets several *connections* attach to the
+*same* Session rather than each getting a private one, which is exactly
+what collaborative editing requires and what a plain `/ws` connection
+(no `?document=` — the majority of usage, and every connection before
+this feature existed) never does. Put precisely: the invariant is about
+Sessions never sharing state with *other Sessions* — it says nothing
+about how many connections one Session may have, and §5a is where that
+second axis is actually specified.
+
 Note that **Element instance state splits into two kinds that must not be
 conflated**: *value* state (a slider's current number, a text input's
 current string) participates in reactivity — changing it can trigger cell
@@ -344,35 +360,58 @@ visible at all.
 
 ## 4. Process & concurrency model
 
-- One **kernel subprocess per Deck-serving server process**, not per
-  Session. Rationale: Sessions are cheap (a namespace dict + some output
-  state); a slide with many widget instances or several cloned editors
-  must not each spin up a Python process — that doesn't scale to "a dozen
-  cloned examples on one slide."
+- One **`Kernel` instance per Deck**, living in-process inside the same
+  FastAPI/uvicorn server process that also serves the frontend and every
+  websocket connection (`server.py`'s `create_app` constructs it
+  directly — no subprocess, no `multiprocessing`, no separate kernel
+  process of any kind). An earlier draft of this document described a
+  per-Deck kernel *subprocess*; that was never actually built, and this
+  section is corrected to match what shipped, not what was once planned.
+  `Kernel` holds the Deck's baseline dependency graph and runs every
+  Session's cell executions as plain synchronous Python calls.
 - Isolation between Sessions is **logical** (separate namespace dicts in
-  the same process), not OS-level. This trades a small amount of fault
-  isolation (a truly pathological cell could theoretically corrupt shared
-  interpreter state — e.g. monkeypatching a builtin) for the ability to run
-  many Sessions cheaply. Acceptable because the target user is an
-  instructor running trusted lesson code, not executing untrusted student
-  submissions.
-- The kernel subprocess as a whole is still isolated from the web server
-  process, so a hard crash (segfault, unrecoverable exception, infinite
-  loop that needs a hard kill) takes down one Deck's kernel, not the server
-  serving other decks or the UI itself.
-- Cell execution within a Session is single-threaded and queued: only one
-  re-run pass runs at a time per Session, so overlapping edits (e.g. two
-  rapid keystrokes) don't race. Multiple Sessions execute concurrently
-  (async tasks in the kernel subprocess), since they're fully independent.
+  the same process and the same interpreter), not OS- or process-level.
+  This trades a small amount of fault isolation (a truly pathological
+  cell could theoretically corrupt shared interpreter state — e.g.
+  monkeypatching a builtin) for the ability to run many Sessions cheaply.
+  Acceptable because the target user is an instructor running trusted
+  lesson code, not executing untrusted student submissions.
+- There is no separate kernel process to crash independently of the web
+  server — a hard failure in cell execution (an uncaught exception
+  outside `Kernel.execute_cell`'s own try/except, or a truly fatal
+  interpreter-level error) would take down the whole server process, not
+  just one Deck's kernel. Cell-level errors (the overwhelmingly common
+  case — a `NameError`, a bad edit) are caught and reported per-cell
+  (§6), never propagated this far.
+- Cell execution within a Session is effectively single-threaded and
+  queued, but not because of any lock or queue that exists in the code —
+  `kernel.py`/`ws_handler.py` have no `await` points anywhere (confirmed
+  by exhaustive search, `TODO.md` #46c), so one connection's entire
+  edit-then-rerun pass, however many cells it touches, always runs to
+  completion atomically before Python's asyncio event loop can even read
+  the *next* incoming websocket message, from any connection. This holds
+  identically whether that Session has one connection (the default) or
+  several sharing it (§5a) — the atomicity comes from there being no
+  yield point in the hot path, not from anything scoped to "one Session."
+  It would stop holding if a future change made any part of that path
+  genuinely `async` (e.g. offloading long-running cell execution via
+  `asyncio.to_thread`, or awaiting I/O from inside a cell) — see
+  `TODO.md` #46c's own documented finding for the reasoning, and revisit
+  this section (and add real synchronization) if that ever happens.
 
 ## 5. Websocket protocol
 
 One websocket connection per browser tab, addressing a `(deck_id,
-session_id)` pair. Every message carries a `session_id` and (for cell-level
-messages) a `cell_id`, plus an `element_id` for element-scoped messages, so
-the frontend and kernel always agree on which Session's which Cell's which
-Element a message concerns — required once the same Cell (and its
-elements) can be running in multiple Sessions at once (R2).
+session_id)` pair — the default, and still exactly what happens for a plain
+`codeslides edit`/`present` open with no shared-document link (§5a). A
+`session_id` is *usually* also a 1:1 proxy for "one connection," but not
+always: §5a's shared documents are the one case where several connections
+address the same `session_id` at once, by design. Every message carries a
+`session_id` and (for cell-level messages) a `cell_id`, plus an `element_id`
+for element-scoped messages, so the frontend and kernel always agree on
+which Session's which Cell's which Element a message concerns — required
+once the same Cell (and its elements) can be running in multiple Sessions
+at once (R2).
 
 Message types (illustrative, refined during implementation):
 
@@ -396,6 +435,99 @@ Session's *current* namespace values, cell source overrides, and every
 element's current value/UI-state at the moment of cloning, then severs any
 further connection — exactly the semantics R2 requires and the ones the
 marimo bug failed to provide.
+
+## 5a. Collaborative editing (shared documents)
+
+Implemented (`TODO.md` #46a–#46e); this section documents what shipped, as
+`TODO.md` #46f itself calls for. Coexists with — does not replace —
+everything above: cloning still always produces a fully independent
+Session (§1's invariant, §5's `clone_session`), and a plain `/ws` connection
+with no `?document=` query param still gets a brand-new, fully isolated
+Session exactly as before this feature existed. Every solo-session test and
+usage pattern that predates this section is unaffected by it.
+
+**Joining a shared document.** `/ws?document=<id>` (`server.py`'s
+`websocket_endpoint`) makes `<id>` double as that Session's own
+`session_id`: the first connection to use a given id creates the shared
+Session (`SessionRegistry.create_or_join`), every later connection with the
+same id attaches to that same Session — same namespace, same
+`source_overrides`, same cell/element instances — rather than getting its
+own. `codeslides edit|present --collaborative` (`cli.py`) is the join-link
+mechanism: it generates an unguessable id (`secrets.token_urlsafe(16)`, per
+the security posture below) and prints two URLs sharing that id.
+
+**Broadcast.** Every reply `handle_message` produces is fanned out to every
+connection attached to the Session, not just the one whose message
+triggered it (`SessionRegistry.peers`, `server.py`'s websocket loop) — this
+is what makes an edit or a slider drag one connection makes visible to
+everyone else on the same document. Three delivery audiences exist, not
+one: most message types go to sender-and-peers alike (the pre-#46d
+default — `cell_status`/`cell_output`/`cell_source_changed`/etc.); a
+`ws_handler.Broadcast`-wrapped reply goes to peers only, never the sender
+(e.g. the `presence_update` about a peer's own join — echoing it back to
+them is meaningless, they already know their own identity); a
+`ws_handler.SenderOnly`-wrapped reply goes only to the sender, never any
+peer (e.g. `join_ack`, a connection's own freshly-assigned identity, which
+no peer has any use for).
+
+**Conflict resolution.** Two connections editing the same cell resolve via
+plain last-write-wins: `Kernel.on_cell_edited` already unconditionally
+overwrites `session.source_overrides[cell_name]` regardless of who's
+editing, so the second `edit_cell` for a given cell simply wins outright,
+no merge. The "losing" connection is still broadcast the winning
+source+output (`cell_source_changed`, alongside the existing
+`cell_status`/`cell_output`), so their editor converges on the actual
+current state rather than silently drifting stale — the real, accepted
+risk this doesn't solve is two people typing in the *same* cell within the
+same round-trip losing whichever one's keystrokes arrived second; judged
+acceptable for classroom-scale collision rates rather than building
+character-level CRDT/OT merging (`TODO.md` #46b).
+
+**Concurrency.** No explicit lock or queue exists for a shared Session's
+execution — §4 explains why none is needed today (no `await` point in the
+hot path means one connection's whole edit-then-rerun pass already runs to
+completion atomically before the next message, from any connection, is
+even read).
+
+**Identity and presence.** A connection identifies itself once, via `join`
+(`display_name` → server-assigned `user_id` + a deterministic color,
+`SessionRegistry.join`) — a solo connection never sends this. Presence
+(`set_presence`, broadcasting a connection's current `cell_id`/`cursor_pos`
+to peers, and on-focus/blur in `CodeEditor.tsx`) and a peer-list UI
+(`PeerList.tsx`, reduced from the message stream by `presenceState.ts`) let
+each connection see who else is present and, at cell granularity, what
+they're doing — full character-position cursor decorations remain
+unimplemented (`TODO.md` #46d-iv).
+
+**Access control.** A connection's role (`editor`, the default, or
+`viewer`, via `?role=viewer`) is fixed for the connection's lifetime and
+enforced by an *allowlist*, not a denylist — `ws_handler.
+VIEWER_ALLOWED_MESSAGE_TYPES` (currently `join`/`set_presence` only) is the
+complete set of messages a viewer may ever send; everything else is
+rejected with an `error` message before `handle_message` is even called
+(`server.py`'s websocket loop, which is where the connection's real
+`session_id` lives — not inside `handle_message`, which would otherwise
+have to trust a client-supplied message field for this). The allowlist
+shape means a future message type defaults to blocked-for-viewers until
+someone deliberately adds it, rather than silently allowed.
+
+**Lifecycle.** A shared Session survives its last connection disconnecting
+for a grace period (`SHARED_SESSION_GRACE_PERIOD_SECONDS`, 120s by
+default) before being discarded, so a reload or brief network drop doesn't
+lose in-progress collaborative state; a solo Session gets the same
+treatment (this also happened to fix a pre-existing leak where a solo
+Session was never removed from the registry on disconnect at all).
+Presence for a departed connection (`presence_left`) is reported
+immediately on disconnect, independent of — and much sooner than — that
+grace period, since "is this Session still worth keeping warm" and "is
+this specific person still here" are different questions.
+
+**Security posture.** No accounts, no login, no persistent per-student
+identity across sessions — a shared-document link is unguessable-but-
+unauthenticated, the same trust model as a Google Docs "anyone with the
+link" share, chosen to match this project's total absence of any other
+auth infrastructure. Revisit only if a concrete need for durable identity
+(e.g. gradebook integration) emerges.
 
 ## 6. Output model
 
@@ -543,15 +675,27 @@ triggers execution:
 
 ## 9. What's deliberately deferred
 
-- Multi-user real-time collaborative editing — now a planned direction
-  (see `VISION.md` and `TODO.md` #46), not a permanent non-goal, but not
-  yet designed or implemented. The Session model above still assumes one
-  editor per Session, not concurrent editors sharing one Session's
-  namespace and `source_overrides` — that assumption is exactly what
-  `TODO.md` #46a needs to revisit. This section should be updated again
-  once a concrete design lands.
+- Multi-user real-time collaborative editing is **no longer on this
+  list** — it shipped (`TODO.md` #46a–#46e; see §5a for the design that
+  landed). What remains genuinely deferred within that feature, called
+  out specifically rather than bundled into a single stale bullet: full
+  character-position cursor/selection decorations in the editor
+  (`TODO.md` #46d-iv — presence today is cell-granularity only, "Alice is
+  editing this cell," not a rendered cursor at a specific offset);
+  character-level CRDT/OT merging for concurrent edits to the same cell
+  (`TODO.md` #46b-iv — last-write-wins was judged acceptable for
+  classroom-scale collision rates instead); frontend UI that hides or
+  disables mutating controls for a `viewer`-role connection (`TODO.md`
+  #46e — today's server-side rejection is the actual security boundary
+  and works correctly regardless, but a viewer's UI doesn't yet reflect
+  their own read-only status); and persistent per-student identity
+  across sessions / real accounts (`TODO.md` #46e-iii's explicit punt,
+  unless a concrete future need like gradebook integration arises).
 - Persisting Session state across server restarts — Sessions are
-  in-memory; only the Deck's source file is durable.
+  in-memory; only the Deck's source file is durable. (Unaffected by
+  collaborative editing: a shared document's Session is still in-memory
+  only, just kept warm longer across a *disconnect* — §5a's "Lifecycle"
+  — not across a server restart.)
 - A plugin API for third-party elements — the element kinds in `TODO.md`
   #6/#16 (slider, button, text input, turtle canvas, image, iframe, notes)
   are fixed for v1; the Element model above (§1, §3a) doesn't preclude
