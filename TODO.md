@@ -4437,6 +4437,79 @@ reshape the plan below and are called out explicitly where they apply:
       accepts, the Code tab disappears entirely for both peers and the
       cell shows "last edited by Alice."
 
+  - [x] 65-xi. **Unify primary/test source edits into the one push
+    mechanism, per a real user bug report**: after #65-x shipped, a
+    document had two different push mechanisms live at once --
+    `EditCell`/`SetTestSource` still broadcast immediately on
+    Shift+Enter (the original #65 behavior) while every structural
+    change went through #65-x's explicit-push `PushCellBundle`/
+    `AcceptCellBundle` flow. The user hit this directly: running a
+    `tests` element's code (Shift+Enter) on one tab immediately showed
+    an Accept/Reject prompt on another open tab, with no Push button
+    ever appearing on the editing tab at all. Clarified scope with the
+    user before implementing: "Every cell needs a button to push a
+    suggested improvement to the other open tabs of the same
+    document" -- i.e. fold primary/test edits into the *same* per-cell
+    bundle mechanism as structural changes, not a separate fix.
+    - The old `push_cell`/proposal mechanism (`PushCell`,
+      `WithdrawProposal`, `AcceptProposal`, `RejectProposal`,
+      `CellProposed`, `ProposalWithdrawn`, `ProposalAccepted`,
+      `ProposalRejected`, `ProposalConflict`, and
+      `CellInstance.proposals`/`test_proposals`) is removed entirely,
+      per the user's explicit choice over leaving it inert dead code --
+      not deprecated, deleted from `protocol.py`, `session.py`,
+      `ws_handler.py`, and their frontend counterparts
+      (`protocol.ts`, `deckState.ts`, `Cell.tsx`,
+      `TestsElementWidget.tsx`, `App.tsx`, `SlideShow.tsx`).
+    - `EditCell` and `SetTestSource` are now rejected outright on a
+      review-mode document, exactly like #65-x's 11 structural types
+      (`_review_mode_rejection`-style error pointing at
+      `push_cell_bundle` instead) -- the frontend stages both as
+      `{payload, summary}` entries in the same per-cell
+      `pendingActions` list `stageOrSend` already built for structural
+      changes (`Cell.tsx`'s `onStagePrimaryEdit`/`onStageTestEdit`
+      replace the old `onPushCell`/`onWithdrawProposal`/
+      `onAcceptProposal`/`onRejectProposal` props). No new server-side
+      replay logic was needed: `AcceptCellBundle`'s existing generic
+      `decode_client_message` + `handle_message` replay loop already
+      handles any client message type, `EditCell`/`SetTestSource`
+      included, with `session.review_mode` temporarily flipped off for
+      the replay exactly as #65-x already did for structural actions.
+    - **Gap found and fixed during this work**: replaying a
+      `SetTestSource` action inside `AcceptCellBundle` produced only
+      the resulting `ElementOutput` (pass/fail/print) -- unlike
+      `EditCell`, `SetTestSource`'s own reply never echoes the new
+      *source* text itself back, since a non-review-mode document's
+      single sender already has it locally. In a bundle-accept, the
+      accepting peer (and everyone else) never sent that edit and has
+      no other way to learn the new test source. Fixed by adding a new
+      `TestSourceChanged` message (`protocol.py`/`protocol.ts`, same
+      shape as `CellSourceChanged`) that `AcceptCellBundle`'s replay
+      loop emits itself whenever it replays a `SetTestSource` action;
+      the frontend's `testSourceOverrides` state updates from it the
+      same way `cell_source_changed` already updates the primary
+      editor. Found by direct `TestClient` inspection of the reply
+      list (no source string anywhere in it), not by a failing test or
+      user report -- worth checking for on any future message type
+      folded into this same generic replay path.
+    - Tests: removed 12 now-obsolete tests covering the deleted
+      mechanism (`test_websocket_push_cell_*`, `test_websocket_*_
+      proposal_*`, both the primary-source and tests-element variants);
+      added 2 new tests confirming no message reaches a peer until an
+      explicit push (the exact reported bug) and a bundle mixing an
+      `edit_cell` action, a `set_test_source` action, and a
+      `set_hide_code` action together all replay correctly in one
+      accept, with `test_source_changed` broadcasting the right
+      `element_id`/source. Full suite: 617 passed, no regressions.
+    - Verified end-to-end with two real browser contexts (Playwright)
+      against `Lectures/Chapters/chapter4.py` in `--review-mode`,
+      reproducing the user's exact repro steps: editing a `tests`
+      element's source and pressing Shift+Enter now only shows
+      "Changes not yet pushed: Edit test `<name>`" with Push/Discard
+      buttons on the editing tab, with zero effect on the peer tab;
+      only after clicking Push does the peer see "Alice proposed these
+      changes to this cell: Edit test `<name>`" with Accept/Reject.
+
 - [ ] **66. Collapsible chat panel for shared documents** -- lower-right
   corner collapsed to a small affordance; expands to a full-height
   third column to the right of the cells and the existing element-tabs

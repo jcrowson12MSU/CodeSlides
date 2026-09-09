@@ -1168,11 +1168,11 @@ def test_websocket_session_created_reports_review_mode():
 
 
 def test_websocket_edit_cell_rejected_on_review_mode_document():
-    """TODO.md #65-iv: edit_cell -- today's always-live immediate-
+    """TODO.md #65-iv/#65-xi: edit_cell -- today's always-live immediate-
     broadcast path -- is rejected outright on a review_mode document
     rather than silently reinterpreted as a push; the frontend is
-    expected to send push_cell instead once it knows via session_created
-    this document is in review mode."""
+    expected to stage this edit locally and push it via push_cell_bundle
+    once it knows via session_created this document is in review mode."""
     client = TestClient(create_app(_build_deck(), review_mode=True))
     with client.websocket_connect("/ws?document=review-2") as ws:
         ws.receive_json()  # session_created
@@ -1193,340 +1193,11 @@ def test_websocket_edit_cell_rejected_on_review_mode_document():
         assert "live_demo" not in session.source_overrides
 
 
-def test_websocket_push_cell_does_not_run_or_broadcast_immediately():
-    """TODO.md #65-i/#65-iv: push_cell only stages a CellProposal -- it
-    must not re-run the cell or change session.source_overrides, and the
-    only reply is cell_proposed, sent to the *other* peer (Broadcast,
-    peers-only -- the proposer already has this state, they just typed
-    and pushed it)."""
-    client = TestClient(create_app(_build_deck(), review_mode=True))
-    with (
-        client.websocket_connect("/ws?document=review-3") as ws_a,
-        client.websocket_connect("/ws?document=review-3") as ws_b,
-    ):
-        ws_a.receive_json()  # session_created
-        ws_b.receive_json()  # session_created
-        ws_a.send_json({"type": "join", "session_id": "review-3", "display_name": "Alice"})
-        ws_a.receive_json()  # join_ack
-        ws_b.receive_json()  # presence_update about Alice
-
-        ws_a.send_json(
-            {
-                "type": "push_cell",
-                "session_id": "review-3",
-                "cell_id": "live_demo",
-                "source": "def live_demo(speed):\n    result = base * speed + 1\n    return result\n",
-            }
-        )
-        # The proposer gets no reply at all (Broadcast is peers-only).
-        proposed = ws_b.receive_json()
-        assert proposed["type"] == "cell_proposed"
-        assert proposed["cell_id"] == "live_demo"
-        assert proposed["proposer_display_name"] == "Alice"
-        assert "+ 1" in proposed["source"]
-
-        session = client.app.state.registry.get("review-3")
-        assert "live_demo" not in session.source_overrides
-        assert session.instances["live_demo"].status == "idle"
-
-
-def test_websocket_push_cell_rejected_on_non_review_mode_document():
-    """TODO.md #65-iv: push_cell only makes sense on a review_mode
-    document -- rejected with an error on a plain shared document (use
-    edit_cell there instead), confirming the two workflows can't be
-    mixed on the same document."""
-    client = TestClient(create_app(_build_deck()))
-    with client.websocket_connect("/ws?document=plain-2") as ws:
-        ws.receive_json()  # session_created
-        ws.send_json({"type": "join", "session_id": "plain-2", "display_name": "Alice"})
-        ws.receive_json()  # join_ack
-        ws.send_json(
-            {
-                "type": "push_cell",
-                "session_id": "plain-2",
-                "cell_id": "live_demo",
-                "source": "def live_demo(speed):\n    return 1\n",
-            }
-        )
-        error = ws.receive_json()
-        assert error["type"] == "error"
-        assert "review mode" in error["message"]
-
-
-def test_websocket_accept_proposal_merges_reruns_and_attributes_to_proposer():
-    """TODO.md #65-iv/#65 attribution decision: accepting a proposal (a)
-    reuses the same on_cell_edited path edit_cell uses (source_overrides
-    updated, cell re-run), (b) broadcasts proposal_accepted +
-    cell_status/cell_output to everyone, and (c) attributes the change to
-    the *proposer* (who wrote the content), not whoever clicked Accept."""
-    client = TestClient(create_app(_build_deck(), review_mode=True))
-    with (
-        client.websocket_connect("/ws?document=review-4") as ws_a,
-        client.websocket_connect("/ws?document=review-4") as ws_b,
-    ):
-        ws_a.receive_json()  # session_created
-        ws_b.receive_json()  # session_created
-        ws_a.send_json({"type": "join", "session_id": "review-4", "display_name": "Alice"})
-        ws_a.receive_json()  # join_ack
-        ws_b.receive_json()  # presence_update about Alice
-        ws_b.send_json({"type": "join", "session_id": "review-4", "display_name": "Bob"})
-        bob_join_ack = ws_b.receive_json()  # join_ack (SenderOnly -- ws_b's only reply to its own Join)
-        bob_user_id = bob_join_ack["user_id"]
-        ws_a.receive_json()  # presence_update about Bob joining (Broadcast, peers-only)
-
-        ws_a.send_json({"type": "run_all", "session_id": "review-4"})
-        for _ in range(4):
-            ws_a.receive_json()
-        for _ in range(4):
-            ws_b.receive_json()
-
-        ws_a.send_json(
-            {
-                "type": "push_cell",
-                "session_id": "review-4",
-                "cell_id": "live_demo",
-                "source": "def live_demo(speed):\n    result = base * speed + 1\n    return result\n",
-            }
-        )
-        proposed = ws_b.receive_json()
-        assert proposed["type"] == "cell_proposed"
-        alice_user_id = proposed["proposer_user_id"]
-
-        # Bob (not the proposer) accepts Alice's proposal.
-        ws_b.send_json(
-            {
-                "type": "accept_proposal",
-                "session_id": "review-4",
-                "cell_id": "live_demo",
-                "proposer_user_id": alice_user_id,
-            }
-        )
-        bob_own_replies = [ws_b.receive_json() for _ in range(4)]
-        alice_broadcast_replies = [ws_a.receive_json() for _ in range(4)]
-
-        accepted = next(m for m in bob_own_replies if m["type"] == "proposal_accepted")
-        assert accepted["cell_id"] == "live_demo"
-        assert accepted["accepted_from_user_id"] == alice_user_id
-        assert accepted["accepted_by_user_id"] == bob_user_id
-        assert "+ 1" in accepted["source"]
-        assert accepted in alice_broadcast_replies
-
-        output = next(m for m in bob_own_replies if m["type"] == "cell_output")
-        assert output["output"]["value"] == 16  # 5 * 3 + 1
-
-        attribution = next(m for m in bob_own_replies if m["type"] == "cell_attribution_changed")
-        assert attribution["last_edited_by"] == "Alice"  # the proposer, not Bob who accepted
-
-        session = client.app.state.registry.get("review-4")
-        assert "+ 1" in session.source_overrides["live_demo"]
-        assert session.instances["live_demo"].last_edited_by == "Alice"
-        assert alice_user_id not in session.instances["live_demo"].proposals
-
-
-def test_websocket_reject_proposal_notifies_everyone_and_clears_it():
-    """TODO.md #65-iv: reject_proposal clears the pending proposal and
-    tells everyone (including the proposer, even when the proposer isn't
-    the one who sent reject_proposal) it's gone -- unwrapped, sender-and-
-    peers-alike delivery, not Broadcast, specifically so the proposer
-    (who may or may not be the sender) always sees it."""
-    client = TestClient(create_app(_build_deck(), review_mode=True))
-    with (
-        client.websocket_connect("/ws?document=review-5") as ws_a,
-        client.websocket_connect("/ws?document=review-5") as ws_b,
-    ):
-        ws_a.receive_json()
-        ws_b.receive_json()
-        ws_a.send_json({"type": "join", "session_id": "review-5", "display_name": "Alice"})
-        ws_a.receive_json()
-        ws_b.receive_json()
-
-        ws_a.send_json(
-            {
-                "type": "push_cell",
-                "session_id": "review-5",
-                "cell_id": "live_demo",
-                "source": "def live_demo(speed):\n    return 1\n",
-            }
-        )
-        proposed = ws_b.receive_json()
-        alice_user_id = proposed["proposer_user_id"]
-
-        ws_b.send_json(
-            {
-                "type": "reject_proposal",
-                "session_id": "review-5",
-                "cell_id": "live_demo",
-                "proposer_user_id": alice_user_id,
-            }
-        )
-        rejected_to_bob = ws_b.receive_json()
-        rejected_to_alice = ws_a.receive_json()
-        assert rejected_to_bob["type"] == rejected_to_alice["type"] == "proposal_rejected"
-        assert rejected_to_alice["rejected_by_user_id"] == alice_user_id
-
-        session = client.app.state.registry.get("review-5")
-        assert alice_user_id not in session.instances["live_demo"].proposals
-        assert "live_demo" not in session.source_overrides
-
-
-def test_websocket_withdraw_proposal_clears_own_proposal():
-    """TODO.md #65-iv: withdraw_proposal removes the sender's own pending
-    proposal and broadcasts proposal_withdrawn to peers; a second
-    withdraw (nothing left to withdraw) is a harmless no-op, not an
-    error."""
-    client = TestClient(create_app(_build_deck(), review_mode=True))
-    with (
-        client.websocket_connect("/ws?document=review-6") as ws_a,
-        client.websocket_connect("/ws?document=review-6") as ws_b,
-    ):
-        ws_a.receive_json()
-        ws_b.receive_json()
-        ws_a.send_json({"type": "join", "session_id": "review-6", "display_name": "Alice"})
-        ws_a.receive_json()
-        ws_b.receive_json()
-
-        ws_a.send_json(
-            {
-                "type": "push_cell",
-                "session_id": "review-6",
-                "cell_id": "live_demo",
-                "source": "def live_demo(speed):\n    return 1\n",
-            }
-        )
-        ws_b.receive_json()  # cell_proposed
-
-        ws_a.send_json({"type": "withdraw_proposal", "session_id": "review-6", "cell_id": "live_demo"})
-        withdrawn = ws_b.receive_json()
-        assert withdrawn["type"] == "proposal_withdrawn"
-
-        session = client.app.state.registry.get("review-6")
-        assert session.instances["live_demo"].proposals == {}
-
-        # Second withdraw: no proposal left, no error, no message at all.
-        ws_a.send_json({"type": "withdraw_proposal", "session_id": "review-6", "cell_id": "live_demo"})
-        ws_a.send_json({"type": "set_presence", "session_id": "review-6", "cell_id": None})
-        # The set_presence broadcast reaching ws_b proves the connection
-        # is still alive and the withdraw didn't hang/error the socket --
-        # if withdraw_proposal had produced a reply we'd see it first.
-        drained = ws_b.receive_json()
-        assert drained["type"] == "presence_update"
-
-
-def test_websocket_accept_proposal_flags_stale_sibling_proposal_as_conflict():
-    """TODO.md #65/PROPOSAL_review_workflow.md decision #3: when
-    accepting one proposal changes a cell's accepted source out from
-    under another still-pending proposal for the *same* cell, the other
-    proposer gets a proposal_conflict (carrying the new accepted source)
-    rather than having their proposal silently discarded or silently
-    merged against a base it was never diffed against."""
-    client = TestClient(create_app(_build_deck(), review_mode=True))
-    with (
-        client.websocket_connect("/ws?document=review-7") as ws_a,
-        client.websocket_connect("/ws?document=review-7") as ws_b,
-        client.websocket_connect("/ws?document=review-7") as ws_c,
-    ):
-        ws_a.receive_json()
-        ws_b.receive_json()
-        ws_c.receive_json()
-        ws_a.send_json({"type": "join", "session_id": "review-7", "display_name": "Alice"})
-        ws_a.receive_json()
-        ws_b.receive_json()
-        ws_c.receive_json()
-        ws_b.send_json({"type": "join", "session_id": "review-7", "display_name": "Bob"})
-        ws_b.receive_json()
-        ws_a.receive_json()
-        ws_c.receive_json()
-
-        # Alice and Bob both propose different changes to the same cell.
-        ws_a.send_json(
-            {
-                "type": "push_cell",
-                "session_id": "review-7",
-                "cell_id": "live_demo",
-                "source": "def live_demo(speed):\n    return 1\n",
-            }
-        )
-        alice_proposed = ws_b.receive_json()
-        ws_c.receive_json()
-        alice_user_id = alice_proposed["proposer_user_id"]
-
-        ws_b.send_json(
-            {
-                "type": "push_cell",
-                "session_id": "review-7",
-                "cell_id": "live_demo",
-                "source": "def live_demo(speed):\n    return 2\n",
-            }
-        )
-        bob_proposed = ws_a.receive_json()
-        ws_c.receive_json()
-        bob_user_id = bob_proposed["proposer_user_id"]
-
-        # A third peer (any editor, per decision #1) accepts Alice's
-        # proposal first -- Bob's still-pending proposal was diffed
-        # against the pre-Alice-acceptance source, so it's now stale.
-        ws_c.send_json(
-            {
-                "type": "accept_proposal",
-                "session_id": "review-7",
-                "cell_id": "live_demo",
-                "proposer_user_id": alice_user_id,
-            }
-        )
-        c_replies = [ws_c.receive_json() for _ in range(4)]
-        assert any(m["type"] == "proposal_accepted" for m in c_replies)
-        for _ in range(4):
-            ws_a.receive_json()  # broadcast of the acceptance to Alice
-        for _ in range(4):
-            ws_b.receive_json()  # broadcast of the acceptance to Bob (also a peer of ws_c)
-
-        conflict = ws_b.receive_json()
-        assert conflict["type"] == "proposal_conflict"
-        assert conflict["cell_id"] == "live_demo"
-        assert "return 1" in conflict["source"]
-
-        # Bob's proposal is still pending server-side (flagged, not
-        # discarded) -- he can still choose to re-push or withdraw it.
-        session = client.app.state.registry.get("review-7")
-        assert bob_user_id in session.instances["live_demo"].proposals
-
-
-def test_websocket_viewer_role_rejects_review_workflow_messages():
-    """TODO.md #65-iv: a viewer-role connection cannot push, accept,
-    reject, or withdraw proposals -- VIEWER_ALLOWED_MESSAGE_TYPES is an
-    allowlist, so every new #65 message type is blocked-by-default
-    without needing to be named explicitly."""
-    client = TestClient(create_app(_build_deck(), review_mode=True))
-    with client.websocket_connect("/ws?document=review-8&role=viewer") as ws:
-        ws.receive_json()  # session_created
-
-        for payload in (
-            {"type": "push_cell", "session_id": "review-8", "cell_id": "live_demo", "source": "x"},
-            {
-                "type": "accept_proposal",
-                "session_id": "review-8",
-                "cell_id": "live_demo",
-                "proposer_user_id": "whoever",
-            },
-            {
-                "type": "reject_proposal",
-                "session_id": "review-8",
-                "cell_id": "live_demo",
-                "proposer_user_id": "whoever",
-            },
-            {"type": "withdraw_proposal", "session_id": "review-8", "cell_id": "live_demo"},
-        ):
-            ws.send_json(payload)
-            error = ws.receive_json()
-            assert error["type"] == "error"
-            assert "viewer" in error["message"]
-
-
 def test_websocket_non_review_mode_document_is_completely_unaffected_by_65():
     """TODO.md #65: confirms a plain (review_mode=False, today's default)
     shared document behaves exactly as before this feature existed --
     edit_cell still runs/broadcasts immediately, and no CellInstance ever
-    gets a non-empty proposals dict."""
+    gets a pending structural_bundle."""
     client = TestClient(create_app(_build_deck()))
     with (
         client.websocket_connect("/ws?document=plain-3") as ws_a,
@@ -1551,236 +1222,7 @@ def test_websocket_non_review_mode_document_is_completely_unaffected_by_65():
         session = client.app.state.registry.get("plain-3")
         assert session.review_mode is False
         assert "return 1" in session.source_overrides["live_demo"]
-        assert all(inst.proposals == {} for inst in session.instances.values())
-
-
-# -- TODO.md #65 follow-up: push/review for a `tests` element's own source --
-
-
-def test_websocket_set_test_source_rejected_on_review_mode_document():
-    """TODO.md #65 follow-up: set_test_source -- the always-live path a
-    `tests` element's editor used before this follow-up -- is rejected
-    outright on a review_mode document, same "use push_cell instead"
-    posture edit_cell already has, so a stale/confused client fails
-    loudly instead of silently bypassing review."""
-    client = TestClient(create_app(_build_hidden_code_deck(), review_mode=True))
-    with client.websocket_connect("/ws?document=review-tests-1") as ws:
-        ws.receive_json()  # session_created
-        ws.send_json(
-            {
-                "type": "set_test_source",
-                "session_id": "review-tests-1",
-                "cell_id": "check_double",
-                "element_id": "check_double",
-                "source": "print(compute(1))",
-            }
-        )
-        error = ws.receive_json()
-        assert error["type"] == "error"
-        assert "review mode" in error["message"]
-
-
-def test_websocket_push_cell_for_tests_element_does_not_apply_immediately():
-    """TODO.md #65 follow-up: push_cell with element_id set stages a
-    proposal for a `tests` element's source -- it must NOT call
-    on_tests_edited (no re-run, no ElementInstance.value mutation, no
-    source_overrides write) and must NOT reach the pushing connection's
-    own display as anything but a local echo; the only wire effect is
-    cell_proposed to the *other* peer."""
-    client = TestClient(create_app(_build_hidden_code_deck(), review_mode=True))
-    with (
-        client.websocket_connect("/ws?document=review-tests-2") as ws_a,
-        client.websocket_connect("/ws?document=review-tests-2") as ws_b,
-    ):
-        ws_a.receive_json()
-        ws_b.receive_json()
-        ws_a.send_json({"type": "join", "session_id": "review-tests-2", "display_name": "Alice"})
-        ws_a.receive_json()  # join_ack
-        ws_b.receive_json()  # presence_update
-
-        ws_a.send_json(
-            {
-                "type": "push_cell",
-                "session_id": "review-tests-2",
-                "cell_id": "check_double",
-                "element_id": "check_double",
-                "source": "print(compute(999))",
-            }
-        )
-        proposed = ws_b.receive_json()
-        assert proposed["type"] == "cell_proposed"
-        assert proposed["element_id"] == "check_double"
-        assert "999" in proposed["source"]
-
-        session = client.app.state.registry.get("review-tests-2")
-        instance = session.instances["check_double"]
-        assert "check_double" in instance.test_proposals
-        # Not applied: the element's own live value/content is untouched,
-        # and source_overrides was never written for this cell.
-        assert instance.elements["check_double"].value == "print(compute(21))"
-        assert "check_double" not in session.source_overrides
-
-
-def test_websocket_accept_tests_element_proposal_applies_and_attributes_to_proposer():
-    """TODO.md #65 follow-up: accepting a tests-element proposal (a)
-    calls Kernel.on_tests_edited (the same path set_test_source always
-    used), producing a real element_output with the new result, (b)
-    persists it into source_overrides via set_tests_default, and (c)
-    attributes the change to the proposer, mirroring the primary-source
-    accept path's own attribution rule."""
-    client = TestClient(create_app(_build_hidden_code_deck(), review_mode=True))
-    with (
-        client.websocket_connect("/ws?document=review-tests-3") as ws_a,
-        client.websocket_connect("/ws?document=review-tests-3") as ws_b,
-    ):
-        ws_a.receive_json()
-        ws_b.receive_json()
-        ws_a.send_json({"type": "join", "session_id": "review-tests-3", "display_name": "Alice"})
-        ws_a.receive_json()
-        ws_b.receive_json()
-
-        ws_a.send_json({"type": "run_all", "session_id": "review-tests-3"})
-        for _ in range(5):
-            ws_a.receive_json()
-        for _ in range(5):
-            ws_b.receive_json()
-
-        ws_a.send_json(
-            {
-                "type": "push_cell",
-                "session_id": "review-tests-3",
-                "cell_id": "check_double",
-                "element_id": "check_double",
-                "source": "print(compute(999))",
-            }
-        )
-        proposed = ws_b.receive_json()
-        alice_user_id = proposed["proposer_user_id"]
-
-        ws_b.send_json(
-            {
-                "type": "accept_proposal",
-                "session_id": "review-tests-3",
-                "cell_id": "check_double",
-                "proposer_user_id": alice_user_id,
-                "element_id": "check_double",
-            }
-        )
-        bob_replies = [ws_b.receive_json() for _ in range(3)]
-        accepted = next(m for m in bob_replies if m["type"] == "proposal_accepted")
-        assert accepted["element_id"] == "check_double"
-        output = next(m for m in bob_replies if m["type"] == "element_output")
-        assert output["element_id"] == "check_double"
-        assert "1998" in output["content"]["stdout"]
-        attribution = next(m for m in bob_replies if m["type"] == "cell_attribution_changed")
-        assert attribution["last_edited_by"] == "Alice"
-
-        alice_broadcast = [ws_a.receive_json() for _ in range(3)]
-        assert accepted in alice_broadcast
-
-        session = client.app.state.registry.get("review-tests-3")
-        instance = session.instances["check_double"]
-        assert instance.elements["check_double"].value == "print(compute(999))"
-        assert instance.test_proposals.get("check_double", {}) == {}
-        assert "print(compute(999))" in session.source_overrides["check_double"]
-        assert instance.last_edited_by == "Alice"
-
-
-def test_websocket_reject_and_withdraw_tests_element_proposal():
-    """TODO.md #65 follow-up: reject_proposal/withdraw_proposal with
-    element_id set clear a pending tests-element proposal without ever
-    calling on_tests_edited (no mutation of ElementInstance.value or
-    source_overrides)."""
-    client = TestClient(create_app(_build_hidden_code_deck(), review_mode=True))
-    with (
-        client.websocket_connect("/ws?document=review-tests-4") as ws_a,
-        client.websocket_connect("/ws?document=review-tests-4") as ws_b,
-    ):
-        ws_a.receive_json()
-        ws_b.receive_json()
-        ws_a.send_json({"type": "join", "session_id": "review-tests-4", "display_name": "Alice"})
-        ws_a.receive_json()
-        ws_b.receive_json()
-
-        ws_a.send_json(
-            {
-                "type": "push_cell",
-                "session_id": "review-tests-4",
-                "cell_id": "check_double",
-                "element_id": "check_double",
-                "source": "print(compute(5))",
-            }
-        )
-        proposed = ws_b.receive_json()
-        alice_user_id = proposed["proposer_user_id"]
-
-        ws_b.send_json(
-            {
-                "type": "reject_proposal",
-                "session_id": "review-tests-4",
-                "cell_id": "check_double",
-                "proposer_user_id": alice_user_id,
-                "element_id": "check_double",
-            }
-        )
-        rejected_to_bob = ws_b.receive_json()
-        rejected_to_alice = ws_a.receive_json()
-        assert rejected_to_bob["type"] == rejected_to_alice["type"] == "proposal_rejected"
-        assert rejected_to_alice["element_id"] == "check_double"
-
-        session = client.app.state.registry.get("review-tests-4")
-        instance = session.instances["check_double"]
-        assert instance.test_proposals.get("check_double", {}) == {}
-        assert instance.elements["check_double"].value == "print(compute(21))"
-
-        # Push again, then withdraw.
-        ws_a.send_json(
-            {
-                "type": "push_cell",
-                "session_id": "review-tests-4",
-                "cell_id": "check_double",
-                "element_id": "check_double",
-                "source": "print(compute(6))",
-            }
-        )
-        ws_b.receive_json()  # cell_proposed
-
-        ws_a.send_json(
-            {
-                "type": "withdraw_proposal",
-                "session_id": "review-tests-4",
-                "cell_id": "check_double",
-                "element_id": "check_double",
-            }
-        )
-        withdrawn = ws_b.receive_json()
-        assert withdrawn["type"] == "proposal_withdrawn"
-        assert withdrawn["element_id"] == "check_double"
-
-        assert instance.test_proposals.get("check_double", {}) == {}
-        assert instance.elements["check_double"].value == "print(compute(21))"
-
-
-def test_websocket_viewer_role_rejects_tests_element_proposal_messages():
-    """TODO.md #65 follow-up: a viewer cannot push/accept/reject/withdraw
-    a tests-element proposal either -- same allowlist-shaped rejection
-    the primary-source path already has, just exercised with element_id
-    set."""
-    client = TestClient(create_app(_build_hidden_code_deck(), review_mode=True))
-    with client.websocket_connect("/ws?document=review-tests-5&role=viewer") as ws:
-        ws.receive_json()
-        ws.send_json(
-            {
-                "type": "push_cell",
-                "session_id": "review-tests-5",
-                "cell_id": "check_double",
-                "element_id": "check_double",
-                "source": "x",
-            }
-        )
-        error = ws.receive_json()
-        assert error["type"] == "error"
-        assert "viewer" in error["message"]
+        assert all(inst.structural_bundle is None for inst in session.instances.values())
 
 
 # -- TODO.md #65-x: structural (non-source) changes through review too --
@@ -2111,3 +1553,171 @@ def test_websocket_non_review_mode_document_unaffected_by_structural_bundles(tmp
         session = client.app.state.registry.get("struct-7")
         assert session.review_mode is False
         assert session.instances["renamed"].structural_bundle is None
+
+
+# -- TODO.md #65-xi: unify primary/test source edits into the one push
+# mechanism -- reported directly by the user: on review_mode, a code/test
+# edit used to broadcast an accept/reject prompt to every other peer
+# immediately on Shift+Enter (the original #65/#65-ix push_cell path),
+# with no explicit "push" step, while structural changes already required
+# clicking Push -- confusing, since the two looked identical but behaved
+# differently. edit_cell/set_test_source are now just two more action
+# types inside the same push_cell_bundle mechanism as the 11 structural
+# ones, with no code path left that broadcasts a source edit to peers
+# before an explicit push.
+
+
+def test_websocket_edit_cell_no_longer_broadcasts_immediately_in_review_mode():
+    """TODO.md #65-xi: confirms the exact bug report -- editing a cell's
+    code in review mode must NOT produce anything at all for another
+    peer until an explicit push_cell_bundle happens. edit_cell itself is
+    still rejected outright (TODO.md #65-iv's existing behavior,
+    unchanged); this test's point is that there is no other message type
+    a client could send that reaches a peer immediately either."""
+    client = TestClient(create_app(_build_deck(), review_mode=True))
+    with (
+        client.websocket_connect("/ws?document=unify-1") as ws_a,
+        client.websocket_connect("/ws?document=unify-1") as ws_b,
+    ):
+        ws_a.receive_json()
+        ws_b.receive_json()
+        ws_a.send_json({"type": "join", "session_id": "unify-1", "display_name": "Alice"})
+        ws_a.receive_json()
+        ws_b.receive_json()
+
+        ws_a.send_json(
+            {
+                "type": "edit_cell",
+                "session_id": "unify-1",
+                "cell_id": "live_demo",
+                "source": "def live_demo(speed):\n    return 999\n",
+            }
+        )
+        error = ws_a.receive_json()
+        assert error["type"] == "error"
+        assert "review mode" in error["message"]
+
+        # B must receive nothing at all -- confirm the connection is
+        # still alive and B's queue is genuinely empty by sending B a
+        # harmless message and checking its own reply arrives next,
+        # not some stray broadcast from A's rejected edit.
+        ws_b.send_json({"type": "set_presence", "session_id": "unify-1", "cell_id": None})
+        # No reply expected for an unidentified connection's own
+        # set_presence (silent no-op, per existing behavior) -- instead
+        # prove liveness/emptiness by having A do something that DOES
+        # produce a reply only to A, then confirming B still has nothing
+        # queued up from the earlier edit_cell attempt.
+        ws_a.send_json({"type": "run_all", "session_id": "unify-1"})
+        for _ in range(4):
+            ws_a.receive_json()
+        for _ in range(4):
+            ws_b.receive_json()  # run_all's own broadcast, not from edit_cell
+
+
+def test_websocket_push_cell_bundle_with_edit_cell_and_set_test_source_actions(tmp_path):
+    """TODO.md #65-xi: a single bundle can mix an edit_cell action, a
+    set_test_source action, and a structural action together -- the
+    whole point of unifying them into one mechanism. Confirms
+    test_source_changed is broadcast for the test-source action (the new
+    message this unification needed, since set_test_source's own reply
+    never echoes the source itself)."""
+    deck_path = tmp_path / "deck.py"
+    deck_path.write_text(
+        "from codeslides import App, ui\n\n"
+        "app = App()\n\n"
+        '@app.cell(instance="editable", elements=[ui.tests("check", default="print(1)")])\n'
+        "def cell_a():\n"
+        "    a = 1\n"
+        "    return a\n"
+    )
+    from codeslides.loader import load_deck
+
+    client = TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True))
+    with (
+        client.websocket_connect("/ws?document=unify-2") as ws_a,
+        client.websocket_connect("/ws?document=unify-2") as ws_b,
+    ):
+        ws_a.receive_json()
+        ws_b.receive_json()
+        ws_a.send_json({"type": "join", "session_id": "unify-2", "display_name": "Alice"})
+        ws_a.receive_json()
+        ws_b.receive_json()
+
+        edit_payload = {
+            "type": "edit_cell",
+            "session_id": "unify-2",
+            "cell_id": "cell_a",
+            "source": "def cell_a():\n    a = 42\n    return a\n",
+        }
+        test_payload = {
+            "type": "set_test_source",
+            "session_id": "unify-2",
+            "cell_id": "cell_a",
+            "element_id": "check",
+            "source": "print(cell_a())",
+        }
+        hide_payload = {
+            "type": "set_hide_code",
+            "session_id": "unify-2",
+            "cell_id": "cell_a",
+            "hide_code": True,
+        }
+        ws_a.send_json(
+            {
+                "type": "push_cell_bundle",
+                "session_id": "unify-2",
+                "cell_id": "cell_a",
+                "actions": [
+                    {"payload": edit_payload, "summary": "Edit code"},
+                    {"payload": test_payload, "summary": "Edit test `check`"},
+                    {"payload": hide_payload, "summary": "Hide code"},
+                ],
+            }
+        )
+        proposed = ws_b.receive_json()
+        assert proposed["type"] == "cell_bundle_proposed"
+        assert proposed["action_summaries"] == ["Edit code", "Edit test `check`", "Hide code"]
+        alice_user_id = proposed["proposer_user_id"]
+
+        ws_b.send_json(
+            {
+                "type": "accept_cell_bundle",
+                "session_id": "unify-2",
+                "cell_id": "cell_a",
+                "proposer_user_id": alice_user_id,
+            }
+        )
+        replies = [ws_b.receive_json() for _ in range(8)]
+        types = [m["type"] for m in replies]
+        assert "bundle_accepted" in types
+        assert "cell_source_changed" in types
+        assert "test_source_changed" in types
+        assert "hide_code_set" in types
+
+        test_source_changed = next(m for m in replies if m["type"] == "test_source_changed")
+        assert test_source_changed["element_id"] == "check"
+        assert test_source_changed["source"] == "print(cell_a())"
+
+        # cell_a has a `tests` element, so it's only *defined* (never
+        # auto-called with no arguments) per _run_cells's "define, don't
+        # call" rule for tested cells -- its own cell_output carries no
+        # value, but the test's own call into cell_a() (replayed after
+        # the edit_cell action, against the freshly-redefined function)
+        # proves the new source ("a = 42") actually took effect.
+        cell_output = next(m for m in replies if m["type"] == "cell_output")
+        assert cell_output["output"]["value"] is None
+
+        # Two element_output messages fire: one right after edit_cell's
+        # own define-and-auto-test replay (still against the *old* test
+        # source, "print(1)"), and a second after set_test_source
+        # replays its own re-run with the new source -- the latter is
+        # the one that proves the new cell body ("a = 42") took effect.
+        test_results = [m for m in replies if m["type"] == "element_output"]
+        assert len(test_results) == 2
+        assert test_results[-1]["content"]["status"] == "pass"
+        assert test_results[-1]["content"]["stdout"].strip() == "42"
+
+        session = client.app.state.registry.get("unify-2")
+        assert session.instances["cell_a"].structural_bundle is None
+        assert "def cell_a" in deck_path.read_text()
+        assert client.app.state.registry.kernel.deck.cells["cell_a"].hide_code is True

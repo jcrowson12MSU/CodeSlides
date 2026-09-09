@@ -636,19 +636,6 @@ function App() {
           if (cells[msg.cell_id]) {
             cells[msg.cell_id] = { ...cells[msg.cell_id], source: msg.source }
           }
-        } else if (msg.type === 'proposal_accepted' && msg.element_id == null) {
-          // TODO.md #65: same "every connection converges on the new
-          // source" reasoning as cell_source_changed above -- an
-          // accepted proposal becomes the document's actual current
-          // source for everyone, editor included. Only for the cell's
-          // *primary* source (element_id unset) -- a tests-element
-          // accept is handled separately below, since it belongs in
-          // testSourceOverrides, not cells[cell_id].source.
-          if (!changed) cells = { ...cells }
-          changed = true
-          if (cells[msg.cell_id]) {
-            cells[msg.cell_id] = { ...cells[msg.cell_id], source: msg.source }
-          }
         } else if (msg.type === 'cell_removed') {
           if (!changed) cells = { ...cells }
           changed = true
@@ -718,23 +705,23 @@ function App() {
       })
     }
 
-    // TODO.md #65 follow-up: a tests-element proposal_accepted must
-    // update testSourceOverrides (the local echo TestsElementWidget's
-    // editor actually renders from), the same state set_test_source's
-    // own handleChangeTestSource already keeps in sync for the non-
-    // review-mode path -- without this, every connection's test editor
-    // (including the accepter's own) would keep showing pre-accept text
-    // forever, having no other path that ever refreshes it.
+    // TODO.md #65-xi: test_source_changed must update testSourceOverrides
+    // (the local echo TestsElementWidget's editor actually renders from),
+    // the same state set_test_source's own handleChangeTestSource already
+    // keeps in sync for the non-review-mode path -- without this, every
+    // connection's test editor (including the accepter's own) would keep
+    // showing pre-accept text forever after an AcceptCellBundle replays a
+    // SetTestSource action, having no other path that ever refreshes it
+    // (SetTestSource's own reply is only ever the resulting
+    // ElementOutput result, never an echo of the source itself).
     const acceptedTestSources = newMessages.filter(
-      (m): m is Extract<ServerMessage, { type: 'proposal_accepted' }> =>
-        m.type === 'proposal_accepted' && m.element_id != null,
+      (m): m is Extract<ServerMessage, { type: 'test_source_changed' }> => m.type === 'test_source_changed',
     )
     if (acceptedTestSources.length > 0) {
       setTestSourceOverrides((prev) => {
         const next = { ...prev }
         for (const m of acceptedTestSources) {
-          const elementId = m.element_id as string
-          next[m.cell_id] = { ...next[m.cell_id], [elementId]: m.source }
+          next[m.cell_id] = { ...next[m.cell_id], [m.element_id]: m.source }
         }
         return next
       })
@@ -755,45 +742,31 @@ function App() {
     send({ type: 'edit_cell', session_id: sessionId, cell_id: cellId, source })
   }
 
-  // TODO.md #65: the review_mode analogue of handleRunCell above -- used
-  // instead of edit_cell whenever this document is in review mode
-  // (Cell.tsx picks between the two based on the reviewMode prop it's
-  // given). Does not touch the shared document at all until someone
-  // accepts it. `elementId`, when given, targets a `tests` element's own
-  // source instead of the cell's primary source (TODO.md #65 follow-up:
-  // many decks -- anything with hide_code=True on every cell -- have no
-  // reachable primary editor at all, only a tests element's editable
-  // source, so review mode must cover that too).
-  function handlePushCell(cellId: string, source: string, elementId?: string) {
+  // TODO.md #65/#65-xi: the review_mode analogue of handleRunCell above
+  // -- used instead of edit_cell whenever this document is in review
+  // mode (Cell.tsx picks between the two based on the reviewMode prop it
+  // is given). Stages into the same per-cell pendingActions list the 11
+  // structural handlers already use (via `stageOrSend`, defined below --
+  // function declarations hoist, so this forward reference is fine)
+  // rather than sending anything immediately, unified into one push
+  // mechanism as of #65-xi.
+  function handleStagePrimaryEdit(cellId: string, source: string) {
     if (!sessionId) return
-    send({ type: 'push_cell', session_id: sessionId, cell_id: cellId, source, element_id: elementId })
+    stageOrSend(cellId, { type: 'edit_cell', session_id: sessionId, cell_id: cellId, source }, 'Edit code')
   }
 
-  function handleWithdrawProposal(cellId: string, elementId?: string) {
+  // TODO.md #65-xi: same as handleStagePrimaryEdit, for a `tests`
+  // element's own source -- many decks (anything with hide_code=True on
+  // every cell) have no reachable primary editor at all, only a tests
+  // element's editable source, so this needed its own staging path
+  // (`set_test_source`'s own shape, not `edit_cell`'s).
+  function handleStageTestEdit(cellId: string, elementId: string, source: string) {
     if (!sessionId) return
-    send({ type: 'withdraw_proposal', session_id: sessionId, cell_id: cellId, element_id: elementId })
-  }
-
-  function handleAcceptProposal(cellId: string, proposerUserId: string, elementId?: string) {
-    if (!sessionId) return
-    send({
-      type: 'accept_proposal',
-      session_id: sessionId,
-      cell_id: cellId,
-      proposer_user_id: proposerUserId,
-      element_id: elementId,
-    })
-  }
-
-  function handleRejectProposal(cellId: string, proposerUserId: string, elementId?: string) {
-    if (!sessionId) return
-    send({
-      type: 'reject_proposal',
-      session_id: sessionId,
-      cell_id: cellId,
-      proposer_user_id: proposerUserId,
-      element_id: elementId,
-    })
+    stageOrSend(
+      cellId,
+      { type: 'set_test_source', session_id: sessionId, cell_id: cellId, element_id: elementId, source },
+      `Edit test \`${elementId}\``,
+    )
   }
 
   function handleRunAll() {
@@ -1486,14 +1459,8 @@ function App() {
               viewerMode={isViewer}
               reviewMode={reviewMode}
               ownUserId={ownIdentity?.userId ?? null}
-              onPushCell={(source, elementId) => handlePushCell(cellId, source, elementId)}
-              onWithdrawProposal={(elementId) => handleWithdrawProposal(cellId, elementId)}
-              onAcceptProposal={(proposerUserId, elementId) =>
-                handleAcceptProposal(cellId, proposerUserId, elementId)
-              }
-              onRejectProposal={(proposerUserId, elementId) =>
-                handleRejectProposal(cellId, proposerUserId, elementId)
-              }
+              onStagePrimaryEdit={(source) => handleStagePrimaryEdit(cellId, source)}
+              onStageTestEdit={(elementId, source) => handleStageTestEdit(cellId, elementId, source)}
               pendingActionSummaries={pendingActions[cellId]?.map((a) => a.summary)}
               onPushPendingActions={() => handlePushPendingActions(cellId)}
               onDiscardPendingActions={() => handleDiscardPendingActions(cellId)}
@@ -1555,10 +1522,8 @@ function App() {
           viewerMode={isViewer}
           reviewMode={reviewMode}
           ownUserId={ownIdentity?.userId ?? null}
-          onPushCell={handlePushCell}
-          onWithdrawProposal={handleWithdrawProposal}
-          onAcceptProposal={handleAcceptProposal}
-          onRejectProposal={handleRejectProposal}
+          onStagePrimaryEdit={handleStagePrimaryEdit}
+          onStageTestEdit={handleStageTestEdit}
         />
       )}
     </main>

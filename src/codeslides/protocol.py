@@ -69,103 +69,22 @@ class EditCell:
 
 
 @dataclass
-class PushCell:
-    """TODO.md #65: on a `review_mode` document, push `source` as this
-    connection's proposed new content for `cell_id` -- does NOT re-run or
-    broadcast to peers the way `EditCell` does; it only stages a
-    `CellProposal` for review (`CellProposed`, below). Replaces this same
-    connection's own prior pending proposal for `cell_id`, if any, rather
-    than accumulating one per keystroke-to-push -- same "re-pushing
-    replaces, doesn't queue" rule `CellProposal`'s own docstring
-    (session.py) states. Rejected with an `ErrorMessage` if the document
-    is not in review mode (use `EditCell` there instead) or if the
-    sender hasn't sent `Join` yet (a proposal needs an identity to
-    attribute to, same requirement `SetPresence` already has).
-
-    `element_id`, when set, targets a `tests` element's own editable
-    source (`SetTestSource`'s domain, `ElementInstance.value`) instead of
-    the cell's primary source -- the follow-up closing the gap where a
-    deck with `hide_code=True` on every cell (its only editable surface
-    being a `tests` element) had no reachable review workflow at all.
-    `None` (the original, still-default meaning) targets the cell's
-    primary source, exactly as before this field existed."""
-
-    type: ClassVar[str] = "push_cell"
-    session_id: str
-    cell_id: str
-    source: str
-    element_id: str | None = None
-
-
-@dataclass
-class WithdrawProposal:
-    """TODO.md #65: the proposer cancels their own pending proposal for
-    `cell_id` (or, if `element_id` is set, for that `tests` element's
-    proposal specifically), before anyone accepts or rejects it. A no-op
-    (not an error) if the sender has no matching pending proposal -- e.g.
-    a double-click on a "Withdraw" button that already succeeded once."""
-
-    type: ClassVar[str] = "withdraw_proposal"
-    session_id: str
-    cell_id: str
-    element_id: str | None = None
-
-
-@dataclass
-class AcceptProposal:
-    """TODO.md #65: any editor-role peer accepts `proposer_user_id`'s
-    pending proposal for `cell_id` -- merges it into
-    `session.source_overrides` and re-runs, exactly like `EditCell`
-    already does for a non-review-mode document (routed through the same
-    `Kernel.on_cell_edited`), then broadcasts `ProposalAccepted` to
-    everyone. `proposer_user_id` (not just `cell_id`) disambiguates which
-    proposal to accept, since more than one connection may have a
-    pending proposal for the same cell at once (`PROPOSAL_review_workflow.md`
-    decision #2: any single peer's accept is sufficient, but it must be
-    unambiguous *which* proposal was accepted).
-
-    `element_id`, when set, accepts a `tests` element's pending proposal
-    (routed through `Kernel.on_tests_edited` instead of
-    `on_cell_edited`) rather than the cell's primary source."""
-
-    type: ClassVar[str] = "accept_proposal"
-    session_id: str
-    cell_id: str
-    proposer_user_id: str
-    element_id: str | None = None
-
-
-@dataclass
-class RejectProposal:
-    """TODO.md #65: any editor-role peer explicitly dismisses
-    `proposer_user_id`'s pending proposal for `cell_id` (or, if
-    `element_id` is set, for that `tests` element specifically) without
-    merging it -- distinct from simply ignoring a proposal forever, so
-    the proposer gets an explicit signal (`ProposalRejected`) rather than
-    silence."""
-
-    type: ClassVar[str] = "reject_proposal"
-    session_id: str
-    cell_id: str
-    proposer_user_id: str
-    element_id: str | None = None
-
-
-@dataclass
 class PushCellBundle:
-    """TODO.md #65-x: on a `review_mode` document, stage an ordered list
-    of structural changes to `cell_id` (rename, add/remove element, hide
-    toggles, reorder elements, element config, add/remove primary
-    editor, main/setup-cell flags) -- none of `session.
+    """TODO.md #65/#65-x/#65-xi: on a `review_mode` document, stage an
+    ordered list of changes to `cell_id` -- an edit to its primary
+    source (an `EditCell`-shaped action), an edit to a `tests` element's
+    source (`SetTestSource`-shaped), and/or structural changes (rename,
+    hide toggles, add/remove element, reorder elements, element config,
+    add/remove primary editor, main/setup-cell flags). None of `session.
     source_overrides`/the deck's `.py` file/the Kernel's loaded Deck is
     touched until `AcceptCellBundle` replays them. Replaces this same
-    connection's own prior pending bundle for `cell_id`, if any (same
-    "re-pushing replaces" rule `PushCell` already follows). Distinct
-    from `PushCell` (which only ever concerns a cell's *primary source
-    text*) since these 15 message types write to disk and reload the
-    Kernel immediately today -- there's no existing "hold this in
-    memory" slot for any of them to intercept, so this is a parallel
-    mechanism, not a reuse of `CellProposal`.
+    connection's own prior pending bundle for `cell_id`, if any --
+    everything pushable for one cell unifies into this single mechanism
+    (earlier revisions had a separate `PushCell`/`CellProposal` path
+    specifically for source text, which broadcast to peers immediately
+    on every push with no explicit button click; #65-xi removed it for
+    being inconsistent with -- and more surprising than -- the
+    structural side's own explicit-push requirement).
 
     Each entry of `actions` is a plain `{"payload": {...}, "summary":
     str}` dict (matching this codebase's existing `list[dict[str, Any]]`
@@ -658,6 +577,30 @@ class CellSourceChanged:
 
 
 @dataclass
+class TestSourceChanged:
+    """TODO.md #65-xi: the `tests`-element analogue of `CellSourceChanged`
+    above -- `SetTestSource` (unlike `EditCell`) never broadcasts its new
+    source to peers on its own (only the resulting `ElementOutput` pass/
+    fail/print result), which was never a gap on a non-review-mode
+    document (the editing peer's own `testSourceOverrides` local echo is
+    all that mattered there, and no other peer needs to see someone
+    else's mid-typing test source). It became a real gap once test-source
+    edits started replaying through `AcceptCellBundle` (#65-xi unified
+    them into the same per-cell bundle mechanism structural changes
+    already used): every connection -- including the accepter's own --
+    needs to learn the newly-*accepted* test source explicitly, the same
+    way `CellSourceChanged` already does for the primary source, or their
+    `TestsElementWidget` editor keeps showing stale pre-accept text
+    forever with nothing to ever refresh it."""
+
+    type: ClassVar[str] = "test_source_changed"
+    session_id: str
+    cell_id: str
+    element_id: str
+    source: str
+
+
+@dataclass
 class CellAttributionChanged:
     """TODO.md #46g-iv: a peer made an attributable change (per
     `ws_handler.ATTRIBUTABLE_MESSAGE_TYPES`) to `cell_id` -- sent to
@@ -683,99 +626,12 @@ class CellAttributionChanged:
 
 
 @dataclass
-class CellProposed:
-    """TODO.md #65: broadcast (peers-only, `Broadcast`-wrapped -- the
-    proposer already has this exact state client-side, having just typed
-    and pushed it, same "sender already knows" reasoning `PresenceUpdate`
-    about a peer's own join already uses) when a `PushCell` stages or
-    replaces a pending proposal. Carries the proposer's identity
-    denormalized (`proposer_user_id`/`proposer_display_name`), same
-    precedent `PeerInfo`/`CellInstance.last_edited_by` already set, so a
-    receiving client can render "Alice proposed a change" without a
-    separate peer-list lookup."""
-
-    type: ClassVar[str] = "cell_proposed"
-    session_id: str
-    cell_id: str
-    proposer_user_id: str
-    proposer_display_name: str
-    source: str
-    created_at: str
-    # See PushCell.element_id's own docstring -- None means "the cell's
-    # primary source," matching this field's pre-existing default.
-    element_id: str | None = None
-
-
-@dataclass
-class ProposalWithdrawn:
-    """TODO.md #65: broadcast (peers-only) when a proposer withdraws
-    their own pending proposal, so every other connection's UI drops the
-    now-gone proposal indicator/diff."""
-
-    type: ClassVar[str] = "proposal_withdrawn"
-    session_id: str
-    cell_id: str
-    proposer_user_id: str
-    element_id: str | None = None
-
-
-@dataclass
-class ProposalAccepted:
-    """TODO.md #65: broadcast to everyone (unwrapped, same "everyone
-    converges on the same resulting state" default `CellSourceChanged`
-    already uses) when an `AcceptProposal` merges a proposal into the
-    document's accepted source. `source` is the newly-accepted source
-    (mirrors `CellSourceChanged.source`); the cell's own re-run results
-    follow as the usual separate `cell_status`/`cell_output` messages,
-    exactly like `EditCell`'s reply sequence."""
-
-    type: ClassVar[str] = "proposal_accepted"
-    session_id: str
-    cell_id: str
-    source: str
-    accepted_from_user_id: str
-    accepted_by_user_id: str
-    element_id: str | None = None
-
-
-@dataclass
-class ProposalRejected:
-    """TODO.md #65: sent to everyone (unwrapped -- the proposer being
-    rejected may or may not be the connection that sent the triggering
-    `RejectProposal`, so `Broadcast`/`SenderOnly` can't reliably reach
-    them; see `ws_handler.py`'s own note on this) when a pending proposal
-    via `RejectProposal` is dismissed."""
-
-    type: ClassVar[str] = "proposal_rejected"
-    session_id: str
-    cell_id: str
-    rejected_by_user_id: str
-    element_id: str | None = None
-
-
-@dataclass
-class ProposalConflict:
-    """TODO.md #65/`PROPOSAL_review_workflow.md` decision #3: sent only
-    to the proposer (via `ws_handler.ToUser`) when *someone else's*
-    accepted proposal changes `cell_id`'s accepted source out from under a
-    still-pending proposal this connection has open. Carries the cell's
-    new accepted `source` so the proposer's client can re-diff their own
-    pending proposal against it and decide to re-push or withdraw, rather
-    than silently losing the proposal or having it silently merged
-    against a base it was never actually reviewed against."""
-
-    type: ClassVar[str] = "proposal_conflict"
-    session_id: str
-    cell_id: str
-    source: str
-    element_id: str | None = None
-
-
-@dataclass
 class CellBundleProposed:
-    """TODO.md #65-x: broadcast (peers-only, `Broadcast`-wrapped -- same
-    "proposer already has this state" reasoning `CellProposed` already
-    uses) when a `PushCellBundle` stages or replaces a pending
+    """TODO.md #65-x: broadcast (peers-only, `Broadcast`-wrapped -- the
+    proposer already has this exact state client-side, having just
+    pushed it, same "sender already knows" reasoning `PresenceUpdate`
+    about a peer's own join already uses) when a `PushCellBundle` stages
+    or replaces a pending
     structural bundle. `actions` carries only the `summary` strings (not
     the full wire-format `payload`s -- a receiving peer's reviewer
     banner only ever displays the summaries, it never needs to replay
@@ -1167,10 +1023,11 @@ class SessionCreated:
     (ARCHITECTURE.md section 5 -- one websocket connection per browser
     tab, addressing a session_id).
 
-    `review_mode` (TODO.md #65) tells the frontend whether this document
-    uses the propose/review/accept workflow (`PushCell`/`AcceptProposal`/
-    etc., replacing immediate `EditCell` broadcasts) -- read once at
-    connect time, since a document's `review_mode` is fixed for its whole
+    `review_mode` (TODO.md #65/#65-x/#65-xi) tells the frontend whether
+    this document uses the propose/review/accept workflow
+    (`PushCellBundle`/`AcceptCellBundle`/etc., replacing immediate
+    `EditCell`/structural-message broadcasts) -- read once at connect
+    time, since a document's `review_mode` is fixed for its whole
     lifetime, same as a Session's `session_id` itself. Always `False` for
     a solo (non-collaborative) connection."""
 
@@ -1269,10 +1126,6 @@ ClientMessage = (
     Join
     | SetPresence
     | EditCell
-    | PushCell
-    | WithdrawProposal
-    | AcceptProposal
-    | RejectProposal
     | PushCellBundle
     | WithdrawCellBundle
     | AcceptCellBundle
@@ -1308,12 +1161,8 @@ ServerMessage = (
     CellStatus
     | CellOutput
     | CellSourceChanged
+    | TestSourceChanged
     | CellAttributionChanged
-    | CellProposed
-    | ProposalWithdrawn
-    | ProposalAccepted
-    | ProposalRejected
-    | ProposalConflict
     | CellBundleProposed
     | BundleWithdrawn
     | BundleAccepted
@@ -1352,10 +1201,6 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
         Join,
         SetPresence,
         EditCell,
-        PushCell,
-        WithdrawProposal,
-        AcceptProposal,
-        RejectProposal,
         PushCellBundle,
         WithdrawCellBundle,
         AcceptCellBundle,
