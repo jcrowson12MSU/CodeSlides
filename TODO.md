@@ -4265,9 +4265,74 @@ reshape the plan below and are called out explicitly where they apply:
     everyone else by design, matching "never touches the server"
     literally?
 
-- [ ] **65/66. Push/pull-request style collaborative editing + a
-  collapsible chat panel** -- see `PROPOSAL_review_workflow.md` for the
-  full design writeup, open questions, and draft sub-item breakdown.
-  Not started; blocked on resolving that doc's open questions (review
-  permissions/accept semantics, preview execution, opt-in scope, chat
-  persistence/layout, etc.) before implementation begins.
+- [ ] **65. Push/review-based collaborative editing** -- a document-level
+  opt-in mode (`--review-mode`, off by default) where editing a cell
+  only updates a connection's own local draft; an explicit "Push" sends
+  it to the server as a proposal, and any editor-role peer can review
+  a text diff and Accept (merges into the shared, executed source) or
+  Reject it. Full design and rationale in `PROPOSAL_review_workflow.md`
+  (design decided; not yet implemented).
+  - [ ] 65-i. `CellInstance`/`Session`: add pending-proposals storage
+    alongside today's single `source_overrides` value (one proposal per
+    proposer per cell; re-pushing replaces the proposer's own prior
+    proposal).
+  - [ ] 65-ii. `cli.py`: add the `--review-mode` flag alongside
+    `--collaborative`; thread a `review_mode` bit onto the `Session`/
+    `SessionCreated` so the frontend and `ws_handler.py` both know which
+    mode a document is in.
+  - [ ] 65-iii. Protocol (`protocol.py`): `PushCell`, `CellProposed`
+    (`Broadcast`, peers-only), `WithdrawProposal`, `AcceptProposal`,
+    `ProposalAccepted` (unwrapped broadcast, mirrors today's
+    `cell_source_changed` + re-run), `RejectProposal`,
+    `ProposalRejected` (`SenderOnly` to the proposer), `ProposalConflict`
+    (`SenderOnly` to the proposer, sent instead of clearing their
+    proposal when the accepted source moved on first).
+  - [ ] 65-iv. `ws_handler.py`/`kernel.py`: handle the new message types;
+    in review-mode documents, `EditCell` no longer re-runs/broadcasts
+    immediately -- only `AcceptProposal` does. Add `PushCell`/
+    `WithdrawProposal`/`AcceptProposal`/`RejectProposal` to
+    `VIEWER_ALLOWED_MESSAGE_TYPES`'s complement appropriately (viewers
+    still can't push/accept -- unchanged from today's access-control
+    posture, only editors get these).
+  - [ ] 65-v. Frontend: per-cell local draft state (not sent until
+    pushed), a "Push" button replacing/alongside the existing edit flow
+    when a document is in review-mode, a pending-proposal indicator on
+    the cell, a diff view, and Accept/Reject controls.
+  - [ ] 65-vi. Frontend: conflict UI for `ProposalConflict` (re-diff
+    against the new accepted source; re-push or withdraw).
+  - [ ] 65-vii. Tests: propose/accept/reject/withdraw round trips,
+    viewer-role rejection of these message types, the conflict path,
+    and confirming a non-review-mode document's behavior is completely
+    unchanged.
+  - [ ] 65-viii. Update `ARCHITECTURE.md` (new §5b, alongside §5a) once
+    shipped, documenting the design that actually landed.
+
+- [ ] **66. Collapsible chat panel for shared documents** -- lower-right
+  corner collapsed to a small affordance; expands to a full-height
+  third column to the right of the cells and the existing element-tabs
+  panel (`TODO.md` #56), collapsible back down. One chat stream per
+  document, in-memory only (not persisted across a server restart),
+  append-only, gated on a `documentId` being present (no panel on a
+  solo connection). Full design and rationale in
+  `PROPOSAL_review_workflow.md` (design decided; not yet implemented).
+  - [ ] 66-i. Protocol (`protocol.py`): `SendChatMessage` (client ->
+    server), `ChatMessageReceived` (broadcast to sender + peers, unlike
+    most messages the sender needs their own message echoed back with a
+    server-assigned id/timestamp). Add `SendChatMessage` to
+    `VIEWER_ALLOWED_MESSAGE_TYPES` -- a viewer can send chat.
+  - [ ] 66-ii. `Session`: an in-memory chat message list, same lifetime
+    as everything else the `Session` holds (cleared when the grace
+    period expires).
+  - [ ] 66-iii. `ws_handler.py`: handle `SendChatMessage`, broadcast
+    `ChatMessageReceived`; also emit a system-style `ChatMessageReceived`
+    automatically from the #65 push/accept/reject handlers (e.g. "Alice
+    pushed a change to `live_demo`"), rendered distinctly on the
+    frontend (no color/avatar, muted styling) from a person's own
+    message.
+  - [ ] 66-iv. Frontend: collapsed corner affordance (icon/button),
+    expand/collapse to a full-height right-side column, message list +
+    input, reusing `presenceState.ts`'s color/display-name per sender.
+    Gate rendering on `documentId` being present, same as `PeerList`.
+  - [ ] 66-v. Tests: message broadcast (sender receives their own
+    message back), viewer-role can send, no panel/messages for a solo
+    connection, and the automatic system messages from #65's actions.
