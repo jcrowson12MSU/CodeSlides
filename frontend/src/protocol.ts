@@ -313,6 +313,17 @@ export interface CellOutput {
   error: string | null
 }
 
+// TODO.md #46b-i: broadcast-only -- tells every connection on a shared
+// document a cell's source just changed (and to what), which
+// cell_status/cell_output alone never do since they only carry re-run
+// results, not the code that produced them.
+export interface CellSourceChanged {
+  type: 'cell_source_changed'
+  session_id: string
+  cell_id: string
+  source: string
+}
+
 export interface ElementOutput {
   type: 'element_output'
   session_id: string
@@ -523,6 +534,7 @@ export interface ErrorMessage {
 export type ServerMessage =
   | CellStatus
   | CellOutput
+  | CellSourceChanged
   | ElementOutput
   | GraphUpdated
   | SessionCloned

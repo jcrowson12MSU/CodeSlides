@@ -434,6 +434,29 @@ class CellOutput:
 
 
 @dataclass
+class CellSourceChanged:
+    """TODO.md #46b-i: a peer edited `cell_id`'s source on a shared
+    document. Broadcast-only -- the editing peer already knows its own new
+    source (it just typed it) and applies it via `edit_cell`'s own local
+    state, so this is sent to every *other* connection on the same
+    document, never back to the sender. Without this, a shared document's
+    `cell_status`/`cell_output` broadcast tells every other peer that a
+    cell re-ran and what it produced, but never what the cell's code now
+    *is* -- their `CodeEditor.tsx` would silently show stale source next
+    to already-updated output. `source` is the same fully-resolved
+    display text `EditCell`'s own translation path already computes
+    (`ws_handler._effective_display_source`), so applying it is a plain
+    drop-in replacement for whatever `CodeEditor.tsx`'s existing
+    remote-update path (full-document replacement, per TODO.md #46b-iii)
+    already does when its `source` prop changes for a non-typing reason."""
+
+    type: ClassVar[str] = "cell_source_changed"
+    session_id: str
+    cell_id: str
+    source: str
+
+
+@dataclass
 class ElementOutput:
     """A viewer element (turtle_canvas/image/iframe/notes) received new
     content from its owning cell's execution (ARCHITECTURE.md section 3a).
@@ -814,6 +837,7 @@ ClientMessage = (
 ServerMessage = (
     CellStatus
     | CellOutput
+    | CellSourceChanged
     | ElementOutput
     | GraphUpdated
     | SessionCloned
