@@ -543,9 +543,13 @@ triggers execution:
 
 ## 9. What's deliberately deferred
 
-- Multi-user real-time collaborative editing (out of scope per
-  `VISION.md`'s non-goals) — the Session model above assumes one editor
-  per Session, not concurrent editors on one Session.
+- Multi-user real-time collaborative editing — now a planned direction
+  (see `VISION.md` and `TODO.md` #46), not a permanent non-goal, but not
+  yet designed or implemented. The Session model above still assumes one
+  editor per Session, not concurrent editors sharing one Session's
+  namespace and `source_overrides` — that assumption is exactly what
+  `TODO.md` #46a needs to revisit. This section should be updated again
+  once a concrete design lands.
 - Persisting Session state across server restarts — Sessions are
   in-memory; only the Deck's source file is durable.
 - A plugin API for third-party elements — the element kinds in `TODO.md`

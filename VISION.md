@@ -57,9 +57,17 @@ the reactive guarantees marimo provides.
   workflows — the target user is an instructor building a lesson, not a
   data scientist doing exploratory analysis (though nothing precludes that
   use later).
-- Not building collaborative multi-user real-time editing (like Google
-  Docs). Single presenter/author per session, at least for v1.
 - Not supporting languages other than Python.
+
+## Planned: collaborative editing (like Google Docs)
+
+Originally scoped out for v1 ("single presenter/author per session"), but
+now a planned direction: multiple students/instructors editing the same
+deck concurrently in the browser, with shared live state rather than each
+connection getting an isolated copy. See TODO.md #46 for the concrete
+sub-tasks and ARCHITECTURE.md section 9 for the architectural implications
+(today's Session model assumes one editor per Session, so this requires a
+real design change, not just UI work).
 
 ## What success looks like
 

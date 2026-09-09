@@ -2023,7 +2023,54 @@ reshape the plan below and are called out explicitly where they apply:
   specifically clones a cell/editor instance and asserts the two instances'
   namespaces and outputs never cross-contaminate.
 
-- [ ] **46. Evaluate how feasible that it is to allow multiple students to work on the same document in the browser collaboratively.** 
+- [ ] **46. Support multiple students/instructors editing the same deck collaboratively in the browser, Google-Docs-style.**
+  Supersedes VISION.md's earlier "not building this for v1" non-goal --
+  see the updated VISION.md/ARCHITECTURE.md sections. The core blocker is
+  architectural, not UI: today one browser connection = one `Session`
+  (`ws_handler.py`'s `SessionRegistry`), and each `Session` owns a fully
+  isolated namespace + `source_overrides` precisely so that clones never
+  cross-contaminate (the marimo bug fix this whole model exists for --
+  ARCHITECTURE.md section 1). Real-time collaboration inverts that: two+
+  connections need to share *one* namespace and *one* set of
+  `source_overrides` while still running reactively. Sub-tasks, roughly
+  in dependency order:
+
+  - **46a. Design a shared-document Session model** that coexists with
+    today's isolated-clone model rather than replacing it -- cloning
+    (independent scratch copies) and collaboration (shared live editing)
+    are different use cases and both need to keep working. Likely shape:
+    a `Session` gains an optional "collaborative" mode where multiple
+    websocket connections attach to the same `Session`/namespace instead
+    of each getting its own, while `SessionRegistry.clone` keeps
+    producing fully independent copies as it does now.
+  - **46b. Concurrent-edit conflict resolution for cell source.** Two
+    people editing the same `instance="editable"` cell's source
+    simultaneously need either last-write-wins with a visible "someone
+    else is editing this" indicator, or an actual CRDT/OT text-merge
+    (e.g. Yjs) -- evaluate both against the complexity budget before
+    picking one. This is the "evaluate feasibility" part of the old
+    item: prototype last-write-wins first since it's cheap, and only
+    reach for CRDT/OT if that proves unusably lossy in practice.
+  - **46c. Concurrent execution semantics.** If two editors' changes to
+    different cells both trigger re-runs against the *same* namespace,
+    define run ordering and what happens when two overlapping
+    minimal-rerun-sets are triggered close together (queue, coalesce, or
+    last-one-wins per affected cell) -- today's `Kernel.run_all` /
+    `on_cell_edited` assume one caller at a time against a given
+    `Session`.
+  - **46d. Presence UI.** Show which students/instructor are connected to
+    a shared document and (ideally) a cursor/selection indicator per
+    editor in the CodeMirror instance, similar to Google Docs' colored
+    cursors.
+  - **46e. Access control for who can join a shared document.** At
+    minimum a shareable session link; consider read-only "viewer" vs.
+    "editor" roles for students watching an instructor live-edit
+    without being able to edit themselves.
+  - **46f. Update ARCHITECTURE.md section 9** ("what's deliberately
+    deferred") once a concrete design lands, and remove or revise the
+    "Session model assumes one editor per Session" language there --
+    keep it in sync with whatever ships, rather than descoping this note
+    but leaving the architecture doc contradicting it.
 
 - [x] **47. Persist a `tests` element's edited source when Save is clicked -- it currently only lives in memory.**
   Discovered while fixing #43: unlike a code edit or a notes edit (both
