@@ -24,6 +24,7 @@ from codeslides.protocol import (
     CellOutput,
     CellRemoved,
     CellRenamed,
+    CellSourceChanged,
     CellsReordered,
     CellStatus,
     ClientMessage,
@@ -335,8 +336,32 @@ def handle_message(registry: SessionRegistry, message: ClientMessage) -> list[Se
                 )
             ]
         results = registry.kernel.on_cell_edited(message.cell_id, message.source, session)
-        return _results_to_messages(message.session_id, results) + _element_output_messages(
-            session, results
+        # TODO.md #46b-i: on a shared document, every *other* connection
+        # needs to learn the cell's new source, not just its re-run
+        # output -- cell_status/cell_output alone say "this cell changed
+        # and produced X," never "here is its new code." Broadcasts
+        # `message.source` itself, exactly what the editing peer's own
+        # CodeEditor.tsx already shows (EditCell's docstring: the browser
+        # only ever shows/edits `display_source`'s output) -- deliberately
+        # NOT run back through `_effective_display_source`, which can
+        # legitimately raise on this exact source (an edit that doesn't
+        # parse is expected, ordinary mid-typing state per
+        # `on_cell_edited`'s own docstring, and must not crash the
+        # edit_cell round trip). Harmless to also deliver back to the
+        # sender (CodeEditor.tsx's remote-update path is a no-op when the
+        # incoming source already matches the live doc), so this is
+        # unconditional rather than needing a sender/peer split in
+        # handle_message's contract.
+        return (
+            [
+                CellSourceChanged(
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                    source=message.source,
+                )
+            ]
+            + _results_to_messages(message.session_id, results)
+            + _element_output_messages(session, results)
         )
 
     if isinstance(message, SetElementValue):

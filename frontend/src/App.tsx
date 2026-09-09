@@ -511,6 +511,18 @@ function App() {
             // content until some unrelated event happens to refresh it.
             cells[msg.cell_id] = { ...cells[msg.cell_id], hide_def: msg.hide_def, source: msg.source }
           }
+        } else if (msg.type === 'cell_source_changed') {
+          // TODO.md #46b-i: on a shared document, a peer's edit_cell
+          // broadcasts this so every connection (including the sender,
+          // harmlessly -- CodeEditor.tsx's remote-update effect is a
+          // no-op when the incoming source already matches the live
+          // doc) converges on the same source, matching the winning
+          // last-write in Session.source_overrides server-side.
+          if (!changed) cells = { ...cells }
+          changed = true
+          if (cells[msg.cell_id]) {
+            cells[msg.cell_id] = { ...cells[msg.cell_id], source: msg.source }
+          }
         } else if (msg.type === 'cell_removed') {
           if (!changed) cells = { ...cells }
           changed = true

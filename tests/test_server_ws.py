@@ -221,6 +221,87 @@ def test_websocket_shared_document_broadcasts_edits_to_other_peers():
         assert peer_output["output"]["value"] == 40
 
 
+def test_websocket_shared_document_concurrent_cell_edits_last_write_wins():
+    """TODO.md #46b-i: when two peers both edit the *same* cell's source
+    on a shared document, last-write-wins -- the second `edit_cell`
+    overwrites the first's `session.source_overrides` entry outright (no
+    merge), and critically the *first* peer (whose edit was discarded)
+    still receives the winning source via broadcast, so their editor
+    reflects the actual current state rather than silently going stale.
+    This is deliberately naive (per 46b-iii: acceptable data loss for the
+    target classroom use case, not a CRDT/OT merge) -- this test locks in
+    that exact behavior, not a smarter one."""
+    client = TestClient(create_app(_build_deck()))
+
+    with (
+        client.websocket_connect("/ws?document=classroom-5") as ws_a,
+        client.websocket_connect("/ws?document=classroom-5") as ws_b,
+    ):
+        ws_a.receive_json()  # session_created
+        ws_b.receive_json()  # session_created
+
+        ws_a.send_json({"type": "run_all", "session_id": "classroom-5"})
+        for _ in range(4):
+            ws_a.receive_json()
+        for _ in range(4):
+            ws_b.receive_json()  # broadcast of ws_a's run_all
+
+        # Peer A edits live_demo first...
+        ws_a.send_json(
+            {
+                "type": "edit_cell",
+                "session_id": "classroom-5",
+                "cell_id": "live_demo",
+                "source": (
+                    "def live_demo(speed):\n    result = base * speed + 1\n    return result\n"
+                ),
+            }
+        )
+        ws_a.receive_json()  # cell_source_changed (own reply, TODO.md #46b-i)
+        ws_a.receive_json()  # cell_status (own reply)
+        a_own_output = ws_a.receive_json()
+        assert a_own_output["output"]["value"] == 16  # 5 * 3 + 1
+        b_source_changed = ws_b.receive_json()  # broadcast cell_source_changed
+        assert b_source_changed["type"] == "cell_source_changed"
+        assert "+ 1" in b_source_changed["source"]
+        ws_b.receive_json()  # broadcast cell_status
+        ws_b.receive_json()  # broadcast cell_output (A's edit reaches B too)
+
+        # ...then peer B edits the *same* cell before anyone reconciles --
+        # B's edit must win outright, discarding A's.
+        ws_b.send_json(
+            {
+                "type": "edit_cell",
+                "session_id": "classroom-5",
+                "cell_id": "live_demo",
+                "source": (
+                    "def live_demo(speed):\n    result = base * speed + 2\n    return result\n"
+                ),
+            }
+        )
+        ws_b.receive_json()  # cell_source_changed (own reply)
+        ws_b.receive_json()  # cell_status (own reply)
+        b_own_output = ws_b.receive_json()
+        assert b_own_output["output"]["value"] == 17  # 5 * 3 + 2 -- B's edit applied
+
+        # Peer A -- whose edit was just discarded -- must be broadcast
+        # B's winning source and result, not left showing its own stale
+        # version (TODO.md #46b-i's whole point).
+        a_peer_source_changed = ws_a.receive_json()
+        assert a_peer_source_changed["type"] == "cell_source_changed"
+        assert "+ 2" in a_peer_source_changed["source"]
+        a_peer_status = ws_a.receive_json()
+        a_peer_output = ws_a.receive_json()
+        assert a_peer_status["type"] == "cell_status"
+        assert a_peer_output["output"]["value"] == 17
+
+        # The Session's source_overrides now holds only B's source --
+        # confirms this is outright overwrite, not any kind of merge.
+        session = client.app.state.registry.get("classroom-5")
+        assert "result = base * speed + 2" in session.source_overrides["live_demo"]
+        assert "+ 1" not in session.source_overrides["live_demo"]
+
+
 def test_websocket_shared_document_survives_reconnect_within_grace_period():
     """TODO.md #46a-iii: the last connection leaving a shared document
     must not discard its Session immediately -- a reconnect within the
@@ -254,6 +335,7 @@ def test_websocket_shared_document_survives_reconnect_within_grace_period():
                 ),
             }
         )
+        ws.receive_json()  # cell_source_changed (TODO.md #46b-i)
         ws.receive_json()  # cell_status
         edited_output = ws.receive_json()
         assert edited_output["output"]["value"] == 1015
@@ -305,6 +387,7 @@ def test_websocket_shared_document_discarded_after_grace_period_expires():
                     ),
                 }
             )
+            ws.receive_json()  # cell_source_changed (TODO.md #46b-i)
             ws.receive_json()  # cell_status
             ws.receive_json()  # cell_output
 

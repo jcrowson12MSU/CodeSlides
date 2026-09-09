@@ -2139,7 +2139,7 @@ reshape the plan below and are called out explicitly where they apply:
     item: prototype last-write-wins first since it's cheap, and only
     reach for CRDT/OT if that proves unusably lossy in practice.
 
-    - **46b-i. Prototype last-write-wins first.** `EditCell`
+    - [x] **46b-i. Prototype last-write-wins first.** `EditCell`
       (protocol.py:24-34, wire type `"edit_cell"`) already carries the
       full new `source` string and folds it into
       `session.source_overrides[cell_name]` via
@@ -2148,6 +2148,48 @@ reshape the plan below and are called out explicitly where they apply:
       given `cell_id` wins, full stop") is close to free: no protocol
       change needed, just the broadcast wiring from 46a-ii so every
       peer's `CodeEditor.tsx` receives the update.
+
+      Implemented: LWW itself needed no code changes beyond 46a's
+      broadcast wiring -- `Kernel.on_cell_edited` already unconditionally
+      overwrites `session.source_overrides[cell_name]`, and once 46a's
+      `registry.peers`/broadcast loop existed, a second `EditCell` for
+      the same cell naturally wins outright (verified end-to-end by a
+      new test, `test_websocket_shared_document_concurrent_cell_edits_last_write_wins`,
+      simulating two peers racing to edit `live_demo` and asserting the
+      second peer's source/output wins and the *first* peer -- whose
+      edit was discarded -- is broadcast the winning state rather than
+      silently kept stale).
+
+      That last point surfaced a real protocol gap this sub-task had to
+      close, though: broadcasting `cell_status`/`cell_output` after an
+      edit tells peers a cell re-ran and what it produced, but never
+      what its *source* now is (`protocol.py`'s `CellOutput` carries no
+      `source` field) -- a peer's `CodeEditor.tsx` would show stale code
+      forever next to already-updated output. Added a new
+      broadcast-only message, `CellSourceChanged` (protocol.py,
+      `frontend/src/protocol.ts`), sent alongside the existing
+      `cell_status`/`cell_output` replies whenever `EditCell` is
+      handled; `App.tsx`'s message-reducing effect applies it to
+      `deck.cells[cellId].source` the same way `hide_def_set` already
+      updates source in place, and `CodeEditor.tsx`'s existing
+      remote-update effect (already idempotent -- a no-op when the
+      incoming source matches the live doc) picks it up with no changes
+      needed there. Deliberately broadcasts `message.source` (the raw
+      text the editing peer's own browser already shows) rather than
+      re-deriving it via `_effective_display_source`/`display_source` --
+      an edit that doesn't parse is ordinary mid-typing state per
+      `on_cell_edited`'s own docstring and must not crash the
+      `edit_cell` round trip, which re-deriving through `ast.parse`
+      would have done (caught by two pre-existing tests exercising
+      exactly that case). 6 total tests now cover 46a+46b
+      (`tests/test_server_ws.py`); full suite 586 passed, `ruff check
+      src` clean, frontend `tsc -b && vite build` clean.
+
+      46b-iii's decision (below) is accepted as-is: LWW's data-loss risk
+      is judged acceptable for this project's classroom use case, so no
+      CRDT/OT work (46b-iv) was started. 46b-ii's "someone else is
+      editing" indicator is explicitly deferred to when 46d (presence)
+      is implemented, per 46b-ii's own note to build them together.
     - **46b-ii. Add a "someone else is editing" indicator**, since LWW
       alone silently discards a concurrent edit with no signal to the
       person who lost. Needs: (1) a lightweight "cell X is being edited
@@ -2156,7 +2198,7 @@ reshape the plan below and are called out explicitly where they apply:
       and (2) a frontend affordance in `Cell.tsx`/`CodeEditor.tsx` (e.g.
       a colored border or name badge) shown while another peer's cursor
       is in that cell.
-    - **46b-iii. Note the specific data-loss risk LWW has here that
+    - [x] **46b-iii. Note the specific data-loss risk LWW has here that
       Google Docs' character-level OT doesn't:** because
       `CodeEditor.tsx`'s remote-update path (lines 439-449, confirmed by
       the architecture research) applies an incoming `source` as a
@@ -2173,6 +2215,19 @@ reshape the plan below and are called out explicitly where they apply:
       in `frontend/package.json` are new enough), which would replace
       whole-document `EditCell` sends with incremental Yjs update
       messages and a new `Session`-side Yjs doc per editable cell.
+
+      Decided: accepted as-is for now. The target use case (a classroom,
+      one instructor + a few students, rarely colliding on the exact
+      same cell at the exact same moment) makes this an edge case rather
+      than a routine occurrence, and 46b-i's new
+      `CellSourceChanged` broadcast at least means the "losing" editor
+      immediately sees the winning state rather than silently drifting
+      out of sync indefinitely -- the remaining risk is purely "did I
+      just lose my last few keystrokes," not "is my editor now showing
+      something wrong forever." Revisit (46b-iv, CRDT/OT via
+      `y-codemirror.next`) only if real classroom usage shows this
+      losing-keystrokes case happening often enough to be disruptive --
+      not preemptively.
     - **46b-iv. If CRDT/OT is chosen, scope the migration explicitly**
       as its own follow-up task rather than bolting it onto 46a -- it
       changes the wire protocol (`EditCell`'s `source: str` field would
