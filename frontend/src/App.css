@@ -907,6 +907,40 @@ body.cs-resizing-vertical {
   white-space: pre-wrap;
 }
 
+/* TODO.md #65: push/review-based collaborative editing -- a pending
+   proposal (someone else's, or this connection's own) and the stale-
+   base conflict banner. Amber, distinct from cs-cell-error's red and
+   cs-cell-output's neutral gray, so a proposal reads as "needs your
+   attention" without looking like a failure. */
+.cs-cell-proposal,
+.cs-cell-proposal-conflict {
+  background: #fff8e1;
+  border: 1px solid #f0c14b;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  margin: 0.35rem 0.75rem 0;
+  font-size: var(--cs-font-base);
+}
+
+.cs-cell-proposal-header {
+  margin: 0 0 0.35rem;
+}
+
+.cs-cell-proposal-diff {
+  background: #fffdf5;
+  border-radius: 4px;
+  padding: 0.5rem;
+  margin: 0 0 0.35rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  font-size: var(--cs-font-base);
+}
+
+.cs-cell-proposal-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
 .cs-cell-output {
   background: #f6f6f6;
   border-radius: 4px;

@@ -46,6 +46,16 @@ export interface CellState {
   // this is only ever displayed, never computed with.
   lastEditedBy: string | null
   lastEditedAt: string | null
+  // TODO.md #65: pending proposals on a review_mode document, keyed by
+  // proposer user_id -- empty on a non-review-mode document, since
+  // nothing ever populates it there (mirrors CellInstance.proposals'
+  // own "emptiness is a reliable signal" property server-side).
+  // `conflict` (set by a proposal_conflict targeted at *this
+  // connection's own* pending proposal) carries the cell's new accepted
+  // source once someone else's proposal for the same cell got accepted
+  // first -- null until that happens, cleared again on withdraw/re-push.
+  proposals: Record<string, { displayName: string; source: string; createdAt: string }>
+  conflict: string | null
 }
 
 export type DeckState = Record<string, CellState>
@@ -59,6 +69,8 @@ const EMPTY_CELL: CellState = {
   elementContent: {},
   lastEditedBy: null,
   lastEditedAt: null,
+  proposals: {},
+  conflict: null,
 }
 
 export function reduceDeckState(messages: ServerMessage[]): DeckState {
@@ -66,7 +78,7 @@ export function reduceDeckState(messages: ServerMessage[]): DeckState {
 
   const cellFor = (cellId: string): CellState => {
     if (!state[cellId]) {
-      state[cellId] = { ...EMPTY_CELL, elementContent: {} }
+      state[cellId] = { ...EMPTY_CELL, elementContent: {}, proposals: {} }
     }
     return state[cellId]
   }
@@ -100,6 +112,45 @@ export function reduceDeckState(messages: ServerMessage[]): DeckState {
         }
         break
       }
+      case 'cell_proposed': {
+        const cell = cellFor(message.cell_id)
+        state[message.cell_id] = {
+          ...cell,
+          proposals: {
+            ...cell.proposals,
+            [message.proposer_user_id]: {
+              displayName: message.proposer_display_name,
+              source: message.source,
+              createdAt: message.created_at,
+            },
+          },
+        }
+        break
+      }
+      case 'proposal_withdrawn': {
+        const cell = cellFor(message.cell_id)
+        const proposals = { ...cell.proposals }
+        delete proposals[message.proposer_user_id]
+        state[message.cell_id] = { ...cell, proposals }
+        break
+      }
+      case 'proposal_accepted': {
+        const cell = cellFor(message.cell_id)
+        const proposals = { ...cell.proposals }
+        delete proposals[message.accepted_from_user_id]
+        state[message.cell_id] = { ...cell, proposals, conflict: null }
+        break
+      }
+      case 'proposal_rejected': {
+        const cell = cellFor(message.cell_id)
+        const proposals = { ...cell.proposals }
+        delete proposals[message.rejected_by_user_id]
+        state[message.cell_id] = { ...cell, proposals }
+        break
+      }
+      case 'proposal_conflict':
+        state[message.cell_id] = { ...cellFor(message.cell_id), conflict: message.source }
+        break
       default:
         break
     }

@@ -66,6 +66,31 @@ class ElementInstance:
 
 
 @dataclass
+class CellProposal:
+    """TODO.md #65: one connection's pushed-but-not-yet-accepted source
+    for a cell, on a `Session.review_mode` document -- the "propose"
+    half of the propose/review/accept workflow `PROPOSAL_review_workflow.md`
+    designed. Keyed by the proposer's `user_id` on
+    `CellInstance.proposals` (not `connection_id`): a proposal survives
+    the proposing connection reconnecting under a fresh connection_id,
+    same identity `SessionRegistry.join` already assigns per Join rather
+    than per raw websocket connection. `display_name` is stored directly
+    (denormalized), same precedent `CellInstance.last_edited_by` already
+    sets, so a proposal still renders correctly after its proposer
+    disconnects. `base_source` is the accepted source this proposal was
+    diffed against at push time -- if `CellInstance`'s actual current
+    source has since moved on (another proposal was accepted first),
+    comparing against a stale `base_source` is exactly how a conflict is
+    detected (see `ws_handler.handle_message`'s `AcceptProposal`
+    handling)."""
+
+    source: str
+    display_name: str | None
+    created_at: datetime
+    base_source: str
+
+
+@dataclass
 class CellInstance:
     """A Cell's live state within one Session."""
 
@@ -74,6 +99,13 @@ class CellInstance:
     error: str | None = None
     collapsed: bool = False  # pure UI state (ARCHITECTURE.md section 8)
     elements: dict[str, ElementInstance] = field(default_factory=dict)
+    # TODO.md #65: pending proposals on a `review_mode` document, keyed by
+    # proposer `user_id`. Always empty on a non-review-mode document --
+    # nothing in `ws_handler.py` ever populates it unless
+    # `Session.review_mode` is set, so its emptiness alone is a reliable
+    # signal a document has no proposal workflow active, without needing
+    # every call site to separately check `review_mode` too.
+    proposals: dict[str, CellProposal] = field(default_factory=dict)
     # TODO.md #46g-iii: who last made a structural/content change to this
     # cell, on a shared document -- `None` until the first attributable
     # edit (including for a solo, non-collaborative connection, which has
@@ -121,6 +153,16 @@ class Session:
     # Per-Session source overrides for cells marked instance="editable"
     # (ARCHITECTURE.md section 3: "per-Session graph divergence").
     source_overrides: dict[str, str] = field(default_factory=dict)
+    # TODO.md #65/PROPOSAL_review_workflow.md: whether this document uses
+    # the propose/review/accept workflow (`PushCell`/`AcceptProposal`/
+    # etc.) instead of always-live `EditCell`. A document-level opt-in
+    # decided at creation time (`cli.py`'s `--review-mode`, threaded
+    # through `SessionRegistry.create_or_join`) -- never flips mid-life,
+    # same "fixed for the Session's lifetime" precedent `Peer.role`
+    # already sets for editor/viewer. `False` (today's always-live
+    # default) for every existing document/test, so nothing about this
+    # feature changes behavior unless explicitly opted into.
+    review_mode: bool = False
     # Pending slide reorder (browser drag/reorder in the "Edit slide
     # deck" panel), staged client-side and only written to the deck's
     # .py file when `save_deck` runs -- same "no disk write until Save"
@@ -222,6 +264,7 @@ class Session:
         new = Session(deck=self.deck)
         new.namespace = dict(self.namespace)
         new.source_overrides = dict(self.source_overrides)
+        new.review_mode = self.review_mode
         new.slide_order_override = (
             list(self.slide_order_override) if self.slide_order_override is not None else None
         )
@@ -247,6 +290,16 @@ class Session:
                 # reconstruction like this one invites.
                 last_edited_by=inst.last_edited_by,
                 last_edited_at=inst.last_edited_at,
+                # TODO.md #65: same "clone is a snapshot of current
+                # state" reasoning as attribution just above -- a pending
+                # proposal is part of a cell's current state on a
+                # review_mode document, so it's copied by value
+                # (CellProposal is itself a plain dataclass of immutable-
+                # in-practice fields, but copied explicitly rather than
+                # shared by reference, same precedent `elements` dict
+                # comprehension above already sets) rather than silently
+                # dropped or aliased onto the source Session's own dict.
+                proposals={pid: CellProposal(**vars(p)) for pid, p in inst.proposals.items()},
             )
             for name, inst in self.instances.items()
         }

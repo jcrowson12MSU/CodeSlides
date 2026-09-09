@@ -4265,47 +4265,73 @@ reshape the plan below and are called out explicitly where they apply:
     everyone else by design, matching "never touches the server"
     literally?
 
-- [ ] **65. Push/review-based collaborative editing** -- a document-level
+- [x] **65. Push/review-based collaborative editing** -- a document-level
   opt-in mode (`--review-mode`, off by default) where editing a cell
   only updates a connection's own local draft; an explicit "Push" sends
   it to the server as a proposal, and any editor-role peer can review
   a text diff and Accept (merges into the shared, executed source) or
-  Reject it. Full design and rationale in `PROPOSAL_review_workflow.md`
-  (design decided; not yet implemented).
-  - [ ] 65-i. `CellInstance`/`Session`: add pending-proposals storage
-    alongside today's single `source_overrides` value (one proposal per
-    proposer per cell; re-pushing replaces the proposer's own prior
-    proposal).
-  - [ ] 65-ii. `cli.py`: add the `--review-mode` flag alongside
-    `--collaborative`; thread a `review_mode` bit onto the `Session`/
-    `SessionCreated` so the frontend and `ws_handler.py` both know which
-    mode a document is in.
-  - [ ] 65-iii. Protocol (`protocol.py`): `PushCell`, `CellProposed`
-    (`Broadcast`, peers-only), `WithdrawProposal`, `AcceptProposal`,
-    `ProposalAccepted` (unwrapped broadcast, mirrors today's
-    `cell_source_changed` + re-run), `RejectProposal`,
-    `ProposalRejected` (`SenderOnly` to the proposer), `ProposalConflict`
-    (`SenderOnly` to the proposer, sent instead of clearing their
-    proposal when the accepted source moved on first).
-  - [ ] 65-iv. `ws_handler.py`/`kernel.py`: handle the new message types;
-    in review-mode documents, `EditCell` no longer re-runs/broadcasts
-    immediately -- only `AcceptProposal` does. Add `PushCell`/
-    `WithdrawProposal`/`AcceptProposal`/`RejectProposal` to
-    `VIEWER_ALLOWED_MESSAGE_TYPES`'s complement appropriately (viewers
-    still can't push/accept -- unchanged from today's access-control
-    posture, only editors get these).
-  - [ ] 65-v. Frontend: per-cell local draft state (not sent until
-    pushed), a "Push" button replacing/alongside the existing edit flow
-    when a document is in review-mode, a pending-proposal indicator on
-    the cell, a diff view, and Accept/Reject controls.
-  - [ ] 65-vi. Frontend: conflict UI for `ProposalConflict` (re-diff
-    against the new accepted source; re-push or withdraw).
-  - [ ] 65-vii. Tests: propose/accept/reject/withdraw round trips,
-    viewer-role rejection of these message types, the conflict path,
-    and confirming a non-review-mode document's behavior is completely
-    unchanged.
-  - [ ] 65-viii. Update `ARCHITECTURE.md` (new §5b, alongside §5a) once
-    shipped, documenting the design that actually landed.
+  Reject it. Full design and rationale in `PROPOSAL_review_workflow.md`;
+  shipped design documented in `ARCHITECTURE.md` §5b.
+  - [x] 65-i. `CellInstance`/`Session`: pending-proposals storage
+    (`CellInstance.proposals: dict[user_id, CellProposal]`, `session.py`)
+    alongside `source_overrides` (one proposal per proposer per cell;
+    re-pushing replaces the proposer's own prior proposal). `Session.
+    review_mode: bool` added, preserved by `clone()`.
+  - [x] 65-ii. `cli.py`'s `--review-mode` flag; `create_app(review_mode=)`
+    -> `SessionRegistry.default_review_mode` -> `Session.review_mode`
+    (set only when `create_or_join` constructs a brand-new Session) ->
+    `SessionCreated.review_mode`, read once by the frontend at connect.
+  - [x] 65-iii. Protocol (`protocol.py`): `PushCell`, `CellProposed`
+    (`Broadcast`, peers-only), `WithdrawProposal`, `ProposalWithdrawn`
+    (`Broadcast`), `AcceptProposal`, `ProposalAccepted` (unwrapped,
+    sender+peers), `RejectProposal`, `ProposalRejected` (unwrapped --
+    see 65-iv's note on why not `SenderOnly`), `ProposalConflict`
+    (delivered via the new `ws_handler.ToUser` wrapper, not
+    `SenderOnly` -- see below).
+  - [x] 65-iv. `ws_handler.py`: `EditCell` is rejected outright on a
+    `review_mode` document (use `push_cell` instead); `AcceptProposal`
+    reuses `Kernel.on_cell_edited` (same path `EditCell` always used) and
+    stamps attribution to the *proposer*, not the accepter, bypassing the
+    generic `ATTRIBUTABLE_MESSAGE_TYPES` mechanism (which would credit
+    the wrong person here) -- handled directly in `AcceptProposal`'s own
+    branch instead. New `ws_handler.ToUser(user_id, message)` wrapper +
+    `SessionRegistry.peer_by_user_id` (neither `Broadcast` nor
+    `SenderOnly` could express "route to one specific *other* peer,
+    identified by user_id, regardless of whether they're the sender" --
+    needed because `AcceptProposal`'s `ProposalConflict` reply must reach
+    the *other* pending proposer, who is neither the sender nor "every
+    peer"). `RejectProposal`'s `ProposalRejected` ended up unwrapped
+    (not `SenderOnly`/`ToUser`) since the proposer being rejected may or
+    may not be the connection that sent `RejectProposal` -- unwrapped
+    delivery reaches them correctly either way. `PushCell`/
+    `WithdrawProposal`/`AcceptProposal`/`RejectProposal` are simply
+    absent from `VIEWER_ALLOWED_MESSAGE_TYPES` (allowlist-shaped, so a
+    viewer is blocked by default with no extra code needed).
+  - [x] 65-v. Frontend: `Cell.tsx`'s `onRunCell` routes to a new
+    `onPushCell` prop instead when `reviewMode` is set (Shift+Enter
+    stages a proposal rather than editing live); a `.cs-cell-proposal`
+    banner per pending proposal (diff text + Accept/Reject, or Withdraw
+    for one's own), reduced into `deckState.ts`'s `CellState.proposals`/
+    `conflict` fields from the new message types. Wired through both
+    Cells view (`App.tsx`) and Slides view (`SlideShow.tsx`).
+  - [x] 65-vi. Frontend: `.cs-cell-proposal-conflict` banner for
+    `ProposalConflict` (shows the new accepted source, offers Withdraw;
+    re-push is just editing and pushing again).
+  - [x] 65-vii. Tests: 10 new tests in `test_server_ws.py` covering
+    `session_created`'s `review_mode` flag, `edit_cell` rejection in
+    review mode, push-without-broadcast, accept (merge/re-run/
+    attribution-to-proposer), reject, withdraw (incl. idempotent
+    re-withdraw), the stale-sibling-proposal conflict path, viewer-role
+    rejection of all four new message types, and confirming a non-
+    review-mode document's behavior is completely unchanged. All 615
+    tests (605 pre-existing + 10 new) pass.
+  - [x] 65-viii. `ARCHITECTURE.md` §5b documents the shipped design.
+
+  Verified end-to-end with two real browser contexts (Playwright,
+  `--collaborative --review-mode`): Alice pushes an edit to `live_demo`
+  -- Bob's own editor is unaffected and shows a proposal banner with the
+  correct diff; Bob accepts; both Alice's and Bob's editors converge on
+  the accepted source and the banner disappears on both sides.
 
 - [ ] **66. Collapsible chat panel for shared documents** -- lower-right
   corner collapsed to a small affordance; expands to a full-height

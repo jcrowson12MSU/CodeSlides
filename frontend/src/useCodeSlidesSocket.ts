@@ -8,6 +8,10 @@ import type { ClientMessage, ServerMessage } from './protocol'
 export function useCodeSlidesSocket(url = '/ws') {
   const socketRef = useRef<WebSocket | null>(null)
   const [sessionId, setSessionId] = useState<string | null>(null)
+  // TODO.md #65: whether this document uses the propose/review/accept
+  // workflow -- read once from session_created, same "extracted once on
+  // connect" pattern sessionId itself already uses.
+  const [reviewMode, setReviewMode] = useState(false)
   const [messages, setMessages] = useState<ServerMessage[]>([])
   const [connected, setConnected] = useState(false)
 
@@ -24,6 +28,7 @@ export function useCodeSlidesSocket(url = '/ws') {
       const message = JSON.parse(event.data) as ServerMessage
       if (message.type === 'session_created') {
         setSessionId(message.session_id)
+        setReviewMode(message.review_mode)
       }
       setMessages((prev) => [...prev, message])
     }
@@ -35,5 +40,5 @@ export function useCodeSlidesSocket(url = '/ws') {
     socketRef.current?.send(JSON.stringify(message))
   }
 
-  return { sessionId, connected, messages, send }
+  return { sessionId, reviewMode, connected, messages, send }
 }

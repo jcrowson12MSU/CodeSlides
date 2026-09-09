@@ -67,6 +67,15 @@ export interface SlideShowProps {
   // `readOnly` (the main cell's, via Cell.tsx, and the title slide's
   // separate `extraCodeAbove` setup-cell editor, composed directly here).
   viewerMode?: boolean
+  // TODO.md #65: see Cell.tsx's own docstrings for these -- forwarded
+  // here for the same reason viewerMode is (Slides view renders the same
+  // live Cell as Cells view, just one at a time).
+  reviewMode?: boolean
+  ownUserId?: string | null
+  onPushCell?: (cellId: string, source: string) => void
+  onWithdrawProposal?: (cellId: string) => void
+  onAcceptProposal?: (cellId: string, proposerUserId: string) => void
+  onRejectProposal?: (cellId: string, proposerUserId: string) => void
 }
 
 // Slideshow/presentation mode (TODO.md #10, ARCHITECTURE.md's "one tool,
@@ -114,6 +123,12 @@ export function SlideShow({
   onLayoutChange,
   editErrors,
   viewerMode = false,
+  reviewMode = false,
+  ownUserId = null,
+  onPushCell,
+  onWithdrawProposal,
+  onAcceptProposal,
+  onRejectProposal,
 }: SlideShowProps) {
   const slideRef = useRef<HTMLDivElement | null>(null)
 
@@ -287,6 +302,16 @@ export function SlideShow({
               collapsed={false}
               hideHeader
               viewerMode={viewerMode}
+              reviewMode={reviewMode}
+              ownUserId={ownUserId}
+              onPushCell={onPushCell ? (source) => onPushCell(cellId, source) : undefined}
+              onWithdrawProposal={onWithdrawProposal ? () => onWithdrawProposal(cellId) : undefined}
+              onAcceptProposal={
+                onAcceptProposal ? (proposerUserId) => onAcceptProposal(cellId, proposerUserId) : undefined
+              }
+              onRejectProposal={
+                onRejectProposal ? (proposerUserId) => onRejectProposal(cellId, proposerUserId) : undefined
+              }
               onRunCell={(source) => onRunCell(cellId, source)}
               onRunAll={onRunAll}
               onSetElementValue={(elementId, value) => onSetElementValue(cellId, elementId, value)}

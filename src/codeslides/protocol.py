@@ -69,6 +69,71 @@ class EditCell:
 
 
 @dataclass
+class PushCell:
+    """TODO.md #65: on a `review_mode` document, push `source` as this
+    connection's proposed new content for `cell_id` -- does NOT re-run or
+    broadcast to peers the way `EditCell` does; it only stages a
+    `CellProposal` for review (`CellProposed`, below). Replaces this same
+    connection's own prior pending proposal for `cell_id`, if any, rather
+    than accumulating one per keystroke-to-push -- same "re-pushing
+    replaces, doesn't queue" rule `CellProposal`'s own docstring
+    (session.py) states. Rejected with an `ErrorMessage` if the document
+    is not in review mode (use `EditCell` there instead) or if the
+    sender hasn't sent `Join` yet (a proposal needs an identity to
+    attribute to, same requirement `SetPresence` already has)."""
+
+    type: ClassVar[str] = "push_cell"
+    session_id: str
+    cell_id: str
+    source: str
+
+
+@dataclass
+class WithdrawProposal:
+    """TODO.md #65: the proposer cancels their own pending proposal for
+    `cell_id`, before anyone accepts or rejects it. A no-op (not an
+    error) if the sender has no pending proposal for this cell -- e.g. a
+    double-click on a "Withdraw" button that already succeeded once."""
+
+    type: ClassVar[str] = "withdraw_proposal"
+    session_id: str
+    cell_id: str
+
+
+@dataclass
+class AcceptProposal:
+    """TODO.md #65: any editor-role peer accepts `proposer_user_id`'s
+    pending proposal for `cell_id` -- merges it into
+    `session.source_overrides` and re-runs, exactly like `EditCell`
+    already does for a non-review-mode document (routed through the same
+    `Kernel.on_cell_edited`), then broadcasts `ProposalAccepted` to
+    everyone. `proposer_user_id` (not just `cell_id`) disambiguates which
+    proposal to accept, since more than one connection may have a
+    pending proposal for the same cell at once (`PROPOSAL_review_workflow.md`
+    decision #2: any single peer's accept is sufficient, but it must be
+    unambiguous *which* proposal was accepted)."""
+
+    type: ClassVar[str] = "accept_proposal"
+    session_id: str
+    cell_id: str
+    proposer_user_id: str
+
+
+@dataclass
+class RejectProposal:
+    """TODO.md #65: any editor-role peer explicitly dismisses
+    `proposer_user_id`'s pending proposal for `cell_id` without merging
+    it -- distinct from simply ignoring a proposal forever, so the
+    proposer gets an explicit signal (`ProposalRejected`) rather than
+    silence."""
+
+    type: ClassVar[str] = "reject_proposal"
+    session_id: str
+    cell_id: str
+    proposer_user_id: str
+
+
+@dataclass
 class RunAll:
     """Run every cell once, in topological order, for `session_id`."""
 
@@ -517,6 +582,89 @@ class CellAttributionChanged:
 
 
 @dataclass
+class CellProposed:
+    """TODO.md #65: broadcast (peers-only, `Broadcast`-wrapped -- the
+    proposer already has this exact state client-side, having just typed
+    and pushed it, same "sender already knows" reasoning `PresenceUpdate`
+    about a peer's own join already uses) when a `PushCell` stages or
+    replaces a pending proposal. Carries the proposer's identity
+    denormalized (`proposer_user_id`/`proposer_display_name`), same
+    precedent `PeerInfo`/`CellInstance.last_edited_by` already set, so a
+    receiving client can render "Alice proposed a change" without a
+    separate peer-list lookup."""
+
+    type: ClassVar[str] = "cell_proposed"
+    session_id: str
+    cell_id: str
+    proposer_user_id: str
+    proposer_display_name: str
+    source: str
+    created_at: str
+
+
+@dataclass
+class ProposalWithdrawn:
+    """TODO.md #65: broadcast (peers-only) when a proposer withdraws
+    their own pending proposal, so every other connection's UI drops the
+    now-gone proposal indicator/diff."""
+
+    type: ClassVar[str] = "proposal_withdrawn"
+    session_id: str
+    cell_id: str
+    proposer_user_id: str
+
+
+@dataclass
+class ProposalAccepted:
+    """TODO.md #65: broadcast to everyone (unwrapped, same "everyone
+    converges on the same resulting state" default `CellSourceChanged`
+    already uses) when an `AcceptProposal` merges a proposal into the
+    document's accepted source. `source` is the newly-accepted source
+    (mirrors `CellSourceChanged.source`); the cell's own re-run results
+    follow as the usual separate `cell_status`/`cell_output` messages,
+    exactly like `EditCell`'s reply sequence."""
+
+    type: ClassVar[str] = "proposal_accepted"
+    session_id: str
+    cell_id: str
+    source: str
+    accepted_from_user_id: str
+    accepted_by_user_id: str
+
+
+@dataclass
+class ProposalRejected:
+    """TODO.md #65: sent only to the proposer (`SenderOnly`) when
+    someone explicitly rejects their pending proposal via
+    `RejectProposal` -- a peer who isn't the proposer has no use for
+    this, they never see the proposal disappear as anything more than
+    "no longer pending" (mirrors `JoinAck`'s "only the connection this
+    concerns" precedent)."""
+
+    type: ClassVar[str] = "proposal_rejected"
+    session_id: str
+    cell_id: str
+    rejected_by_user_id: str
+
+
+@dataclass
+class ProposalConflict:
+    """TODO.md #65/`PROPOSAL_review_workflow.md` decision #3: sent only
+    to the proposer (`SenderOnly`) when *someone else's* accepted
+    proposal changes `cell_id`'s accepted source out from under a still-
+    pending proposal this connection has open. Carries the cell's new
+    accepted `source` so the proposer's client can re-diff their own
+    pending proposal against it and decide to re-push or withdraw, rather
+    than silently losing the proposal or having it silently merged
+    against a base it was never actually reviewed against."""
+
+    type: ClassVar[str] = "proposal_conflict"
+    session_id: str
+    cell_id: str
+    source: str
+
+
+@dataclass
 class ElementOutput:
     """A viewer element (turtle_canvas/image/iframe/notes) received new
     content from its owning cell's execution (ARCHITECTURE.md section 3a).
@@ -847,10 +995,18 @@ class SessionCreated:
     """Sent once, immediately after a websocket connection is accepted:
     tells the client the session_id implicitly created for that connection
     (ARCHITECTURE.md section 5 -- one websocket connection per browser
-    tab, addressing a session_id)."""
+    tab, addressing a session_id).
+
+    `review_mode` (TODO.md #65) tells the frontend whether this document
+    uses the propose/review/accept workflow (`PushCell`/`AcceptProposal`/
+    etc., replacing immediate `EditCell` broadcasts) -- read once at
+    connect time, since a document's `review_mode` is fixed for its whole
+    lifetime, same as a Session's `session_id` itself. Always `False` for
+    a solo (non-collaborative) connection."""
 
     type: ClassVar[str] = "session_created"
     session_id: str
+    review_mode: bool = False
 
 
 @dataclass
@@ -943,6 +1099,10 @@ ClientMessage = (
     Join
     | SetPresence
     | EditCell
+    | PushCell
+    | WithdrawProposal
+    | AcceptProposal
+    | RejectProposal
     | RunAll
     | SetElementValue
     | SetUiState
@@ -975,6 +1135,11 @@ ServerMessage = (
     | CellOutput
     | CellSourceChanged
     | CellAttributionChanged
+    | CellProposed
+    | ProposalWithdrawn
+    | ProposalAccepted
+    | ProposalRejected
+    | ProposalConflict
     | ElementOutput
     | GraphUpdated
     | SessionCloned
@@ -1009,6 +1174,10 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
         Join,
         SetPresence,
         EditCell,
+        PushCell,
+        WithdrawProposal,
+        AcceptProposal,
+        RejectProposal,
         RunAll,
         SetElementValue,
         SetUiState,

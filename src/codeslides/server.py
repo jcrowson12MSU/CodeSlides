@@ -33,6 +33,7 @@ from codeslides.ws_handler import (
     Broadcast,
     SenderOnly,
     SessionRegistry,
+    ToUser,
     attributed_cell_id,
     handle_message,
 )
@@ -75,6 +76,7 @@ def create_app(
     deck_path: str | None = None,
     *,
     shared_session_grace_period_seconds: float = SHARED_SESSION_GRACE_PERIOD_SECONDS,
+    review_mode: bool = False,
 ) -> FastAPI:
     """`deck_path`, if given, is watched for changes (TODO.md #10): on
     save, the file is re-parsed and `Kernel.reload_deck` swaps in the new
@@ -87,7 +89,15 @@ def create_app(
     `shared_session_grace_period_seconds` overrides how long a shared
     document's Session is kept warm after its last connection drops
     (TODO.md #46a-iii) -- exposed as a parameter purely so tests can use a
-    short window instead of the real production default."""
+    short window instead of the real production default.
+
+    `review_mode` (TODO.md #65) is this server process's document-level
+    default for the propose/review/accept workflow instead of always-live
+    editing -- `cli.py`'s `--review-mode` flag, off by default. Only
+    affects a *newly created* shared document (`SessionRegistry.
+    create_or_join`'s first call for a given id); a solo (non-
+    collaborative) Session ignores it entirely, since review-mode only
+    makes sense where there's someone else to review a push."""
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -105,7 +115,7 @@ def create_app(
     api = FastAPI(title="CodeSlides", lifespan=lifespan)
     api.state.deck = deck or Deck()
     api.state.kernel = Kernel(api.state.deck, deck_path=deck_path)
-    api.state.registry = SessionRegistry(kernel=api.state.kernel)
+    api.state.registry = SessionRegistry(kernel=api.state.kernel, default_review_mode=review_mode)
     api.state.deck_path = deck_path
 
     @api.get("/api/health")
@@ -188,7 +198,7 @@ def create_app(
             await websocket.send_json(encode(message))
 
         registry.add_connection(session.session_id, connection_id, send, role=peer_role)
-        await send(SessionCreated(session_id=session.session_id))
+        await send(SessionCreated(session_id=session.session_id, review_mode=session.review_mode))
         try:
             while True:
                 payload = await websocket.receive_json()
@@ -253,21 +263,38 @@ def create_app(
                 #   broadcasting a peer's own join event back to them is
                 #   meaningless, they already know their own identity via
                 #   JoinAck).
+                # `ToUser` (TODO.md #65) -> exactly one *specific* other
+                #   connection, identified by `user_id`, regardless of
+                #   whether that's the sender or a peer -- needed because
+                #   AcceptProposal/RejectProposal's replies
+                #   (ProposalConflict/ProposalRejected) must reach the
+                #   *proposer*, who is very often neither "the sender"
+                #   nor "every other peer" but one particular peer among
+                #   several. Silently reaches nobody if that user_id
+                #   isn't currently connected (e.g. they closed their
+                #   tab) -- same "harmless if the audience is empty"
+                #   tolerance `Broadcast` already has.
                 # unwrapped -> sender AND every peer alike (every
                 #   pre-#46d message type: CellStatus/CellOutput/
                 #   CellSourceChanged/etc. -- everyone on a shared
                 #   document needs to see the same resulting state).
                 for reply in replies:
-                    if isinstance(reply, Broadcast):
+                    if isinstance(reply, (Broadcast, ToUser)):
                         continue
                     await send(reply.message if isinstance(reply, SenderOnly) else reply)
                 peer_replies = [r.message for r in replies if isinstance(r, Broadcast)] + [
-                    r for r in replies if not isinstance(r, (Broadcast, SenderOnly))
+                    r for r in replies if not isinstance(r, (Broadcast, SenderOnly, ToUser))
                 ]
                 if peer_replies:
                     for peer in registry.peers(session.session_id, exclude=connection_id):
                         for reply in peer_replies:
                             await peer.send(reply)
+                for reply in replies:
+                    if not isinstance(reply, ToUser):
+                        continue
+                    target_peer = registry.peer_by_user_id(session.session_id, reply.user_id)
+                    if target_peer is not None:
+                        await target_peer.send(reply.message)
         except WebSocketDisconnect:
             pass
         finally:

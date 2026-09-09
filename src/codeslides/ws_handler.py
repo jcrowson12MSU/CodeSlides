@@ -12,18 +12,21 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 
 from codeslides.kernel import ExecutionResult, Kernel
 from codeslides.output import resolve_output, wire_safe_value
 from codeslides.protocol import (
+    AcceptProposal,
     AddCell,
     AddElement,
     AddPrimaryEditor,
     AddSlide,
     AddTitleSlide,
     CellAdded,
+    CellAttributionChanged,
     CellOutput,
+    CellProposed,
     CellRemoved,
     CellRenamed,
     CellSourceChanged,
@@ -49,6 +52,12 @@ from codeslides.protocol import (
     PresenceUpdate,
     PrimaryEditorAdded,
     PrimaryEditorRemoved,
+    ProposalAccepted,
+    ProposalConflict,
+    ProposalRejected,
+    ProposalWithdrawn,
+    PushCell,
+    RejectProposal,
     RemoveCell,
     RemoveElement,
     RemovePrimaryEditor,
@@ -75,6 +84,7 @@ from codeslides.protocol import (
     SlideAdded,
     SlideRemoved,
     TitleSlideAdded,
+    WithdrawProposal,
 )
 from codeslides.serialization import (
     InvalidSourceError,
@@ -84,7 +94,7 @@ from codeslides.serialization import (
     save_edits,
     write_export,
 )
-from codeslides.session import Session
+from codeslides.session import CellProposal, Session
 
 # A connection is identified by a fresh id per websocket, distinct from
 # the (possibly shared) session_id its Session lives under -- this is
@@ -182,6 +192,28 @@ class SenderOnly:
 
 
 @dataclass
+class ToUser:
+    """TODO.md #65: wraps a `ServerMessage` that must reach one specific
+    *other* connection identified by `user_id`, not necessarily the
+    connection that sent the triggering message -- neither `Broadcast`
+    nor `SenderOnly` can express this, since both are defined relative
+    to "the sender," but `AcceptProposal`/`RejectProposal` are sent by
+    whichever peer is reviewing, and their `ProposalConflict`/
+    `ProposalRejected` replies must reach the *proposer* specifically,
+    who is very often a different connection from the sender (that's the
+    whole point of a review workflow -- someone else acts on your
+    proposal). `server.py`'s loop resolves `user_id` to a live connection
+    via `registry.peers`, same lookup `Broadcast`'s fan-out already does;
+    silently dropped if that `user_id` is no longer connected (e.g. the
+    proposer closed their tab before anyone reviewed it) -- exactly as
+    unsurprising as `Broadcast` reaching zero peers on an otherwise-empty
+    document, not an error condition."""
+
+    user_id: str
+    message: object
+
+
+@dataclass
 class SessionRegistry:
     """Owns every live Session for one Kernel/Deck, keyed by session_id.
 
@@ -198,6 +230,17 @@ class SessionRegistry:
     kernel: Kernel
     sessions: dict[str, Session] = field(default_factory=dict)
     connections: dict[str, dict[ConnectionId, Peer]] = field(default_factory=dict)
+    # TODO.md #65: whether a *newly created* shared document defaults to
+    # `Session.review_mode=True` -- set once, from `cli.py`'s
+    # `--review-mode` flag, for this registry's whole lifetime (one CLI
+    # process serves one deck/document today, same "one collaborative
+    # link per process" scope `--collaborative` itself already has).
+    # Only consulted by `create_or_join` at the moment it actually
+    # constructs a brand-new Session; joining an *existing* one always
+    # uses that Session's own already-decided `review_mode`, since the
+    # mode is fixed per-document, not per-registry-default, the instant
+    # a document exists.
+    default_review_mode: bool = False
 
     def _seed_persisted_attribution(self, session: Session) -> None:
         """TODO.md #46g-v: load a deck's sidecar attribution file (if the
@@ -258,7 +301,7 @@ class SessionRegistry:
         existing = self.sessions.get(document_id)
         if existing is not None:
             return existing
-        session = Session(deck=self.kernel.deck, session_id=document_id)
+        session = Session(deck=self.kernel.deck, session_id=document_id, review_mode=self.default_review_mode)
         self._seed_persisted_attribution(session)
         self.sessions[session.session_id] = session
         return session
@@ -323,6 +366,20 @@ class SessionRegistry:
         `broadcast` fans a reply out to (via each `Peer.send`)."""
         peers = self.connections.get(session_id, {})
         return [peer for connection_id, peer in peers.items() if connection_id != exclude]
+
+    def peer_by_user_id(self, session_id: str, user_id: str) -> Peer | None:
+        """TODO.md #65: find the live connection currently identified as
+        `user_id` on `session_id`, for `ws_handler.ToUser`'s "route to
+        this specific peer" delivery -- unlike every other lookup here,
+        keyed by the stable per-Join identity, not the ephemeral
+        `connection_id` a reconnect would change. Returns `None` if that
+        user_id isn't (or is no longer) connected, e.g. the proposer
+        closed their tab before their proposal was reviewed -- `server.py`
+        treats that as nothing to deliver, not an error."""
+        for peer in self.connections.get(session_id, {}).values():
+            if peer.user_id == user_id:
+                return peer
+        return None
 
     def discard_session(self, session_id: str) -> None:
         """Tear down a Session once its keep-warm grace period (TODO.md
@@ -509,7 +566,16 @@ VIEWER_ALLOWED_MESSAGE_TYPES: tuple[type, ...] = (Join, SetPresence)
 # every session interaction. `AddCell` is excluded too: the newly-created
 # cell has no prior instance to have been "last edited," and
 # `CellAdded`'s reply doesn't represent an edit to existing content the
-# same way the rest of this list does.
+# same way the rest of this list does. `AcceptProposal` (TODO.md #65) is
+# also deliberately excluded, for a different reason than everything
+# else here: it needs attribution too, but crediting *this generic
+# mechanism's* sender would credit whoever clicked Accept, not whoever
+# actually wrote the proposed content -- its own handler stamps
+# `last_edited_by` directly from the accepted `CellProposal`'s stored
+# `display_name` instead. `PushCell`/`WithdrawProposal`/`RejectProposal`
+# are excluded too: nothing about staging, withdrawing, or rejecting a
+# proposal changes the document's actual accepted content, so none of
+# them are a "content edit" in this list's sense.
 ATTRIBUTABLE_MESSAGE_TYPES: tuple[type, ...] = (
     EditCell,
     SetTestSource,
@@ -662,6 +728,23 @@ def handle_message(
         session = registry.get(message.session_id)
         if session is None:
             return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        # TODO.md #65: a review_mode document only ever changes its
+        # accepted source via AcceptProposal -- EditCell's whole point
+        # (immediate re-run + broadcast to every peer) is exactly what
+        # review mode exists to prevent, so it's rejected outright here
+        # rather than silently reinterpreted as an implicit PushCell
+        # (which would surprise a client expecting EditCell's normal
+        # immediate-effect semantics). The frontend is expected to send
+        # PushCell instead once it knows (via SessionCreated.review_mode)
+        # this document is in review mode.
+        if session.review_mode:
+            return [
+                ErrorMessage(
+                    message="this document is in review mode; use push_cell instead of edit_cell",
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                )
+            ]
         if message.cell_id not in registry.kernel.deck.cells:
             return [
                 ErrorMessage(
@@ -696,6 +779,208 @@ def handle_message(
             + _results_to_messages(message.session_id, results)
             + _element_output_messages(session, results)
         )
+
+    if isinstance(message, PushCell):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if not session.review_mode:
+            return [
+                ErrorMessage(
+                    message="this document is not in review mode",
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                )
+            ]
+        if message.cell_id not in registry.kernel.deck.cells:
+            return [
+                ErrorMessage(
+                    message="unknown cell", session_id=message.session_id, cell_id=message.cell_id
+                )
+            ]
+        peer = registry.get_peer(message.session_id, connection_id) if connection_id else None
+        if peer is None or peer.user_id is None:
+            # TODO.md #65: a proposal needs an identity to attribute to,
+            # same requirement SetPresence already has for presence --
+            # a solo connection (no Join ever sent) never opts into
+            # review_mode in the first place (cli.py's --review-mode is
+            # meaningless without --collaborative), so this should only
+            # ever fire for a malformed/out-of-order client message.
+            return [
+                ErrorMessage(
+                    message="push_cell requires an identified connection (join first)",
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                )
+            ]
+        instance = session.instances.get(message.cell_id)
+        if instance is None:
+            return [
+                ErrorMessage(
+                    message="unknown cell", session_id=message.session_id, cell_id=message.cell_id
+                )
+            ]
+        base_source = _effective_display_source(session, registry.kernel.deck.cells[message.cell_id])
+        created_at = datetime.now(UTC)
+        instance.proposals[peer.user_id] = CellProposal(
+            source=message.source,
+            display_name=peer.display_name,
+            created_at=created_at,
+            base_source=base_source,
+        )
+        return [
+            Broadcast(
+                CellProposed(
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                    proposer_user_id=peer.user_id,
+                    proposer_display_name=peer.display_name or "",
+                    source=message.source,
+                    created_at=created_at.isoformat(),
+                )
+            )
+        ]
+
+    if isinstance(message, WithdrawProposal):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        peer = registry.get_peer(message.session_id, connection_id) if connection_id else None
+        if peer is None or peer.user_id is None:
+            return []
+        instance = session.instances.get(message.cell_id)
+        if instance is None or peer.user_id not in instance.proposals:
+            # Not an error -- withdrawing an already-gone proposal (e.g.
+            # a double-click, or one that was just accepted/rejected by
+            # someone else) is a harmless no-op, same "already-resolved
+            # action" tolerance PresenceLeft-adjacent code already has.
+            return []
+        del instance.proposals[peer.user_id]
+        return [
+            Broadcast(
+                ProposalWithdrawn(
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                    proposer_user_id=peer.user_id,
+                )
+            )
+        ]
+
+    if isinstance(message, AcceptProposal):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        instance = session.instances.get(message.cell_id)
+        if instance is None:
+            return [
+                ErrorMessage(
+                    message="unknown cell", session_id=message.session_id, cell_id=message.cell_id
+                )
+            ]
+        proposal = instance.proposals.get(message.proposer_user_id)
+        if proposal is None:
+            return [
+                ErrorMessage(
+                    message="no such pending proposal",
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                )
+            ]
+        accepting_peer = registry.get_peer(message.session_id, connection_id) if connection_id else None
+        del instance.proposals[message.proposer_user_id]
+        # TODO.md #65: accepting reuses exactly the same on_cell_edited
+        # path EditCell already uses for a non-review-mode document --
+        # same reattach-decorator/re-run/override-write machinery, no
+        # separate "accept" code path to keep in sync with it. This is
+        # also the only place a review_mode document's
+        # session.source_overrides is ever written, mirroring how
+        # EditCell is the only writer on a non-review-mode one.
+        results = registry.kernel.on_cell_edited(message.cell_id, proposal.source, session)
+        replies: list[ServerMessage | Broadcast | SenderOnly | ToUser] = [
+            ProposalAccepted(
+                session_id=message.session_id,
+                cell_id=message.cell_id,
+                source=proposal.source,
+                accepted_from_user_id=message.proposer_user_id,
+                accepted_by_user_id=(accepting_peer.user_id if accepting_peer else None) or "",
+            )
+        ]
+        replies += _results_to_messages(message.session_id, results)
+        replies += _element_output_messages(session, results)
+        # TODO.md #65/#46g: attribution credits the *proposer* (who
+        # actually wrote this content), not whoever clicked Accept --
+        # deliberately bypasses the generic ATTRIBUTABLE_MESSAGE_TYPES
+        # mechanism in server.py (which always credits the message's
+        # sender), since AcceptProposal's sender and the content's true
+        # author are two different people by design. `proposal.
+        # display_name` is already denormalized onto the CellProposal
+        # (session.py's own docstring) for exactly this reason -- it
+        # survives even if the proposer has since disconnected.
+        if proposal.display_name is not None:
+            instance.last_edited_by = proposal.display_name
+            instance.last_edited_at = datetime.now(UTC)
+            replies.append(
+                CellAttributionChanged(
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                    last_edited_by=instance.last_edited_by,
+                    last_edited_at=instance.last_edited_at.isoformat(),
+                )
+            )
+        # TODO.md #65/PROPOSAL_review_workflow.md decision #3: every
+        # *other* still-pending proposal for this same cell was diffed
+        # against the base_source that's now stale (the accepted source
+        # just changed underneath it) -- flag each one to its own
+        # proposer (via `ToUser`, since the proposer is very often not
+        # the connection that sent this `AcceptProposal`) rather than
+        # silently discarding or silently re-basing it. Iterates a
+        # snapshot (`list(...)`) since nothing here mutates
+        # `instance.proposals` for the surviving entries, but a `dict`
+        # shouldn't be mutated-while-iterated on principle.
+        for other_user_id, other_proposal in list(instance.proposals.items()):
+            if other_proposal.base_source != proposal.source:
+                replies.append(
+                    ToUser(
+                        other_user_id,
+                        ProposalConflict(
+                            session_id=message.session_id,
+                            cell_id=message.cell_id,
+                            source=proposal.source,
+                        ),
+                    )
+                )
+        return replies
+
+    if isinstance(message, RejectProposal):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        instance = session.instances.get(message.cell_id)
+        if instance is None or message.proposer_user_id not in instance.proposals:
+            return [
+                ErrorMessage(
+                    message="no such pending proposal",
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                )
+            ]
+        del instance.proposals[message.proposer_user_id]
+        # TODO.md #65: unwrapped (sender-and-peers-alike default, same
+        # precedent every pre-#46d message type already uses) rather
+        # than `Broadcast` -- the proposer must see their own proposal
+        # get rejected too, and `Broadcast` would exclude them whenever
+        # they happen to also be the sender (a proposer rejecting their
+        # own proposal via RejectProposal rather than WithdrawProposal).
+        # Everyone converging on "this proposal is gone" is exactly the
+        # same reasoning CellSourceChanged's own docstring gives for its
+        # unconditional sender-and-peers delivery.
+        return [
+            ProposalRejected(
+                session_id=message.session_id,
+                cell_id=message.cell_id,
+                rejected_by_user_id=message.proposer_user_id,
+            )
+        ]
 
     if isinstance(message, SetElementValue):
         session = registry.get(message.session_id)

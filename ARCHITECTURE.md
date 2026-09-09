@@ -548,6 +548,88 @@ link" share, chosen to match this project's total absence of any other
 auth infrastructure. Revisit only if a concrete need for durable identity
 (e.g. gradebook integration) emerges.
 
+## 5b. Push/review-based collaborative editing (`review_mode`)
+
+Implemented (`TODO.md` #65; see `PROPOSAL_review_workflow.md` for the
+design discussion and the decisions that shaped this). An **opt-in
+alternative** to §5a's always-live model, not a replacement — a document
+created without `--review-mode` behaves exactly as §5a describes, with
+`Session.review_mode` defaulting to `False` everywhere and every existing
+test/usage pattern unaffected.
+
+**Enabling it.** `codeslides edit|present --collaborative --review-mode`
+(`cli.py`) starts the server with `create_app(..., review_mode=True)`,
+which sets `SessionRegistry.default_review_mode` — consulted only the
+moment `create_or_join` constructs a *brand-new* Session for a given
+document id, never when joining an existing one (the mode is fixed for a
+document's whole lifetime, the instant it exists, same as `Peer.role`'s
+own "fixed for the connection's lifetime" precedent). The client learns
+whether its document is in review mode once, via `SessionCreated.
+review_mode`, sent at connect time.
+
+**The model.** A `review_mode` document adds one thing on top of §5a's
+existing shared namespace: each cell's `CellInstance.proposals` (`session
+.py`) holds zero or more pending `CellProposal`s, keyed by proposer
+`user_id`, alongside the single already-existing `session.
+source_overrides` entry that remains "the accepted, executed, shared
+source" exactly as it always has been. Editing a cell's source no longer
+goes through `EditCell` (rejected outright with an error on a
+`review_mode` document, so a stale/confused client fails loudly rather
+than silently broadcasting when it shouldn't) — instead:
+
+- **`PushCell`** stages (or replaces, if the same proposer pushes again)
+  a `CellProposal` for the sender's own identity. Does *not* touch
+  `source_overrides`, does *not* re-run the cell, does *not* reach the
+  shared, executed state at all — only a `CellProposed` (`Broadcast`,
+  peers-only, since the proposer already has this state) tells every
+  other connection a proposal now exists.
+- **`AcceptProposal`** (any editor-role peer, not just the proposer —
+  `PROPOSAL_review_workflow.md`'s decision that any single peer's accept
+  is sufficient, matching "there's only one shared namespace to merge
+  into anyway") merges the proposal into `source_overrides` and re-runs
+  the cell via the *exact same* `Kernel.on_cell_edited` path `EditCell`
+  already used pre-review-mode — no parallel "accept" execution logic to
+  keep in sync. Broadcasts `ProposalAccepted` (the new source) plus the
+  usual `cell_status`/`cell_output`, to everyone, same shape as an
+  ordinary edit's broadcast. Attribution (`CellAttributionChanged`,
+  §5a/`TODO.md` #46g) credits the *proposer* — whoever actually wrote the
+  content — not whoever clicked Accept; this is stamped directly inside
+  `AcceptProposal`'s own handler rather than through the generic
+  `ATTRIBUTABLE_MESSAGE_TYPES` mechanism (which always credits a
+  message's sender), since crediting the accepter here would be
+  attributing the edit to the wrong person by construction.
+- **`RejectProposal`**/**`WithdrawProposal`** clear a pending proposal
+  (any editor may reject someone else's; only the proposer may withdraw
+  their own) without ever touching `source_overrides`.
+- **Conflict handling**: if proposal A for a cell is accepted while
+  proposal B for the *same* cell is still pending, B is not silently
+  discarded or silently re-based — B's proposer gets a `ProposalConflict`
+  (carrying the newly-accepted source) so they can re-diff and decide to
+  re-push or withdraw. This needed a delivery primitive neither
+  `Broadcast` nor `SenderOnly` could express (`ws_handler.ToUser`,
+  addressed by `user_id` via a new `SessionRegistry.peer_by_user_id`
+  lookup) since the proposer B is very often neither "the sender" of the
+  triggering `AcceptProposal` nor "every other peer," just one specific
+  peer among several — the same gap `RejectProposal`'s reply hits (the
+  proposer being rejected may not be who sent the rejection), resolved
+  there by sending `ProposalRejected` unwrapped (sender-and-peers-alike)
+  instead, since every connection — proposer included, whichever role
+  they played in triggering it — needs the same "this proposal is gone"
+  update.
+
+**Scope boundaries** (all deliberate, per `PROPOSAL_review_workflow.md`'s
+resolved open questions): per-cell only, no batching multiple cells into
+one push; text-diff-only review for v1, no preview execution of a
+pending proposal; structural edits (add/remove/reorder cell, rename,
+add/remove element, etc.) stay immediate/shared exactly as in §5a, only
+cell *source* goes through review; element values (`SetElementValue`)
+are untouched, governed entirely by the separate, still-undecided
+`TODO.md` #63. A viewer-role connection can do none of this — `PushCell`/
+`WithdrawProposal`/`AcceptProposal`/`RejectProposal` are simply absent
+from `VIEWER_ALLOWED_MESSAGE_TYPES`'s allowlist, same "blocked by default
+until deliberately added" posture every other mutating message type
+already has.
+
 ## 6. Output model
 
 Cell-instance output is a tagged union, sent over the websocket and

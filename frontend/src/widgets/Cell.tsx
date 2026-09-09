@@ -158,6 +158,23 @@ export interface CellProps {
   // client-side-execution work that would make that interaction
   // meaningful rather than a silently-no-op'd drag.
   viewerMode?: boolean
+  // TODO.md #65: whether this document uses the propose/review/accept
+  // workflow -- when true, `onRunCell`'s Shift+Enter path is expected to
+  // stage a proposal (App.tsx wires it to handlePushCell instead of
+  // handleRunCell in that case) rather than immediately re-run/broadcast,
+  // and the proposal banner/Accept/Reject controls below become visible.
+  // `ownUserId` is this connection's own joined identity (null until
+  // Join/JoinAck completes), used only to distinguish "your own pending
+  // proposal" (Withdraw) from "someone else's" (Accept/Reject) --
+  // reviewMode is meaningless without a joined identity in practice
+  // (review_mode implies --collaborative), but this stays optional/null-
+  // safe rather than assuming that invariant holds.
+  reviewMode?: boolean
+  ownUserId?: string | null
+  onPushCell?: (source: string) => void
+  onWithdrawProposal?: () => void
+  onAcceptProposal?: (proposerUserId: string) => void
+  onRejectProposal?: (proposerUserId: string) => void
   onRunCell: (source: string) => void
   onRunAll: (source: string) => void
   // TODO.md #46d-i: fired on this cell's primary editor gaining/losing
@@ -393,6 +410,12 @@ export function Cell({
   extraCodeAbove,
   hideHeader = false,
   viewerMode = false,
+  reviewMode = false,
+  ownUserId = null,
+  onPushCell,
+  onWithdrawProposal,
+  onAcceptProposal,
+  onRejectProposal,
   onRunCell,
   onRunAll,
   onFocusChange,
@@ -860,7 +883,12 @@ export function Cell({
         <div className="cs-cell-code-and-output">
           <CodeEditor
             source={meta.source}
-            onRunCell={onRunCell}
+            // TODO.md #65: Shift+Enter stages a proposal instead of
+            // immediately re-running/broadcasting, on a review_mode
+            // document -- falls back to onRunCell if the caller didn't
+            // wire onPushCell even though reviewMode is set, rather than
+            // silently no-op'ing a keystroke.
+            onRunCell={reviewMode && onPushCell ? onPushCell : onRunCell}
             onRunAll={onRunAll}
             readOnly={meta.instance === 'static' || viewerMode}
             highlightedLines={highlightedLines}
@@ -1194,6 +1222,65 @@ export function Cell({
         hasCellOutput(state?.kind ?? null, state?.data, state?.value) && (
           <CellOutputView kind={state?.kind ?? null} data={state?.data} value={state?.value} />
         )}
+
+      {/* TODO.md #65: pending proposals for this cell, on a review_mode
+          document. Shown regardless of `editing`/`hideHeader` (a
+          proposal is worth surfacing even if this viewer isn't currently
+          in the code editor) but gated on `!collapsed`, same as every
+          other content block in this section -- a collapsed cell shows
+          nothing but its header, proposals included. Also renders a
+          conflict banner (state?.conflict set) for this connection's own
+          proposal, if the accepted source moved on underneath it. */}
+      {reviewMode && !collapsed && state?.conflict != null && (
+        <div className="cs-cell-proposal-conflict">
+          <p>
+            Someone else's change was accepted while your proposal was pending. The current code is now:
+          </p>
+          <pre className="cs-cell-proposal-diff">{state.conflict}</pre>
+          <p>Re-push your change against the new version, or withdraw it.</p>
+          {onWithdrawProposal && (
+            <button type="button" onClick={onWithdrawProposal}>
+              Withdraw my proposal
+            </button>
+          )}
+        </div>
+      )}
+      {reviewMode &&
+        !collapsed &&
+        state?.proposals &&
+        Object.entries(state.proposals).map(([proposerUserId, proposal]) => {
+          const isOwnProposal = ownUserId != null && proposerUserId === ownUserId
+          return (
+            <div className="cs-cell-proposal" key={proposerUserId}>
+              <p className="cs-cell-proposal-header">
+                <strong>{proposal.displayName}</strong> proposed a change to this cell:
+              </p>
+              <pre className="cs-cell-proposal-diff">{proposal.source}</pre>
+              <div className="cs-cell-proposal-actions">
+                {isOwnProposal ? (
+                  onWithdrawProposal && (
+                    <button type="button" onClick={onWithdrawProposal}>
+                      Withdraw
+                    </button>
+                  )
+                ) : (
+                  <>
+                    {onAcceptProposal && (
+                      <button type="button" onClick={() => onAcceptProposal(proposerUserId)}>
+                        Accept
+                      </button>
+                    )}
+                    {onRejectProposal && (
+                      <button type="button" onClick={() => onRejectProposal(proposerUserId)}>
+                        Reject
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          )
+        })}
 
       {!hideHeader && !collapsed && editing && (
         <EditCellPanel
