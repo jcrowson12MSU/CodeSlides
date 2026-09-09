@@ -17,14 +17,19 @@ from datetime import UTC, datetime
 from codeslides.kernel import ExecutionResult, Kernel
 from codeslides.output import resolve_output, wire_safe_value
 from codeslides.protocol import (
+    AcceptCellBundle,
     AcceptProposal,
     AddCell,
     AddElement,
     AddPrimaryEditor,
     AddSlide,
     AddTitleSlide,
+    BundleAccepted,
+    BundleRejected,
+    BundleWithdrawn,
     CellAdded,
     CellAttributionChanged,
+    CellBundleProposed,
     CellOutput,
     CellProposed,
     CellRemoved,
@@ -57,6 +62,8 @@ from codeslides.protocol import (
     ProposalRejected,
     ProposalWithdrawn,
     PushCell,
+    PushCellBundle,
+    RejectCellBundle,
     RejectProposal,
     RemoveCell,
     RemoveElement,
@@ -84,7 +91,9 @@ from codeslides.protocol import (
     SlideAdded,
     SlideRemoved,
     TitleSlideAdded,
+    WithdrawCellBundle,
     WithdrawProposal,
+    decode_client_message,
 )
 from codeslides.serialization import (
     InvalidSourceError,
@@ -94,7 +103,7 @@ from codeslides.serialization import (
     save_edits,
     write_export,
 )
-from codeslides.session import CellProposal, Session
+from codeslides.session import CellProposal, Session, StructuralAction, StructuralBundle
 
 # A connection is identified by a fresh id per websocket, distinct from
 # the (possibly shared) session_id its Session lives under -- this is
@@ -390,6 +399,21 @@ class SessionRegistry:
         if session_id in self.connections:
             return
         self.sessions.pop(session_id, None)
+
+
+def _review_mode_rejection(session_id: str, cell_id: str, message_type: str) -> ErrorMessage:
+    """TODO.md #65-x: the shared rejection every structural-mutation
+    message type (`RenameCell`, `SetHideCode`, `AddElement`, etc.) uses
+    on a `review_mode` document, mirroring `EditCell`/`SetTestSource`'s
+    own existing "use push_cell instead" posture -- a stale/confused
+    client fails loudly with a specific, actionable message rather than
+    the mutation silently bypassing review (or, worse, silently
+    no-op'ing with no explanation)."""
+    return ErrorMessage(
+        message=f"this document is in review mode; use push_cell_bundle instead of {message_type}",
+        session_id=session_id,
+        cell_id=cell_id,
+    )
 
 
 def _effective_display_source(session: Session, cell) -> str:
@@ -1128,6 +1152,232 @@ def handle_message(
             )
         ]
 
+    if isinstance(message, PushCellBundle):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if not session.review_mode:
+            return [
+                ErrorMessage(
+                    message="this document is not in review mode",
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                )
+            ]
+        if message.cell_id not in registry.kernel.deck.cells:
+            return [
+                ErrorMessage(
+                    message="unknown cell", session_id=message.session_id, cell_id=message.cell_id
+                )
+            ]
+        peer = registry.get_peer(message.session_id, connection_id) if connection_id else None
+        if peer is None or peer.user_id is None:
+            return [
+                ErrorMessage(
+                    message="push_cell_bundle requires an identified connection (join first)",
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                )
+            ]
+        instance = session.instances.get(message.cell_id)
+        if instance is None:
+            return [
+                ErrorMessage(
+                    message="unknown cell", session_id=message.session_id, cell_id=message.cell_id
+                )
+            ]
+        # TODO.md #65-x: validate every action decodes and targets this
+        # same cell before staging any of it -- a malformed or
+        # cell_id-mismatched action in the bundle must reject the whole
+        # push up front, not silently stage a bundle that would fail
+        # partway through replay at accept time (when it's much harder
+        # for the pushing client to react to).
+        actions: list[StructuralAction] = []
+        for entry in message.actions:
+            payload = entry.get("payload") if isinstance(entry, dict) else None
+            summary = entry.get("summary") if isinstance(entry, dict) else None
+            if not isinstance(payload, dict) or not isinstance(summary, str):
+                return [
+                    ErrorMessage(
+                        message="malformed bundle action",
+                        session_id=message.session_id,
+                        cell_id=message.cell_id,
+                    )
+                ]
+            try:
+                decoded = decode_client_message(payload)
+            except ValueError as exc:
+                return [
+                    ErrorMessage(
+                        message=f"malformed bundle action: {exc}",
+                        session_id=message.session_id,
+                        cell_id=message.cell_id,
+                    )
+                ]
+            if getattr(decoded, "cell_id", None) != message.cell_id:
+                return [
+                    ErrorMessage(
+                        message="bundle action targets a different cell",
+                        session_id=message.session_id,
+                        cell_id=message.cell_id,
+                    )
+                ]
+            actions.append(StructuralAction(payload=payload, summary=summary))
+        if not actions:
+            return [
+                ErrorMessage(
+                    message="a bundle must contain at least one action",
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                )
+            ]
+        created_at = datetime.now(UTC)
+        instance.structural_bundle = StructuralBundle(
+            proposer_user_id=peer.user_id,
+            display_name=peer.display_name,
+            created_at=created_at,
+            actions=actions,
+        )
+        return [
+            Broadcast(
+                CellBundleProposed(
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                    proposer_user_id=peer.user_id,
+                    proposer_display_name=peer.display_name or "",
+                    action_summaries=[a.summary for a in actions],
+                    created_at=created_at.isoformat(),
+                )
+            )
+        ]
+
+    if isinstance(message, WithdrawCellBundle):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        peer = registry.get_peer(message.session_id, connection_id) if connection_id else None
+        if peer is None or peer.user_id is None:
+            return []
+        instance = session.instances.get(message.cell_id)
+        if (
+            instance is None
+            or instance.structural_bundle is None
+            or instance.structural_bundle.proposer_user_id != peer.user_id
+        ):
+            return []
+        instance.structural_bundle = None
+        return [
+            Broadcast(
+                BundleWithdrawn(
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                    proposer_user_id=peer.user_id,
+                )
+            )
+        ]
+
+    if isinstance(message, AcceptCellBundle):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        instance = session.instances.get(message.cell_id)
+        if (
+            instance is None
+            or instance.structural_bundle is None
+            or instance.structural_bundle.proposer_user_id != message.proposer_user_id
+        ):
+            return [
+                ErrorMessage(
+                    message="no such pending bundle",
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                )
+            ]
+        bundle = instance.structural_bundle
+        instance.structural_bundle = None
+        accepting_peer = registry.get_peer(message.session_id, connection_id) if connection_id else None
+        # TODO.md #65-x: temporarily drop out of review_mode for the
+        # duration of the replay -- each staged action's own handler
+        # (RenameCell, AddElement, etc.) unconditionally rejects itself
+        # on a review_mode document (the very gate this feature added),
+        # and that gate must not fire against the server's own replay of
+        # an already-accepted bundle. Restored immediately after,
+        # including if a replayed action raises -- this is a Session
+        # field mutation, not a message send, so there's no
+        # partially-sent state to worry about either way.
+        session.review_mode = False
+        try:
+            replies: list[ServerMessage | Broadcast | SenderOnly | ToUser] = []
+            for action in bundle.actions:
+                decoded = decode_client_message(action.payload)
+                replies.extend(handle_message(registry, decoded, connection_id))
+        finally:
+            session.review_mode = True
+        # TODO.md #65-x/#46g: attribution credits the *proposer*, same
+        # rule AcceptProposal's own primary-source path already applies
+        # -- stamped directly here rather than through
+        # ATTRIBUTABLE_MESSAGE_TYPES, for the same reason: that
+        # mechanism would credit whoever clicked Accept, not whoever
+        # authored the change. The final cell_id to attribute is read off
+        # the *last* replayed action's own reply (scanning from the end,
+        # same `attributed_cell_id` helper `ATTRIBUTABLE_MESSAGE_TYPES`
+        # itself uses), never `message.cell_id` -- a RenameCell anywhere
+        # in the bundle means the cell's identity by the end of replay is
+        # no longer the id this AcceptCellBundle message itself named
+        # (`attributed_cell_id`'s own docstring explains this exact
+        # trap). Only stamped if the cell itself still exists after
+        # replay (a bundle whose actions included removing the cell has
+        # nothing left to attribute).
+        final_cell_id = attributed_cell_id(list(reversed(replies))) or message.cell_id
+        final_instance = session.instances.get(final_cell_id)
+        if final_instance is not None and bundle.display_name is not None:
+            final_instance.last_edited_by = bundle.display_name
+            final_instance.last_edited_at = datetime.now(UTC)
+            replies.append(
+                CellAttributionChanged(
+                    session_id=message.session_id,
+                    cell_id=final_cell_id,
+                    last_edited_by=final_instance.last_edited_by,
+                    last_edited_at=final_instance.last_edited_at.isoformat(),
+                )
+            )
+        return [
+            BundleAccepted(
+                session_id=message.session_id,
+                cell_id=message.cell_id,
+                accepted_from_user_id=message.proposer_user_id,
+                accepted_by_user_id=(accepting_peer.user_id if accepting_peer else None) or "",
+                action_summaries=[a.summary for a in bundle.actions],
+            ),
+            *replies,
+        ]
+
+    if isinstance(message, RejectCellBundle):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        instance = session.instances.get(message.cell_id)
+        if (
+            instance is None
+            or instance.structural_bundle is None
+            or instance.structural_bundle.proposer_user_id != message.proposer_user_id
+        ):
+            return [
+                ErrorMessage(
+                    message="no such pending bundle",
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                )
+            ]
+        instance.structural_bundle = None
+        return [
+            BundleRejected(
+                session_id=message.session_id,
+                cell_id=message.cell_id,
+                rejected_by_user_id=message.proposer_user_id,
+            )
+        ]
+
     if isinstance(message, SetElementValue):
         session = registry.get(message.session_id)
         if session is None:
@@ -1584,6 +1834,8 @@ def handle_message(
         session = registry.get(message.session_id)
         if session is None:
             return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if session.review_mode:
+            return [_review_mode_rejection(message.session_id, message.cell_id, "rename_cell")]
         try:
             cell = registry.kernel.rename_cell(session, message.cell_id, message.new_name)
         except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
@@ -1610,6 +1862,8 @@ def handle_message(
         session = registry.get(message.session_id)
         if session is None:
             return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if session.review_mode:
+            return [_review_mode_rejection(message.session_id, message.cell_id, "set_main_cell")]
         # Captured before the call -- kernel.set_main_cell replaces
         # self.deck wholesale (reload_deck), so the previous main cell
         # (if any) is only ever visible in the deck as it stood before
@@ -1634,6 +1888,8 @@ def handle_message(
         session = registry.get(message.session_id)
         if session is None:
             return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if session.review_mode:
+            return [_review_mode_rejection(message.session_id, message.cell_id, "set_setup_cell")]
         # Same capture-before-call rationale as SetMainCell above.
         previous_setup = next(
             (name for name, c in registry.kernel.deck.cells.items() if c.is_setup and name != message.cell_id),
@@ -1655,6 +1911,8 @@ def handle_message(
         session = registry.get(message.session_id)
         if session is None:
             return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if session.review_mode:
+            return [_review_mode_rejection(message.session_id, message.cell_id, "set_hide_code")]
         try:
             cell = registry.kernel.set_hide_code(session, message.cell_id, message.hide_code)
         except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
@@ -1671,6 +1929,8 @@ def handle_message(
         session = registry.get(message.session_id)
         if session is None:
             return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if session.review_mode:
+            return [_review_mode_rejection(message.session_id, message.cell_id, "set_hide_def")]
         try:
             cell = registry.kernel.set_hide_def(session, message.cell_id, message.hide_def)
         except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
@@ -1708,6 +1968,8 @@ def handle_message(
         session = registry.get(message.session_id)
         if session is None:
             return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if session.review_mode:
+            return [_review_mode_rejection(message.session_id, message.cell_id, "add_element")]
         from codeslides.deck import Element
 
         try:
@@ -1735,6 +1997,8 @@ def handle_message(
         session = registry.get(message.session_id)
         if session is None:
             return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if session.review_mode:
+            return [_review_mode_rejection(message.session_id, message.cell_id, "remove_element")]
         try:
             cell, result = registry.kernel.remove_element(session, message.cell_id, message.element_name)
         except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
@@ -1759,6 +2023,8 @@ def handle_message(
         session = registry.get(message.session_id)
         if session is None:
             return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if session.review_mode:
+            return [_review_mode_rejection(message.session_id, message.cell_id, "remove_primary_editor")]
         try:
             cell, result = registry.kernel.remove_primary_editor(session, message.cell_id)
         except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
@@ -1783,6 +2049,8 @@ def handle_message(
         session = registry.get(message.session_id)
         if session is None:
             return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if session.review_mode:
+            return [_review_mode_rejection(message.session_id, message.cell_id, "add_primary_editor")]
         try:
             cell, result = registry.kernel.add_primary_editor(session, message.cell_id)
         except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
@@ -1807,6 +2075,8 @@ def handle_message(
         session = registry.get(message.session_id)
         if session is None:
             return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if session.review_mode:
+            return [_review_mode_rejection(message.session_id, message.cell_id, "reorder_elements")]
         try:
             cell = registry.kernel.reorder_elements(session, message.cell_id, message.element_order)
         except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
@@ -1828,6 +2098,8 @@ def handle_message(
         session = registry.get(message.session_id)
         if session is None:
             return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        if session.review_mode:
+            return [_review_mode_rejection(message.session_id, message.cell_id, "set_element_config")]
         try:
             cell = registry.kernel.set_element_config(
                 session, message.cell_id, message.element_id, message.config

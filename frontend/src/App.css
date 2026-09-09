@@ -941,6 +941,25 @@ body.cs-resizing-vertical {
   gap: 0.5rem;
 }
 
+/* TODO.md #65-x: this connection's own locally-staged structural
+   changes, not yet pushed -- a cooler blue rather than the amber
+   proposal/conflict banners above, since nothing here has reached the
+   server yet and there's nothing for anyone else to react to. */
+.cs-cell-pending-actions {
+  background: #eef6fc;
+  border: 1px solid #a9d3ee;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  margin: 0.35rem 0.75rem 0;
+  font-size: var(--cs-font-base);
+}
+
+.cs-cell-pending-actions ul,
+.cs-cell-proposal ul {
+  margin: 0 0 0.35rem;
+  padding-left: 1.25rem;
+}
+
 .cs-cell-output {
   background: #f6f6f6;
   border-radius: 4px;

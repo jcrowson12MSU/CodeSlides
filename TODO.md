@@ -4368,6 +4368,75 @@ reshape the plan below and are called out explicitly where they apply:
     untouched until he acts, and after Accept both peers' editors show
     the new test source with its real re-run result.
 
+  - [x] 65-x. **Structural (non-source) changes through review too, per
+    the user's explicit request** ("Add a button to only push the
+    changes when the user presses the button... for code editors,
+    markdown editors, images, iframes, adding text boxes, adding
+    sliders... pretty much any change other than the values inside text
+    boxes and the values of sliders", with "one Push button per cell,
+    pushes all pending changes to that cell" and "whole bundle, atomic
+    accept/reject"). Covers 11 message types that each write to disk
+    and reload the Kernel *immediately* today (unlike `EditCell`/
+    `SetTestSource`'s existing "stage in `source_overrides`" slot):
+    `RenameCell`, `SetMainCell`, `SetSetupCell`, `SetHideCode`,
+    `SetHideDef`, `AddElement`, `RemoveElement`, `RemovePrimaryEditor`,
+    `AddPrimaryEditor`, `ReorderElements`, `SetElementConfig`.
+    Deck/slide-scoped operations with no single cell (`AddCell`,
+    `RemoveCell`, `ReorderCells`, `AddSlide`, `RemoveSlide`,
+    `SetSlideOrder`, `SaveDeck`) stay immediate, per the user's own
+    confirmation that a per-cell Push button is the right scope.
+    - `session.py`: `StructuralAction`/`StructuralBundle` dataclasses;
+      `CellInstance.structural_bundle` (one bundle per cell, not
+      per-proposer -- a second push replaces it outright).
+    - Protocol: `PushCellBundle`/`WithdrawCellBundle`/
+      `AcceptCellBundle`/`RejectCellBundle` (client) and
+      `CellBundleProposed`/`BundleWithdrawn`/`BundleAccepted`/
+      `BundleRejected` (server), both languages. A `PushCellBundle`
+      action is the exact wire-format dict `protocol.encode()` produces
+      for the original client message + a `summary` string -- accepting
+      replays each one straight through `handle_message`
+      (`decode_client_message` + dispatch), the same path a non-
+      review-mode document already uses for that type individually, so
+      there's no separate "apply this action" implementation to keep in
+      sync.
+    - `ws_handler.py`: all 11 types rejected outright on a `review_mode`
+      document (`_review_mode_rejection` helper); `AcceptCellBundle`
+      temporarily flips `session.review_mode = False` for the duration
+      of the replay (its own replayed handlers would otherwise trip the
+      very gate this feature adds), restored in a `finally`. Attribution
+      credits the proposer, reading the *final* cell id off the last
+      replayed action's own reply (`attributed_cell_id`, scanned from
+      the end) -- a `RenameCell` inside the bundle moves the
+      `CellInstance` to a new key mid-replay, so anything computed after
+      it must use the new id, the same trap (and fix) #46g-iii already
+      documents for a lone rename.
+    - Frontend: **no live preview** -- confirmed as the right tradeoff
+      after finding these message types' server replies carry fields
+      (`instance`/`source`/`elements`/`layout`) the client can't cheaply
+      reproduce ahead of time. `App.tsx`'s `stageOrSend` helper appends
+      `{payload, summary}` to a per-cell `pendingActions` list instead of
+      sending immediately, whenever `reviewMode` is set; `Cell.tsx`
+      renders the pending summaries + Push/Discard buttons
+      (`.cs-cell-pending-actions`) and, separately, the pushed bundle's
+      own review banner (summaries + Accept/Reject/Withdraw,
+      `.cs-cell-proposal`) once someone (possibly the same connection)
+      has pushed it. Not wired into `SlideShow.tsx` (Slides view) --
+      left as a known gap, Cells view only for this iteration.
+    - 7 new backend tests (627 total, all passing) covering: rejection
+      on review_mode, push-without-apply, multi-action bundle accept
+      replaying in order (with a hide_code applied before a rename
+      correctly surviving the rename), attribution to the proposer,
+      reject/withdraw, viewer-role rejection, a mismatched-cell action
+      rejected at push time, and non-review-mode documents unaffected.
+    - Verified end-to-end with two real browser contexts (Playwright):
+      toggling "Hide code editor" in the Edit panel stages a pending-
+      actions banner (checkbox itself stays visually unchecked -- by
+      design, no live preview) with a "Push"/"Discard" button; Bob sees
+      nothing until Alice pushes, then sees "Alice proposed these
+      changes to this cell: Hide code" with Accept/Reject; after Bob
+      accepts, the Code tab disappears entirely for both peers and the
+      cell shows "last edited by Alice."
+
 - [ ] **66. Collapsible chat panel for shared documents** -- lower-right
   corner collapsed to a small affordance; expands to a full-height
   third column to the right of the cells and the existing element-tabs

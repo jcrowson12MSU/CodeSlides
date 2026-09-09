@@ -1781,3 +1781,333 @@ def test_websocket_viewer_role_rejects_tests_element_proposal_messages():
         error = ws.receive_json()
         assert error["type"] == "error"
         assert "viewer" in error["message"]
+
+
+# -- TODO.md #65-x: structural (non-source) changes through review too --
+
+
+def _write_structural_deck(tmp_path):
+    deck_path = tmp_path / "deck.py"
+    deck_path.write_text(_FILE_BACKED_DECK_SOURCE)
+    return deck_path
+
+
+def test_websocket_rename_cell_rejected_on_review_mode_document(tmp_path):
+    """TODO.md #65-x: rename_cell -- one of the 15 structural message
+    types that write straight to disk immediately -- is rejected outright
+    on a review_mode document, same "use push_cell_bundle instead"
+    posture edit_cell/set_test_source already have."""
+    from codeslides.loader import load_deck
+
+    deck_path = _write_structural_deck(tmp_path)
+    client = TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True))
+    with client.websocket_connect("/ws?document=struct-1") as ws:
+        ws.receive_json()
+        ws.send_json(
+            {"type": "rename_cell", "session_id": "struct-1", "cell_id": "cell_a", "new_name": "renamed"}
+        )
+        error = ws.receive_json()
+        assert error["type"] == "error"
+        assert "review mode" in error["message"]
+        # Nothing on disk changed.
+        assert "def cell_a" in deck_path.read_text()
+
+
+def test_websocket_push_cell_bundle_does_not_apply_until_accepted(tmp_path):
+    """TODO.md #65-x: push_cell_bundle only stages the bundle -- none of
+    its actions are replayed, no disk write happens, and the only wire
+    effect is cell_bundle_proposed to the *other* peer (Broadcast,
+    peers-only)."""
+    from codeslides.loader import load_deck
+
+    deck_path = _write_structural_deck(tmp_path)
+    client = TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True))
+    with (
+        client.websocket_connect("/ws?document=struct-2") as ws_a,
+        client.websocket_connect("/ws?document=struct-2") as ws_b,
+    ):
+        ws_a.receive_json()
+        ws_b.receive_json()
+        ws_a.send_json({"type": "join", "session_id": "struct-2", "display_name": "Alice"})
+        ws_a.receive_json()  # join_ack
+        ws_b.receive_json()  # presence_update
+
+        rename_payload = {"type": "rename_cell", "session_id": "struct-2", "cell_id": "cell_a", "new_name": "renamed"}
+        ws_a.send_json(
+            {
+                "type": "push_cell_bundle",
+                "session_id": "struct-2",
+                "cell_id": "cell_a",
+                "actions": [{"payload": rename_payload, "summary": "Rename to `renamed`"}],
+            }
+        )
+        proposed = ws_b.receive_json()
+        assert proposed["type"] == "cell_bundle_proposed"
+        assert proposed["cell_id"] == "cell_a"
+        assert proposed["action_summaries"] == ["Rename to `renamed`"]
+
+        # Nothing applied yet: deck unchanged on disk and in the Kernel.
+        assert "def cell_a" in deck_path.read_text()
+        assert "cell_a" in client.app.state.registry.kernel.deck.cells
+        assert "renamed" not in client.app.state.registry.kernel.deck.cells
+
+
+def test_websocket_accept_cell_bundle_replays_actions_in_order_and_attributes_to_proposer(tmp_path):
+    """TODO.md #65-x: accepting a bundle replays every staged action, in
+    order, through the ordinary handler dispatch (so hide_code=True
+    applied first survives a subsequent rename of the same cell), then
+    attributes the change to the *proposer*, not whoever clicked Accept."""
+    from codeslides.loader import load_deck
+
+    deck_path = _write_structural_deck(tmp_path)
+    client = TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True))
+    with (
+        client.websocket_connect("/ws?document=struct-3") as ws_a,
+        client.websocket_connect("/ws?document=struct-3") as ws_b,
+    ):
+        ws_a.receive_json()
+        ws_b.receive_json()
+        ws_a.send_json({"type": "join", "session_id": "struct-3", "display_name": "Alice"})
+        ws_a.receive_json()
+        ws_b.receive_json()
+        ws_b.send_json({"type": "join", "session_id": "struct-3", "display_name": "Bob"})
+        bob_join_ack = ws_b.receive_json()
+        bob_user_id = bob_join_ack["user_id"]
+        ws_a.receive_json()  # presence_update about Bob
+
+        hide_payload = {
+            "type": "set_hide_code",
+            "session_id": "struct-3",
+            "cell_id": "cell_a",
+            "hide_code": True,
+        }
+        rename_payload = {
+            "type": "rename_cell",
+            "session_id": "struct-3",
+            "cell_id": "cell_a",
+            "new_name": "renamed",
+        }
+        ws_a.send_json(
+            {
+                "type": "push_cell_bundle",
+                "session_id": "struct-3",
+                "cell_id": "cell_a",
+                "actions": [
+                    {"payload": hide_payload, "summary": "Hide code"},
+                    {"payload": rename_payload, "summary": "Rename to `renamed`"},
+                ],
+            }
+        )
+        proposed = ws_b.receive_json()
+        alice_user_id = proposed["proposer_user_id"]
+
+        # Bob (not the proposer) accepts Alice's bundle.
+        ws_b.send_json(
+            {
+                "type": "accept_cell_bundle",
+                "session_id": "struct-3",
+                "cell_id": "cell_a",
+                "proposer_user_id": alice_user_id,
+            }
+        )
+        bob_replies = [ws_b.receive_json() for _ in range(4)]
+        accepted = next(m for m in bob_replies if m["type"] == "bundle_accepted")
+        assert accepted["cell_id"] == "cell_a"
+        assert accepted["accepted_from_user_id"] == alice_user_id
+        assert accepted["accepted_by_user_id"] == bob_user_id
+        assert accepted["action_summaries"] == ["Hide code", "Rename to `renamed`"]
+
+        hide_reply = next(m for m in bob_replies if m["type"] == "hide_code_set")
+        assert hide_reply["cell_id"] == "cell_a"
+        assert hide_reply["hide_code"] is True
+        renamed_reply = next(m for m in bob_replies if m["type"] == "cell_renamed")
+        assert renamed_reply["old_cell_id"] == "cell_a"
+        assert renamed_reply["cell_id"] == "renamed"
+        # hide_code applied first survived being carried through the
+        # rename that came after it in the same bundle.
+        assert renamed_reply["hide_code"] is True
+
+        attribution = next(m for m in bob_replies if m["type"] == "cell_attribution_changed")
+        assert attribution["cell_id"] == "renamed"
+        assert attribution["last_edited_by"] == "Alice"  # the proposer, not Bob who accepted
+
+        alice_broadcast = [ws_a.receive_json() for _ in range(4)]
+        assert accepted in alice_broadcast
+
+        session = client.app.state.registry.get("struct-3")
+        assert "renamed" in client.app.state.registry.kernel.deck.cells
+        assert "cell_a" not in client.app.state.registry.kernel.deck.cells
+        assert client.app.state.registry.kernel.deck.cells["renamed"].hide_code is True
+        # The rename moved the CellInstance itself to the new key -- no
+        # stray "cell_a" entry, and the new "renamed" entry's own bundle
+        # slot is correctly cleared (never populated in the first place,
+        # since the rename created a brand-new CellInstance).
+        assert "cell_a" not in session.instances
+        assert session.instances["renamed"].structural_bundle is None
+        assert "def renamed" in deck_path.read_text()
+        assert session.review_mode is True  # restored after the replay
+
+
+def test_websocket_reject_and_withdraw_cell_bundle(tmp_path):
+    """TODO.md #65-x: reject_cell_bundle/withdraw_cell_bundle clear a
+    pending bundle without ever replaying any of its actions."""
+    from codeslides.loader import load_deck
+
+    deck_path = _write_structural_deck(tmp_path)
+    client = TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True))
+    with (
+        client.websocket_connect("/ws?document=struct-4") as ws_a,
+        client.websocket_connect("/ws?document=struct-4") as ws_b,
+    ):
+        ws_a.receive_json()
+        ws_b.receive_json()
+        ws_a.send_json({"type": "join", "session_id": "struct-4", "display_name": "Alice"})
+        ws_a.receive_json()
+        ws_b.receive_json()
+
+        rename_payload = {
+            "type": "rename_cell",
+            "session_id": "struct-4",
+            "cell_id": "cell_a",
+            "new_name": "renamed",
+        }
+        ws_a.send_json(
+            {
+                "type": "push_cell_bundle",
+                "session_id": "struct-4",
+                "cell_id": "cell_a",
+                "actions": [{"payload": rename_payload, "summary": "Rename to `renamed`"}],
+            }
+        )
+        proposed = ws_b.receive_json()
+        alice_user_id = proposed["proposer_user_id"]
+
+        ws_b.send_json(
+            {
+                "type": "reject_cell_bundle",
+                "session_id": "struct-4",
+                "cell_id": "cell_a",
+                "proposer_user_id": alice_user_id,
+            }
+        )
+        rejected_to_bob = ws_b.receive_json()
+        rejected_to_alice = ws_a.receive_json()
+        assert rejected_to_bob["type"] == rejected_to_alice["type"] == "bundle_rejected"
+
+        session = client.app.state.registry.get("struct-4")
+        assert session.instances["cell_a"].structural_bundle is None
+        assert "cell_a" in client.app.state.registry.kernel.deck.cells
+
+        # Push again, then withdraw.
+        ws_a.send_json(
+            {
+                "type": "push_cell_bundle",
+                "session_id": "struct-4",
+                "cell_id": "cell_a",
+                "actions": [{"payload": rename_payload, "summary": "Rename to `renamed`"}],
+            }
+        )
+        ws_b.receive_json()  # cell_bundle_proposed
+
+        ws_a.send_json({"type": "withdraw_cell_bundle", "session_id": "struct-4", "cell_id": "cell_a"})
+        withdrawn = ws_b.receive_json()
+        assert withdrawn["type"] == "bundle_withdrawn"
+        assert session.instances["cell_a"].structural_bundle is None
+        assert "cell_a" in client.app.state.registry.kernel.deck.cells
+
+
+def test_websocket_viewer_role_rejects_cell_bundle_messages(tmp_path):
+    """TODO.md #65-x: a viewer cannot push/accept/reject/withdraw a
+    structural bundle either -- same allowlist-shaped rejection every
+    other #65 message type already has."""
+    from codeslides.loader import load_deck
+
+    deck_path = _write_structural_deck(tmp_path)
+    client = TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True))
+    with client.websocket_connect("/ws?document=struct-5&role=viewer") as ws:
+        ws.receive_json()
+        rename_payload = {
+            "type": "rename_cell",
+            "session_id": "struct-5",
+            "cell_id": "cell_a",
+            "new_name": "renamed",
+        }
+        for payload in (
+            {
+                "type": "push_cell_bundle",
+                "session_id": "struct-5",
+                "cell_id": "cell_a",
+                "actions": [{"payload": rename_payload, "summary": "Rename"}],
+            },
+            {
+                "type": "accept_cell_bundle",
+                "session_id": "struct-5",
+                "cell_id": "cell_a",
+                "proposer_user_id": "whoever",
+            },
+            {
+                "type": "reject_cell_bundle",
+                "session_id": "struct-5",
+                "cell_id": "cell_a",
+                "proposer_user_id": "whoever",
+            },
+            {"type": "withdraw_cell_bundle", "session_id": "struct-5", "cell_id": "cell_a"},
+        ):
+            ws.send_json(payload)
+            error = ws.receive_json()
+            assert error["type"] == "error"
+            assert "viewer" in error["message"]
+
+
+def test_websocket_push_cell_bundle_rejects_action_targeting_different_cell(tmp_path):
+    """TODO.md #65-x: a bundle action naming a cell_id different from the
+    bundle's own cell_id is rejected up front, at push time -- not
+    silently staged only to fail partway through replay at accept time."""
+    from codeslides.loader import load_deck
+
+    deck_path = _write_structural_deck(tmp_path)
+    client = TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True))
+    with client.websocket_connect("/ws?document=struct-6") as ws:
+        ws.receive_json()
+        ws.send_json({"type": "join", "session_id": "struct-6", "display_name": "Alice"})
+        ws.receive_json()
+        mismatched_payload = {
+            "type": "rename_cell",
+            "session_id": "struct-6",
+            "cell_id": "some_other_cell",
+            "new_name": "renamed",
+        }
+        ws.send_json(
+            {
+                "type": "push_cell_bundle",
+                "session_id": "struct-6",
+                "cell_id": "cell_a",
+                "actions": [{"payload": mismatched_payload, "summary": "Rename"}],
+            }
+        )
+        error = ws.receive_json()
+        assert error["type"] == "error"
+        assert "different cell" in error["message"]
+        session = client.app.state.registry.get("struct-6")
+        assert session.instances["cell_a"].structural_bundle is None
+
+
+def test_websocket_non_review_mode_document_unaffected_by_structural_bundles(tmp_path):
+    """TODO.md #65-x: confirms a plain (review_mode=False) document's
+    structural message types still apply immediately, exactly as before
+    this feature existed."""
+    from codeslides.loader import load_deck
+
+    deck_path = _write_structural_deck(tmp_path)
+    client = TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path)))
+    with client.websocket_connect("/ws?document=struct-7") as ws:
+        ws.receive_json()
+        ws.send_json(
+            {"type": "rename_cell", "session_id": "struct-7", "cell_id": "cell_a", "new_name": "renamed"}
+        )
+        renamed = ws.receive_json()
+        assert renamed["type"] == "cell_renamed"
+        assert renamed["cell_id"] == "renamed"
+        session = client.app.state.registry.get("struct-7")
+        assert session.review_mode is False
+        assert session.instances["renamed"].structural_bundle is None
