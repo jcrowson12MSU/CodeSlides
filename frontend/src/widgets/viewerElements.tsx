@@ -120,12 +120,36 @@ export interface NotesViewerProps {
 // -- notes content is markdown meant to be read starting right at its
 // own title if it has one, not prefixed with authoring metadata a
 // reader has no use for.
+//
+// Locked by default: a note starts fully rendered and non-editable, so
+// simply clicking/tabbing through a slide (or moving the cursor near a
+// line) can never flip a line back to raw markdown -- that reveal-on-
+// cursor behavior lives entirely inside NotesEditor and only applies
+// once unlocked. Double-click unlocks for editing; losing focus (e.g.
+// clicking elsewhere, or moving to the next slide) re-locks it, mirroring
+// how the old Edit/Preview toggle always returned to Preview once you
+// clicked away. This lock state is purely local UI state, same category
+// as the collapse/minimize toggle other viewer elements have -- it never
+// needs to reach set_ui_state or persist, since it only gates *this
+// browser tab's* editability, not the note's content.
 export function NotesViewer({ content, onChangeSource }: NotesViewerProps) {
   const source = typeof content === 'string' ? content : ''
+  const [locked, setLocked] = useState(true)
 
   return (
-    <div className="cs-element cs-element-viewer cs-notes-viewer">
-      <NotesEditor source={source} onChangeSource={onChangeSource} />
+    <div
+      className="cs-element cs-element-viewer cs-notes-viewer"
+      onDoubleClick={() => setLocked(false)}
+      onBlur={(event) => {
+        // currentTarget is this wrapper div; relatedTarget is where focus
+        // is going. Skip re-locking when focus is just moving between
+        // child nodes inside the same editor (e.g. CodeMirror's internal
+        // focus handling), only re-lock once focus actually leaves.
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+        setLocked(true)
+      }}
+    >
+      <NotesEditor source={source} onChangeSource={onChangeSource} locked={locked} />
     </div>
   )
 }

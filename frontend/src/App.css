@@ -1061,6 +1061,15 @@ body.cs-resizing-vertical {
   caret-color: var(--text-h, #08060d);
 }
 
+/* Locked mode (NotesEditor's `locked` prop, default -- see NotesViewer's
+   double-click handler in viewerElements.tsx): CodeMirror marks a
+   non-editable root with contenteditable="false", which this hooks to
+   drop the text-selection caret cursor -- a locked note should read like
+   plain rendered text, not an inert text field, until double-clicked. */
+.cs-notes-live-editor .cm-content[contenteditable='false'] {
+  cursor: default;
+}
+
 .cs-notes-live-h1,
 .cs-notes-live-h2,
 .cs-notes-live-h3,
