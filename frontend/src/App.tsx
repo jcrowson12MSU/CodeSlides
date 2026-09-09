@@ -4,6 +4,7 @@ import { useDeckState } from './deckState'
 import type { CellLayout } from './protocol'
 import { useCodeSlidesSocket } from './useCodeSlidesSocket'
 import { Cell, type CellMeta } from './widgets/Cell'
+import { setDeckCellOrder } from './widgets/deckSource'
 import { EditSlideDeckPanel } from './widgets/EditSlideDeckPanel'
 import { computeLineOffsets } from './widgets/lineOffsets'
 import { SlideShow, type SlideMeta } from './widgets/SlideShow'
@@ -176,6 +177,15 @@ function App() {
     () => (deckCells ? computeLineOffsets(deckCells, liveLineCounts) : {}),
     [deckCells, liveLineCounts],
   )
+  // Publishes this deck's cell ordering to the module-level deck-source
+  // registry (deckSource.ts) so a CodeEditor anywhere in the tree can
+  // scan "the whole deck" for autocomplete purposes (AUTOCOMPLETE_TODO.md
+  // items 2-4) in the same order `cellLineOffsets` above already treats
+  // as authoritative -- `Object.keys(deck.cells)`, not something this
+  // effect needs to re-derive.
+  useEffect(() => {
+    if (deckCells) setDeckCellOrder(Object.keys(deckCells))
+  }, [deckCells])
 
   useEffect(() => {
     fetch('/api/deck')

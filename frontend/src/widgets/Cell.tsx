@@ -834,6 +834,7 @@ export function Cell({
             onToggleLineHighlight={toggleLineHighlight}
             lineOffset={lineOffset}
             onLineCountChange={onLineCountChange}
+            cellId={cellId}
           />
           {outputBelowEditor}
         </div>

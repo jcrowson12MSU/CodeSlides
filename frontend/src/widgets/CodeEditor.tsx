@@ -1,5 +1,5 @@
-import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
-import { python } from '@codemirror/lang-python'
+import { autocompletion, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
+import { globalCompletion, localCompletionSource, python } from '@codemirror/lang-python'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import {
   bracketMatching,
@@ -26,6 +26,8 @@ import {
   rectangularSelection,
 } from '@codemirror/view'
 import { useEffect, useRef } from 'react'
+import { deckSymbolCompletion, dotCompletion } from './deckCompletion'
+import { registerCellSource, unregisterCellSource } from './deckSource'
 
 export interface CodeEditorProps {
   source: string
@@ -63,6 +65,16 @@ export interface CodeEditorProps {
   // the mount-effect docstring below). Optional so a caller that
   // doesn't chain line numbers across cells doesn't need to provide it.
   onLineCountChange?: (count: number) => void
+  // Identifies this editor as part of "the deck" for autocomplete's
+  // deck-wide symbol/import scanning (AUTOCOMPLETE_TODO.md items 2-4) --
+  // its live source is registered into deckSource.ts under this key so
+  // completion sources elsewhere can read it as part of the combined
+  // deck source. Omitted by editors that aren't a cell's own program
+  // source (e.g. TestsElementWidget's scratch `tests` editor), which
+  // still get keyword/builtin/import-gated completions but shouldn't
+  // contribute their own text as deck-wide symbols/imports, nor see
+  // symbols named only inside some other cell's test scratch buffer.
+  cellId?: string
 }
 
 // Ephemeral, presenter-driven line highlighting (not persisted, not
@@ -215,6 +227,7 @@ export function CodeEditor({
   onToggleLineHighlight,
   lineOffset = 0,
   onLineCountChange,
+  cellId,
 }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -331,7 +344,38 @@ export function CodeEditor({
       // Editing-only behavior: meaningless (and, for closeBrackets,
       // actively unwanted -- nothing should insert text) on a read-only
       // `instance="static"` cell.
-      ...(readOnly ? [] : [history(), indentOnInput(), closeBrackets()]),
+      //
+      // autocompletion() (AUTOCOMPLETE_TODO.md items 1-5): its own
+      // completion-accepting keymap (Enter, Ctrl-Space, arrows) is
+      // wrapped in Prec.highest internally, same as this file's own
+      // Shift-Enter/Mod-Shift-Enter binding above -- no real collision,
+      // since completion's plain-Enter binding only fires (and
+      // otherwise falls through to defaultKeymap's insertNewlineAndIndent
+      // unchanged) when a completion popup is actually open, and this
+      // editor never binds plain Enter itself.
+      //
+      // `override` REPLACES whatever completion sources
+      // `pythonLanguage`'s own language data would otherwise supply
+      // (confirmed via @codemirror/autocomplete's own d.ts: "Override
+      // the completion sources used" -- it doesn't merge with language
+      // data, so leaving out globalCompletion/localCompletionSource here
+      // would silently drop keyword/builtin/single-document-local
+      // completions entirely). So this list explicitly includes
+      // upstream's own two sources alongside this deck's own two
+      // (deckCompletion.ts) rather than re-deriving keyword/builtin data
+      // by hand -- upstream's list is more accurate (proper `type`
+      // metadata, exception classes, dunder names) and less code to
+      // maintain than hand-rolling the same data.
+      ...(readOnly
+        ? []
+        : [
+            history(),
+            indentOnInput(),
+            closeBrackets(),
+            autocompletion({
+              override: [globalCompletion, localCompletionSource, deckSymbolCompletion, dotCompletion],
+            }),
+          ]),
       EditorView.editable.of(!readOnly),
       EditorView.theme({
         // fontSize reads the shared --cs-font-code custom property
@@ -344,11 +388,27 @@ export function CodeEditor({
         '&': { fontSize: 'var(--cs-font-code)', border: '1px solid #ddd', borderRadius: '4px' },
         '.cm-content': { fontFamily: 'ui-monospace, monospace', textAlign: 'left' },
         '.cm-line': { textAlign: 'left' },
+        // Match the completion popup's font to the editor's own monospace
+        // rather than leaving CodeMirror's unstyled default (a serif/
+        // sans-serif mismatch against the code above it) -- everything
+        // else about the popup (colors, selection highlight, borders)
+        // is left as CodeMirror's own default styling.
+        '.cm-tooltip-autocomplete': { fontFamily: 'ui-monospace, monospace', fontSize: 'var(--cs-font-code)' },
       }),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) onLineCountChangeRef.current?.(update.state.doc.lines)
+        if (update.docChanged) publishSource?.(update.state.doc.toString())
       }),
     ]
+
+    // AUTOCOMPLETE_TODO.md items 2-4: registers this editor's live source
+    // into the module-level deck-source registry (deckSource.ts) so
+    // completion sources elsewhere can scan "the whole deck", not just
+    // this cell -- only when `cellId` is given (the editor is actually a
+    // cell's own program source, not e.g. TestsElementWidget's scratch
+    // buffer). `registerCellSource` returns the publish function used by
+    // the updateListener above.
+    const publishSource = cellId ? registerCellSource(cellId, source) : null
 
     const view = new EditorView({
       state: EditorState.create({ doc: source, extensions }),
@@ -362,7 +422,10 @@ export function CodeEditor({
     // round-trip) source-derived count until this cell happens to change.
     onLineCountChangeRef.current?.(view.state.doc.lines)
 
-    return () => view.destroy()
+    return () => {
+      view.destroy()
+      if (cellId) unregisterCellSource(cellId)
+    }
     // Intentionally mount once; `source` prop changes after mount are
     // handled by the sync effect below, not by re-creating the view
     // (which would discard cursor position/undo history on every render).
@@ -379,6 +442,9 @@ export function CodeEditor({
     const current = view.state.doc.toString()
     if (current !== source) {
       view.dispatch({ changes: { from: 0, to: current.length, insert: source } })
+      // The dispatch above already triggers updateListener (which
+      // publishes to deckSource.ts when `cellId` is set), so no separate
+      // publish call is needed here.
     }
   }, [source])
 

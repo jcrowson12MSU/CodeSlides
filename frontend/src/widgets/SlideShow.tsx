@@ -260,6 +260,7 @@ export function SlideShow({
                     readOnly={setupMeta.instance === 'static'}
                     lineOffset={cellLineOffsets[setupCellId] ?? 0}
                     onLineCountChange={(count) => onLineCountChange(setupCellId, count)}
+                    cellId={setupCellId}
                   />
                 ) : undefined
               }
