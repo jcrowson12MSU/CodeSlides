@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { useDeckState } from './deckState'
+import { usePresenceState } from './presenceState'
 import type { CellLayout } from './protocol'
 import { useCodeSlidesSocket } from './useCodeSlidesSocket'
 import { Cell, type CellMeta } from './widgets/Cell'
 import { setDeckCellOrder } from './widgets/deckSource'
 import { EditSlideDeckPanel } from './widgets/EditSlideDeckPanel'
+import { JoinScreen } from './widgets/JoinScreen'
 import { computeLineOffsets } from './widgets/lineOffsets'
+import { PeerList } from './widgets/PeerList'
 import { SlideShow, type SlideMeta } from './widgets/SlideShow'
 
 interface DeckSummary {
@@ -24,6 +27,19 @@ function initialViewMode(): ViewMode {
   // plain `/`, defaulting to the flat Cells view. Purely a starting
   // point -- the toggle below still switches freely either way.
   return new URLSearchParams(window.location.search).get('mode') === 'slides' ? 'slides' : 'cells'
+}
+
+// TODO.md #46a-iv/#46d: `?document=<id>` in the URL means this is a
+// collaborative connection to a shared document -- present only when a
+// document link was explicitly opened (46e's future join-link UI is what
+// will actually generate these links; for now the param is read
+// directly, same "read it straight off window.location.search" pattern
+// initialViewMode already uses for `?mode=`). `null` (the overwhelmingly
+// common case: a plain `codeslides edit`/`present` open) means a solo,
+// fully isolated connection exactly as before #46a -- no join-screen, no
+// presence, nothing about this feature changes that path's behavior.
+function documentIdFromUrl(): string | null {
+  return new URLSearchParams(window.location.search).get('document')
 }
 
 // Two views over the same deck (ARCHITECTURE.md's "one tool, two modes"
@@ -153,8 +169,45 @@ function App() {
   // this composition (e.g. a fresh /api/deck fetch, or an add_slide) --
   // those all replace `deck.slides` with a new on-disk-order baseline.
   const pendingSlideOrder = useRef<number[] | null>(null)
-  const { sessionId, messages, send } = useCodeSlidesSocket()
+  // TODO.md #46d: null for the overwhelmingly common solo case (no
+  // `?document=` in the URL) -- the socket connects to plain `/ws`
+  // exactly as before this feature existed. A non-null id connects to
+  // `/ws?document=<id>` instead, joining (or creating) that shared
+  // document's Session.
+  const documentId = useMemo(documentIdFromUrl, [])
+  const { sessionId, messages, send } = useCodeSlidesSocket(
+    documentId ? `/ws?document=${encodeURIComponent(documentId)}` : undefined,
+  )
   const cellState = useDeckState(messages)
+  const presenceState = usePresenceState(messages)
+  // TODO.md #46d-ii: this connection's own identity, once join_ack
+  // arrives -- null until then (and forever, for a solo connection,
+  // which never sends Join in the first place per displayNamePrompt's
+  // own gating below).
+  const [ownIdentity, setOwnIdentity] = useState<{ connectionId: string; color: string } | null>(
+    null,
+  )
+  useEffect(() => {
+    const lastJoinAck = [...messages].reverse().find((m) => m.type === 'join_ack')
+    if (lastJoinAck && lastJoinAck.type === 'join_ack') {
+      setOwnIdentity({ connectionId: lastJoinAck.connection_id, color: lastJoinAck.color })
+    }
+  }, [messages])
+  // TODO.md #46d-ii: the join-screen name prompt, shown only for a
+  // collaborative connection (documentId set) that hasn't joined yet --
+  // a solo connection never shows this at all, matching the decision
+  // that presence/identity must not change the existing single-editor
+  // experience. `null` display name = prompt still showing;
+  // once set, Join is sent (below) and the prompt never reappears for
+  // the life of this connection, even if display_name is later cleared
+  // by some future "leave and rejoin" feature -- there is none today.
+  const [displayName, setDisplayName] = useState<string | null>(null)
+  const joinSentRef = useRef(false)
+  useEffect(() => {
+    if (!documentId || !sessionId || !displayName || joinSentRef.current) return
+    joinSentRef.current = true
+    send({ type: 'join', session_id: sessionId, display_name: displayName })
+  }, [documentId, sessionId, displayName, send])
   // Each cell's own live line count, keyed by cellId -- updated on every
   // keystroke via CodeEditor's `onLineCountChange` (see lineOffsets.ts's
   // own docstring for why `deck.cells[cellId].source` alone isn't
@@ -612,6 +665,20 @@ function App() {
     send({ type: 'run_all', session_id: sessionId })
   }
 
+  // TODO.md #46d-i: only meaningful on a collaborative connection --
+  // set_presence is ignored server-side for a connection that never sent
+  // Join anyway (see ws_handler.py's SetPresence handling), so this is a
+  // no-op for the overwhelmingly common solo case regardless, but the
+  // documentId check avoids sending a message nobody will ever act on.
+  function handleCellFocusChange(cellId: string, focused: boolean) {
+    if (!sessionId || !documentId) return
+    send({
+      type: 'set_presence',
+      session_id: sessionId,
+      cell_id: focused ? cellId : null,
+    })
+  }
+
   function handleSaveDeck() {
     if (!sessionId) return
     setSaving(true)
@@ -873,6 +940,16 @@ function App() {
     }
   }
 
+  // TODO.md #46d-ii: the join-screen gate -- only ever shown for a
+  // collaborative connection (documentId set) that hasn't sent Join yet.
+  // A solo connection (documentId null) never renders this at all, so
+  // the pre-#46d experience of `codeslides edit`/`present` is completely
+  // unaffected -- this is the one thing that must never regress per the
+  // scoping decision behind this whole feature.
+  if (documentId && !displayName) {
+    return <JoinScreen onJoin={setDisplayName} />
+  }
+
   const slidesHeaderCollapsed = viewMode === 'slides' && headerCollapsed
   const slidesHeaderExpanded = viewMode === 'slides' && !headerCollapsed
 
@@ -1049,6 +1126,9 @@ function App() {
               )}
             </>
           )}
+          {documentId && (
+            <PeerList peers={presenceState} ownConnectionId={ownIdentity?.connectionId ?? null} />
+          )}
           <div className="cs-help" ref={helpRef}>
             <button
               type="button"
@@ -1097,6 +1177,7 @@ function App() {
               collapsed={collapsedCells[cellId] ?? false}
               onRunCell={(source) => handleRunCell(cellId, source)}
               onRunAll={handleRunAll}
+              onFocusChange={(focused) => handleCellFocusChange(cellId, focused)}
               onSetElementValue={(elementId, value) => handleSetElementValue(cellId, elementId, value)}
               onChangeNotesSource={(elementId, source) => handleChangeNotesSource(cellId, elementId, source)}
               onChangeTestSource={(elementId, source) => handleChangeTestSource(cellId, elementId, source)}
