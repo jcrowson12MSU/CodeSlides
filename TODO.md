@@ -2376,16 +2376,15 @@ reshape the plan below and are called out explicitly where they apply:
     editor in the CodeMirror instance, similar to Google Docs' colored
     cursors.
 
-    Implemented 46d-i/46d-ii/46d-iii in full, plus cell-level (not
-    character-position) focus tracking pulled forward from 46d-iv; full
-    cursor/selection *position* decoration remains deferred (see below).
-    Also built out the join-screen identity flow this required, which is
-    the bulk of 46g-i's own scope too (46d-ii's explicit "build one
-    identity concept, reuse for both" constraint) -- 46g-i itself is not
-    separately marked done since 46g-ii through 46g-vi (wiring
-    attribution into every mutating message, `last_edited_by` on
-    `CellInstance`, etc.) are still unimplemented, but the identity
-    foundation they'll build on now exists.
+    Implemented 46d-i through 46d-iv in full, including character-
+    position cursor decorations (46d-iv's own note below has the
+    details) -- completed in a follow-up pass after the rest of 46d
+    shipped with cell-level-only focus tracking. Also built out the
+    join-screen identity flow this required, which is the bulk of
+    46g-i's own scope too (46d-ii's explicit "build one identity
+    concept, reuse for both" constraint) -- see TODO.md #46g, since
+    fully implemented, for how that identity foundation was reused for
+    attribution.
 
     - [x] **46d-i. Add a presence protocol message pair**, since none exists
       today (confirmed: no message in `protocol.py`'s `ClientMessage`/
@@ -2460,20 +2459,65 @@ reshape the plan below and are called out explicitly where they apply:
       46b-ii's indicator) is an acceptable intermediate step if
       real-time cursor rendering slips.
 
-      Partially implemented, deliberately scoped down after checking with
-      the user: added cell-level focus tracking (`CodeEditor.tsx`'s new
-      optional `onFocusChange` prop, wired through `Cell.tsx`, using
-      CodeMirror's `EditorView.domEventHandlers({focus, blur})` --
-      attached only when a caller actually provides the callback, so a
-      solo editor pays nothing for it) so `PeerList`'s avatar tooltips
-      show "Alice — editing live_demo", verified in a real browser.
-      Actual in-editor decorations at a specific character/cursor
-      *position* within a cell (the harder CodeMirror `StateField`/
-      `Decoration` work the sub-task's own text calls out as hardest)
-      remain unimplemented -- `SetPresence`/`PresenceUpdate` already
-      carry a `cursor_pos` field ready for this, but nothing renders it
-      yet. The text-only fallback this sub-task explicitly sanctions
-      ("Jane is editing this cell") is what shipped instead.
+      Initially shipped scoped down to cell-level focus tracking only
+      (`CodeEditor.tsx`'s `onFocusChange` prop, `PeerList`'s "Alice —
+      editing live_demo" tooltip); character-position decorations
+      (this note below) completed the sub-task in a follow-up pass.
+
+      **Character-position decorations, now implemented.** Two scope
+      decisions confirmed with the user first: cursor style is a thin
+      colored vertical bar with the peer's name shown only on hover (not
+      an always-visible flag), and outgoing `cursor_pos` updates are
+      debounced ~200ms client-side (not sent on every keystroke) to
+      avoid a set_presence-per-keystroke firehose.
+
+      `CodeEditor.tsx` gains `onCursorChange`/`remotePeers` props
+      (same pay-nothing-when-omitted shape as `onFocusChange`):
+      `EditorView.updateListener`'s existing `update.selectionSet` flag
+      reports the caret's plain character offset
+      (`update.state.selection.main.head`) on every cursor/selection
+      move; a new `remoteCursorField` (a `StateField<DecorationSet>`,
+      the exact same `StateEffect`+re-map-through-edits shape the
+      existing `highlightField`/`setHighlightedLines` line-highlight
+      feature already established -- followed closely rather than
+      inventing a second pattern) renders each remote peer's position as
+      a `Decoration.widget` (`RemoteCursorWidget`, a `WidgetType` with
+      `ignoreEvent(): true` so the marker itself is never a cursor stop
+      or selectable) at their reported offset, colored via a CSS custom
+      property (`--cs-remote-cursor-color`) so one CSS rule covers every
+      peer's color, with the name shown via CSS `content:
+      attr(data-name)` on hover (deliberately not the native `title`
+      attribute -- its OS-controlled show delay and unstylable
+      appearance don't match this app's small-flag look elsewhere).
+
+      `App.tsx` found and had to solve a real correctness issue while
+      wiring this up: `SetPresence` is not a partial patch --
+      `SessionRegistry.set_presence` unconditionally overwrites both
+      `cell_id` and `cursor_pos` together (confirmed by reading its
+      implementation, not assumed) -- so a naive "just send cursor_pos
+      on every move" would have silently clobbered this connection's own
+      already-broadcast `cell_id` back to `null` on the very next cursor
+      move after focusing a cell. Fixed by tracking the currently-focused
+      cell in a local ref (`focusedCellIdRef`) that every debounced
+      cursor-position send re-includes alongside the new `cursor_pos`,
+      rather than ever sending one field without the other.
+
+      Verified end-to-end in a real two-browser Playwright session (not
+      just built and assumed working): a peer's cursor decoration
+      appears at the correct character position with the correct name
+      and color on hover, in the *other* browser only (never rendered
+      for one's own cursor), and disappears when that peer blurs the
+      editor -- confirmed visually via a screenshot showing the colored
+      bar and name flag rendered inline with real Python source. No
+      backend/protocol changes were needed -- `SetPresence`/
+      `PresenceUpdate`'s `cursor_pos` field and `presenceState.ts`'s
+      reducer already existed from the original 46d-i/46d-iii work, this
+      pass was purely about actually sending and rendering it. Full
+      suite (605, unaffected as expected for a frontend-only change) and
+      `ruff check src` verified clean; frontend `tsc -b && vite build`
+      and `oxlint` both clean (one pre-existing, unrelated `oxlint`
+      warning in `Cell.tsx` confirmed present on `main` before this
+      change, not introduced by it).
 
   - [x] **46e. Access control for who can join a shared document.** At
     minimum a shareable session link; consider read-only "viewer" vs.
@@ -2587,8 +2631,10 @@ reshape the plan below and are called out explicitly where they apply:
     aspirational -- confirmed against the current code, not memory).
     Section 9's collaborative-editing bullet is removed (it's no longer
     deferred) and replaced with specific call-outs for what's genuinely
-    still deferred within the feature: 46d-iv's character-position
-    cursor decorations, 46b-iv's CRDT/OT merging, 46e's frontend
+    still deferred within the feature at the time of this task: 46d-iv's
+    character-position cursor decorations (since implemented in a
+    follow-up pass -- see 46d-iv's own note, and ARCHITECTURE.md was
+    updated again at that time), 46b-iv's CRDT/OT merging, 46e's frontend
     viewer-role UI (hiding controls), and 46e-iii's persistent-identity
     punt. Section 1's core invariant ("no two Sessions ever share any
     state") is amended with an explicit note that a shared document is a

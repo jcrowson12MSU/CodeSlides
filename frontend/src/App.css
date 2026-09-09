@@ -533,6 +533,47 @@ body.cs-resizing {
   background-color: rgba(255, 212, 59, 0.7);
 }
 
+/* TODO.md #46d-iv: a remote peer's cursor -- a thin colored vertical bar
+   (CodeEditor.tsx's RemoteCursorWidget), color set per-instance via the
+   --cs-remote-cursor-color custom property so one CSS rule covers every
+   peer's own color rather than needing per-peer classes. `position:
+   relative` + a full-height absolutely-positioned bar (not just
+   `border-left` on the inline span) so the bar reliably spans the whole
+   line height regardless of this particular line's own content/font
+   metrics. The name flag is hidden until hover -- a native `title`
+   tooltip was deliberately not used (OS-controlled show delay, can't be
+   styled to match), so this is plain CSS `content: attr(data-name)`
+   instead. */
+.cs-remote-cursor {
+  position: relative;
+  display: inline-block;
+  width: 0;
+  height: 1.2em;
+  vertical-align: text-bottom;
+  border-left: 2px solid var(--cs-remote-cursor-color);
+}
+
+.cs-remote-cursor::after {
+  content: attr(data-name);
+  position: absolute;
+  bottom: 100%;
+  left: -2px;
+  white-space: nowrap;
+  font-size: var(--cs-font-sm);
+  font-style: normal;
+  color: white;
+  background-color: var(--cs-remote-cursor-color);
+  padding: 0 0.3rem;
+  border-radius: 3px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+}
+
+.cs-remote-cursor:hover::after {
+  opacity: 1;
+}
+
 /* TODO.md #56: one tab per element plus a trailing Output tab, replacing
    the old always-stacked `.cs-cell-elements` column -- only the selected
    tab's content renders below (Cell.tsx). `flex-wrap` rather than a
