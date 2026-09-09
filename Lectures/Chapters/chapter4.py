@@ -85,10 +85,10 @@ the rest of this chapter writes in Python."""
     elements=[
         ui.notes('notes'),
         ui.text_input('user_age_text', default='68'),
-        ui.tests('Hotel rate trace', default='hotel_rate = 155\nuser_age = int(input("user_age_text"))\n\nif user_age > 65:\n    hotel_rate -= 20\n    print("Congrats on still living!")\nprint("Thanks for staying with us!")\nprint("Your rate:", hotel_rate)'),
+        ui.tests('Hotel rate trace', default='hotel_rate = 155\nuser_age = int(input("user_age_text"))\n\nif user_age > 65:\n  hotel_rate -= 20\n  print("Congrats on still living!")\nprint("Thanks for staying with us!")\nprint("Your rate:", hotel_rate)\n\n'),
     ],
     hide_code=True,
-    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Hotel rate trace': 'top-right', '__inputs__': 'bottom-left'}, 'extra_code_fraction': 0.5},
+    layout={'column_fraction': 0.32457408230296586, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Hotel rate trace': 'top-right', '__inputs__': 'bottom-left'}, 'extra_code_fraction': 0.5},
 )
 def if_branch_trace(user_age_text):
     """## An `if` Branch: Hotel Rate Example
@@ -108,7 +108,7 @@ execution continues after the branch."""
     elements=[
         ui.notes('notes'),
         ui.text_input('val_text', default='-7'),
-        ui.tests('Absolute value', default='val = -100\nif val < 0:\n    val *= -1\n    print("Was negative, flipped positive")\nelse:\n    print("ALready positive")\nprint(val)'),
+        ui.tests('Absolute value', default='val = -150\nif val < 0:\n  val *= -1\n  print("Was negative, flipped positive")\nelse:\n  print("ALready positive")\nprint("!!", val)'),
     ],
     hide_code=True,
 )
@@ -128,10 +128,9 @@ expression is `True`; otherwise, the *else* branch executes."""
     elements=[
         ui.notes('notes'),
         ui.text_input('num_years_text', default='50'),
-        ui.tests('Hotel discount', default='num_years = 51\nhotel_rate = 160\n\nif num_years == 50:\n    print("Congratulations on 50 years of marriage!")\n    hotel_rate = hotel_rate / 2\n\nprint(f"Your hotel rate: ${hotel_rate:.2f}")'),
+        ui.tests('Hotel discount', default='num_years = 501\nhotel_rate = 160\n\nif num_years == 50:\n    print("Congratulations on 50 years of marriage!")\n    hotel_rate = hotel_rate / 2\n\nprint(f"Your hotel rate: ${hotel_rate:.2f}")'),
     ],
     hide_code=True,
-    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'__inputs__': 'bottom-left', 'Hotel discount': 'top-right'}, 'extra_code_fraction': 0.5},
 )
 def equality_operator(num_years_text):
     """## The Equality Operator: `==`
@@ -179,10 +178,10 @@ right sides are *different*."""
     elements=[
         ui.notes('notes'),
         ui.text_input('user_num_text', default='22'),
-        ui.tests('Even or odd', default='user_num = int(input("user_num_text"))\ndiv_remainder = user_num % 2\n\nif div_remainder == 0:\n    print(f"{user_num} is even.")\nelse:\n    print(f"{user_num} is odd.")'),
+        ui.tests('Even or odd', default='user_num = int(input("user_num_text"))\n# div_remainder = user_num % 2\n\nif user_num % 2 == 0:\n    print(f"{user_num} is even.")\nelse:\n    print(f"{user_num} is odd.")'),
     ],
     hide_code=True,
-    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Even or odd': 'top-right', '__inputs__': 'bottom-left'}, 'extra_code_fraction': 0.5},
+    layout={'column_fraction': 0.43787180347132726, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Even or odd': 'top-right', '__inputs__': 'bottom-left'}, 'extra_code_fraction': 0.5},
 )
 def if_else_even_odd(user_num_text):
     """## `if`-`else`: Even or Odd
@@ -203,7 +202,7 @@ expression is `True`, and another group when it's `False`."""
     elements=[
         ui.notes('notes'),
         ui.text_input('num_years_text2', default='25'),
-        ui.tests('Anniversaries', default='num_years = 1\n\nif num_years == 1:\n    print("Your first year -- great!")\n# elif num_years == 10:\n#     print("A whole decade -- impressive.")\n# elif num_years == 25:\n#     print("Your silver anniversary -- enjoy.")\n# elif num_years == 50:\n#     print("Your golden anniversary -- amazing.")\nelse:\n    print("Nothing special.")'),
+        ui.tests('Anniversaries', default='num_years = 25\n\nif num_years == 1:\n    print("Your first year -- great!")\nelif num_years == 10:\n    print("A whole decade -- impressive.")\nelif num_years == 25:\n    print("Your silver anniversary -- enjoy.")\nelif num_years == 50:\n    print("Your golden anniversary -- amazing.")\nelse:\n    print("Nothing special.")'),
     ],
     hide_code=True,
 )
@@ -268,10 +267,9 @@ another."""
     elements=[
         ui.notes('notes'),
         ui.text_input('insurance_age_text', default='27'),
-        ui.tests('Insurance price by age', default='user_age = 60\n\n\n\nif user_age < 16:      # Age 15 and under\n    print("Too young.")\n    insurance_price = 0\nelif user_age < 25:    # Age 16 - 24\n    insurance_price = 4800\nelif user_age < 40:    # Age 25 - 39\n    insurance_price = 2350\n\nprint(f"Annual price: ${insurance_price}")'),
+        ui.tests('Insurance price by age', default='user_age = 15\n\nif user_age < 15:      # Age 15 and under\n    print("Too young.")\n    insurance_price = 0\nelif user_age < 25:    # Age 16 - 24\n    insurance_price = 4800\nelif user_age < 40:    # Age 25 - 39\n    insurance_price = 2350\n\nprint(f"Annual price: ${insurance_price}")'),
     ],
     hide_code=True,
-    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Insurance price by age': 'top-right', '__inputs__': 'bottom-left'}, 'extra_code_fraction': 0.5},
 )
 def ranges_insurance(insurance_age_text):
     """## Detecting Ranges: Insurance Prices
@@ -303,6 +301,8 @@ ever writing the range's lower bound explicitly."""
 )
 def logical_operators():
     """TR 8am start with 3 prop truth table
+MWF 10am start with 2 prop or truth table 
+
 ## Logical Operators: `and`, `or`, `not`
 
 A **logical operator** treats its operands as `True`/`False` and

@@ -170,6 +170,8 @@ ever writing the range's lower bound explicitly."""
 
 def logical_operators():
     """TR 8am start with 3 prop truth table
+MWF 10am start with 2 prop or truth table 
+
 ## Logical Operators: `and`, `or`, `not`
 
 A **logical operator** treats its operands as `True`/`False` and
