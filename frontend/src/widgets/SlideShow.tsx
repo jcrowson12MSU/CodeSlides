@@ -57,6 +57,16 @@ export interface SlideShowProps {
   onSetElementConfig: (cellId: string, elementId: string, config: Record<string, unknown>) => void
   onLayoutChange: (cellId: string, layout: CellLayout) => void
   editErrors: Record<string, string>
+  // TODO.md #46e: see Cell.tsx's own `viewerMode` docstring -- forwarded
+  // here too since Slides view (an instructor "revealing and live-
+  // editing code in front of a class," per VISION.md) is exactly where
+  // a viewer watching a presentation needs their editors read-only, not
+  // just Cells view. `hideHeader` (below, always set for this view)
+  // already hides the Edit/move/delete buttons regardless of role, so
+  // this only needs to reach the two CodeEditor instances' own
+  // `readOnly` (the main cell's, via Cell.tsx, and the title slide's
+  // separate `extraCodeAbove` setup-cell editor, composed directly here).
+  viewerMode?: boolean
 }
 
 // Slideshow/presentation mode (TODO.md #10, ARCHITECTURE.md's "one tool,
@@ -103,6 +113,7 @@ export function SlideShow({
   onSetElementConfig,
   onLayoutChange,
   editErrors,
+  viewerMode = false,
 }: SlideShowProps) {
   const slideRef = useRef<HTMLDivElement | null>(null)
 
@@ -257,7 +268,7 @@ export function SlideShow({
                     source={setupMeta.source}
                     onRunCell={(source) => onRunCell(setupCellId, source)}
                     onRunAll={onRunAll}
-                    readOnly={setupMeta.instance === 'static'}
+                    readOnly={setupMeta.instance === 'static' || viewerMode}
                     lineOffset={cellLineOffsets[setupCellId] ?? 0}
                     onLineCountChange={(count) => onLineCountChange(setupCellId, count)}
                     cellId={setupCellId}
@@ -275,6 +286,7 @@ export function SlideShow({
               // stuck collapsed here with no way to expand it back.
               collapsed={false}
               hideHeader
+              viewerMode={viewerMode}
               onRunCell={(source) => onRunCell(cellId, source)}
               onRunAll={onRunAll}
               onSetElementValue={(elementId, value) => onSetElementValue(cellId, elementId, value)}

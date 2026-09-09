@@ -193,6 +193,18 @@ function App() {
   // one, never on its own.
   const documentId = useMemo(documentIdFromUrl, [])
   const role = useMemo(roleFromUrl, [])
+  // TODO.md #46e's own "not done" follow-on note: a UX improvement, not
+  // the actual security boundary -- ws_handler.py's
+  // VIEWER_ALLOWED_MESSAGE_TYPES already rejects every structural edit
+  // server-side regardless of what this UI shows. Used to hide mutating
+  // controls (Save, Add cell, Add slide, a cell's Edit button, move/
+  // delete, the editor itself) so a viewer is never offered a control
+  // that would just fail with a generic error. Deliberately does NOT
+  // touch slider/text-input elements -- confirmed with the user those
+  // should stay interactive for a viewer; see TODO.md #64 for the
+  // separate, much larger client-side-execution work that would make
+  // that interaction actually meaningful instead of a silent no-op.
+  const isViewer = role === 'viewer'
   const { sessionId, messages, send } = useCodeSlidesSocket(
     documentId
       ? `/ws?document=${encodeURIComponent(documentId)}${role === 'viewer' ? '&role=viewer' : ''}`
@@ -1153,12 +1165,12 @@ function App() {
         <div className="cs-header-controls">
           {deck && (
             <>
-              {viewMode === 'cells' && (
+              {viewMode === 'cells' && !isViewer && (
                 <button type="button" className="cs-add-cell-button" disabled={!sessionId} onClick={handleAddCell}>
                   + Add cell
                 </button>
               )}
-              {viewMode === 'slides' && (
+              {viewMode === 'slides' && !isViewer && (
                 <>
                   <button
                     type="button"
@@ -1189,15 +1201,17 @@ function App() {
                   style={{ transform: viewMode === 'slides' ? 'translateX(100%)' : 'translateX(0)' }}
                 />
               </button>
-              <button
-                type="button"
-                className="cs-save-button"
-                disabled={!sessionId || saving}
-                onClick={handleSaveDeck}
-              >
-                {saving ? 'Saving…' : 'Save'}
-              </button>
-              {saveStatus && (
+              {!isViewer && (
+                <button
+                  type="button"
+                  className="cs-save-button"
+                  disabled={!sessionId || saving}
+                  onClick={handleSaveDeck}
+                >
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+              )}
+              {!isViewer && saveStatus && (
                 <span className={`cs-save-status cs-save-status-${saveStatus.kind}`}>{saveStatus.text}</span>
               )}
             </>
@@ -1273,9 +1287,10 @@ function App() {
               onSetElementConfig={(elementId, config) => handleSetElementConfig(cellId, elementId, config)}
               onLayoutChange={(layout) => handleLayoutChange(cellId, layout)}
               editError={editErrors[cellId]}
-              onDeleteCell={() => handleDeleteCell(cellId)}
-              onMoveCellUp={() => handleReorderCells(cellId, -1)}
-              onMoveCellDown={() => handleReorderCells(cellId, 1)}
+              viewerMode={isViewer}
+              onDeleteCell={isViewer ? undefined : () => handleDeleteCell(cellId)}
+              onMoveCellUp={isViewer ? undefined : () => handleReorderCells(cellId, -1)}
+              onMoveCellDown={isViewer ? undefined : () => handleReorderCells(cellId, 1)}
               isFirstCell={index === 0}
               isLastCell={index === entries.length - 1}
             />
@@ -1325,6 +1340,7 @@ function App() {
           onSetElementConfig={handleSetElementConfig}
           onLayoutChange={handleLayoutChange}
           editErrors={editErrors}
+          viewerMode={isViewer}
         />
       )}
     </main>

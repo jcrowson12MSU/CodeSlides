@@ -514,7 +514,21 @@ rejected with an `error` message before `handle_message` is even called
 `session_id` lives — not inside `handle_message`, which would otherwise
 have to trust a client-supplied message field for this). The allowlist
 shape means a future message type defaults to blocked-for-viewers until
-someone deliberately adds it, rather than silently allowed.
+someone deliberately adds it, rather than silently allowed. The frontend
+also reflects a viewer's role directly (`App.tsx`'s `isViewer`, threaded
+into `Cell.tsx`'s/`SlideShow.tsx`'s `viewerMode` prop): every cell's
+editor is forced read-only and the top-level mutation entry points
+(Edit, Save, Add cell, Add slide, move/delete) are hidden entirely,
+coarse-grained rather than disabling each of `EditCellPanel`'s ~10
+individual controls — this is a UX improvement layered on top of the
+server-side allowlist above, not a second security boundary; the
+allowlist is what actually prevents a hand-crafted websocket message
+from mutating anything regardless of what the UI shows. Slider/text-
+input elements are deliberately left interactive for a viewer even
+though `SetElementValue` is still server-side rejected for them — see
+`TODO.md` #64 for the (not yet built) work that would make that
+interaction actually meaningful, by running the cell client-side
+instead of just hiding the control.
 
 **Lifecycle.** A shared Session survives its last connection disconnecting
 for a grace period (`SHARED_SESSION_GRACE_PERIOD_SECONDS`, 120s by
@@ -683,22 +697,24 @@ triggers execution:
 - Multi-user real-time collaborative editing is **no longer on this
   list** — it shipped (`TODO.md` #46a–#46g; see §5a for the design that
   landed, including character-position cursor decorations, `TODO.md`
-  #46d-iv, and edit attribution, `TODO.md` #46g). What remains genuinely
-  deferred within that feature, called out specifically rather than
-  bundled into a single stale bullet: character-level CRDT/OT merging
-  for concurrent edits to the same cell (`TODO.md` #46b-iv —
-  last-write-wins was judged acceptable for classroom-scale collision
-  rates instead); frontend UI that hides or disables mutating controls
-  for a `viewer`-role connection (`TODO.md` #46e — today's server-side
-  rejection is the actual security boundary and works correctly
-  regardless, but a viewer's UI doesn't yet reflect their own read-only
-  status); persistent per-student identity across sessions / real
-  accounts (`TODO.md` #46e-iii's explicit punt, unless a concrete future
-  need like gradebook integration arises); and making input-element
-  values (sliders, text inputs) per-connection-local rather than shared
-  on a collaborative document (`TODO.md` #63 — a distinct, larger
+  #46d-iv, edit attribution, `TODO.md` #46g, and viewer-role UI hiding
+  mutating controls). What remains genuinely deferred within that
+  feature, called out specifically rather than bundled into a single
+  stale bullet: character-level CRDT/OT merging for concurrent edits to
+  the same cell (`TODO.md` #46b-iv — last-write-wins was judged
+  acceptable for classroom-scale collision rates instead); persistent
+  per-student identity across sessions / real accounts (`TODO.md`
+  #46e-iii's explicit punt, unless a concrete future need like
+  gradebook integration arises); making input-element values (sliders,
+  text inputs) per-connection-local rather than shared on a
+  collaborative document (`TODO.md` #63 — a distinct, larger
   architectural change against this section's own shared-namespace
-  model, not yet designed).
+  model, not yet designed); and fully local, never-server-touching
+  slider/text-input exploration specifically for a `viewer`-role
+  connection (`TODO.md` #64 — confirmed to require genuine client-side
+  Python execution, since nothing in this codebase runs Python anywhere
+  but server-side today; a materially larger undertaking than #63 or
+  the viewer-role UI work, not yet designed).
 - Persisting Session state across server restarts — Sessions are
   in-memory; only the Deck's source file is durable. (Unaffected by
   collaborative editing: a shared document's Session is still in-memory
