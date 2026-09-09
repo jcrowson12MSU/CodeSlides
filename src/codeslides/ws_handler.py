@@ -820,8 +820,49 @@ def handle_message(
                     message="unknown cell", session_id=message.session_id, cell_id=message.cell_id
                 )
             ]
-        base_source = _effective_display_source(session, registry.kernel.deck.cells[message.cell_id])
         created_at = datetime.now(UTC)
+        if message.element_id is not None:
+            # TODO.md #65 follow-up: a `tests` element's own editable
+            # source (SetTestSource's domain) is a separate piece of
+            # state from the cell's primary source -- its "base" is
+            # whatever ElementInstance.value currently holds, not
+            # _effective_display_source (that's the primary source's own
+            # concept). Rejected if the element doesn't exist or isn't a
+            # `tests` element at all -- pushing a proposal for, say, a
+            # slider makes no sense (SetElementValue already has its own
+            # separate, deliberately-not-attributed/not-reviewed path).
+            element = instance.elements.get(message.element_id)
+            cell = registry.kernel.deck.cells[message.cell_id]
+            element_meta = next((e for e in cell.elements if e.name == message.element_id), None)
+            if element is None or element_meta is None or element_meta.kind != "tests":
+                return [
+                    ErrorMessage(
+                        message="unknown tests element",
+                        session_id=message.session_id,
+                        cell_id=message.cell_id,
+                    )
+                ]
+            by_user = instance.test_proposals.setdefault(message.element_id, {})
+            by_user[peer.user_id] = CellProposal(
+                source=message.source,
+                display_name=peer.display_name,
+                created_at=created_at,
+                base_source=str(element.value) if element.value is not None else "",
+            )
+            return [
+                Broadcast(
+                    CellProposed(
+                        session_id=message.session_id,
+                        cell_id=message.cell_id,
+                        proposer_user_id=peer.user_id,
+                        proposer_display_name=peer.display_name or "",
+                        source=message.source,
+                        created_at=created_at.isoformat(),
+                        element_id=message.element_id,
+                    )
+                )
+            ]
+        base_source = _effective_display_source(session, registry.kernel.deck.cells[message.cell_id])
         instance.proposals[peer.user_id] = CellProposal(
             source=message.source,
             display_name=peer.display_name,
@@ -849,7 +890,24 @@ def handle_message(
         if peer is None or peer.user_id is None:
             return []
         instance = session.instances.get(message.cell_id)
-        if instance is None or peer.user_id not in instance.proposals:
+        if instance is None:
+            return []
+        if message.element_id is not None:
+            by_user = instance.test_proposals.get(message.element_id)
+            if by_user is None or peer.user_id not in by_user:
+                return []
+            del by_user[peer.user_id]
+            return [
+                Broadcast(
+                    ProposalWithdrawn(
+                        session_id=message.session_id,
+                        cell_id=message.cell_id,
+                        proposer_user_id=peer.user_id,
+                        element_id=message.element_id,
+                    )
+                )
+            ]
+        if peer.user_id not in instance.proposals:
             # Not an error -- withdrawing an already-gone proposal (e.g.
             # a double-click, or one that was just accepted/rejected by
             # someone else) is a harmless no-op, same "already-resolved
@@ -877,6 +935,68 @@ def handle_message(
                     message="unknown cell", session_id=message.session_id, cell_id=message.cell_id
                 )
             ]
+        accepting_peer = registry.get_peer(message.session_id, connection_id) if connection_id else None
+        if message.element_id is not None:
+            # TODO.md #65 follow-up: accepting a `tests` element's
+            # proposal reuses `Kernel.on_tests_edited` -- the same path
+            # `SetTestSource` always used, same "no separate accept
+            # execution logic" precedent the primary-source branch below
+            # already sets.
+            by_user = instance.test_proposals.get(message.element_id)
+            proposal = by_user.get(message.proposer_user_id) if by_user else None
+            if proposal is None:
+                return [
+                    ErrorMessage(
+                        message="no such pending proposal",
+                        session_id=message.session_id,
+                        cell_id=message.cell_id,
+                    )
+                ]
+            del by_user[message.proposer_user_id]
+            result = registry.kernel.on_tests_edited(
+                message.cell_id, message.element_id, proposal.source, session
+            )
+            replies: list[ServerMessage | Broadcast | SenderOnly | ToUser] = [
+                ProposalAccepted(
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                    source=proposal.source,
+                    accepted_from_user_id=message.proposer_user_id,
+                    accepted_by_user_id=(accepting_peer.user_id if accepting_peer else None) or "",
+                    element_id=message.element_id,
+                ),
+                ElementOutput(
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                    element_id=message.element_id,
+                    content=result,
+                ),
+            ]
+            if proposal.display_name is not None:
+                instance.last_edited_by = proposal.display_name
+                instance.last_edited_at = datetime.now(UTC)
+                replies.append(
+                    CellAttributionChanged(
+                        session_id=message.session_id,
+                        cell_id=message.cell_id,
+                        last_edited_by=instance.last_edited_by,
+                        last_edited_at=instance.last_edited_at.isoformat(),
+                    )
+                )
+            for other_user_id, other_proposal in list(by_user.items()):
+                if other_proposal.base_source != proposal.source:
+                    replies.append(
+                        ToUser(
+                            other_user_id,
+                            ProposalConflict(
+                                session_id=message.session_id,
+                                cell_id=message.cell_id,
+                                source=proposal.source,
+                                element_id=message.element_id,
+                            ),
+                        )
+                    )
+            return replies
         proposal = instance.proposals.get(message.proposer_user_id)
         if proposal is None:
             return [
@@ -886,7 +1006,6 @@ def handle_message(
                     cell_id=message.cell_id,
                 )
             ]
-        accepting_peer = registry.get_peer(message.session_id, connection_id) if connection_id else None
         del instance.proposals[message.proposer_user_id]
         # TODO.md #65: accepting reuses exactly the same on_cell_edited
         # path EditCell already uses for a non-review-mode document --
@@ -896,7 +1015,7 @@ def handle_message(
         # session.source_overrides is ever written, mirroring how
         # EditCell is the only writer on a non-review-mode one.
         results = registry.kernel.on_cell_edited(message.cell_id, proposal.source, session)
-        replies: list[ServerMessage | Broadcast | SenderOnly | ToUser] = [
+        replies = [
             ProposalAccepted(
                 session_id=message.session_id,
                 cell_id=message.cell_id,
@@ -956,7 +1075,34 @@ def handle_message(
         if session is None:
             return [ErrorMessage(message="unknown session", session_id=message.session_id)]
         instance = session.instances.get(message.cell_id)
-        if instance is None or message.proposer_user_id not in instance.proposals:
+        if instance is None:
+            return [
+                ErrorMessage(
+                    message="no such pending proposal",
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                )
+            ]
+        if message.element_id is not None:
+            by_user = instance.test_proposals.get(message.element_id)
+            if by_user is None or message.proposer_user_id not in by_user:
+                return [
+                    ErrorMessage(
+                        message="no such pending proposal",
+                        session_id=message.session_id,
+                        cell_id=message.cell_id,
+                    )
+                ]
+            del by_user[message.proposer_user_id]
+            return [
+                ProposalRejected(
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                    rejected_by_user_id=message.proposer_user_id,
+                    element_id=message.element_id,
+                )
+            ]
+        if message.proposer_user_id not in instance.proposals:
             return [
                 ErrorMessage(
                     message="no such pending proposal",
@@ -1050,6 +1196,20 @@ def handle_message(
         session = registry.get(message.session_id)
         if session is None:
             return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        # TODO.md #65 follow-up: same "review_mode documents only change
+        # accepted state via AcceptProposal" rule EditCell already
+        # enforces -- without this, a `tests` element on a review_mode
+        # document would bypass review entirely (the exact gap this
+        # follow-up exists to close), applying immediately and reaching
+        # every peer with no proposal step at all.
+        if session.review_mode:
+            return [
+                ErrorMessage(
+                    message="this document is in review mode; use push_cell instead of set_test_source",
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                )
+            ]
         if message.cell_id not in session.instances:
             return [
                 ErrorMessage(

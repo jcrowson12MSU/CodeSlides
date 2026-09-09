@@ -22,6 +22,38 @@ def _build_deck():
     return app.deck
 
 
+def _build_hidden_code_deck():
+    """TODO.md #65 follow-up: a deck matching the real-world case that
+    exposed the gap -- every cell has `hide_code=True`, and the *only*
+    editable surface is a `ui.tests(...)` element's own source (a common
+    shape for a lecture deck that hides its implementation from
+    students). `double` has no primary editor at all reachable through
+    review; `check_double` is the actual editable/reviewable content."""
+    app = App()
+
+    @app.cell(hide_code=True)
+    def double():
+        def compute(x):
+            return x * 2
+
+        return compute
+
+    @app.cell(
+        hide_code=True,
+        elements=[ui.tests("check_double", default="print(compute(21))")],
+    )
+    def check_double():
+        # Reads (doesn't rebind) `compute` so the dependency graph runs
+        # `double` first -- without this, the test's own
+        # `print(compute(21))` would be topologically free to run before
+        # `double` ever has, a NameError unrelated to anything this
+        # fixture is meant to exercise.
+        ready = compute is not None  # noqa: F821
+        return ready
+
+    return app.deck
+
+
 def _build_overlapping_deps_deck():
     """Two independently editable cells (`cell_a`, `cell_b`) that both
     feed a shared downstream `combined` cell -- TODO.md #46c-iv needs
@@ -1520,3 +1552,232 @@ def test_websocket_non_review_mode_document_is_completely_unaffected_by_65():
         assert session.review_mode is False
         assert "return 1" in session.source_overrides["live_demo"]
         assert all(inst.proposals == {} for inst in session.instances.values())
+
+
+# -- TODO.md #65 follow-up: push/review for a `tests` element's own source --
+
+
+def test_websocket_set_test_source_rejected_on_review_mode_document():
+    """TODO.md #65 follow-up: set_test_source -- the always-live path a
+    `tests` element's editor used before this follow-up -- is rejected
+    outright on a review_mode document, same "use push_cell instead"
+    posture edit_cell already has, so a stale/confused client fails
+    loudly instead of silently bypassing review."""
+    client = TestClient(create_app(_build_hidden_code_deck(), review_mode=True))
+    with client.websocket_connect("/ws?document=review-tests-1") as ws:
+        ws.receive_json()  # session_created
+        ws.send_json(
+            {
+                "type": "set_test_source",
+                "session_id": "review-tests-1",
+                "cell_id": "check_double",
+                "element_id": "check_double",
+                "source": "print(compute(1))",
+            }
+        )
+        error = ws.receive_json()
+        assert error["type"] == "error"
+        assert "review mode" in error["message"]
+
+
+def test_websocket_push_cell_for_tests_element_does_not_apply_immediately():
+    """TODO.md #65 follow-up: push_cell with element_id set stages a
+    proposal for a `tests` element's source -- it must NOT call
+    on_tests_edited (no re-run, no ElementInstance.value mutation, no
+    source_overrides write) and must NOT reach the pushing connection's
+    own display as anything but a local echo; the only wire effect is
+    cell_proposed to the *other* peer."""
+    client = TestClient(create_app(_build_hidden_code_deck(), review_mode=True))
+    with (
+        client.websocket_connect("/ws?document=review-tests-2") as ws_a,
+        client.websocket_connect("/ws?document=review-tests-2") as ws_b,
+    ):
+        ws_a.receive_json()
+        ws_b.receive_json()
+        ws_a.send_json({"type": "join", "session_id": "review-tests-2", "display_name": "Alice"})
+        ws_a.receive_json()  # join_ack
+        ws_b.receive_json()  # presence_update
+
+        ws_a.send_json(
+            {
+                "type": "push_cell",
+                "session_id": "review-tests-2",
+                "cell_id": "check_double",
+                "element_id": "check_double",
+                "source": "print(compute(999))",
+            }
+        )
+        proposed = ws_b.receive_json()
+        assert proposed["type"] == "cell_proposed"
+        assert proposed["element_id"] == "check_double"
+        assert "999" in proposed["source"]
+
+        session = client.app.state.registry.get("review-tests-2")
+        instance = session.instances["check_double"]
+        assert "check_double" in instance.test_proposals
+        # Not applied: the element's own live value/content is untouched,
+        # and source_overrides was never written for this cell.
+        assert instance.elements["check_double"].value == "print(compute(21))"
+        assert "check_double" not in session.source_overrides
+
+
+def test_websocket_accept_tests_element_proposal_applies_and_attributes_to_proposer():
+    """TODO.md #65 follow-up: accepting a tests-element proposal (a)
+    calls Kernel.on_tests_edited (the same path set_test_source always
+    used), producing a real element_output with the new result, (b)
+    persists it into source_overrides via set_tests_default, and (c)
+    attributes the change to the proposer, mirroring the primary-source
+    accept path's own attribution rule."""
+    client = TestClient(create_app(_build_hidden_code_deck(), review_mode=True))
+    with (
+        client.websocket_connect("/ws?document=review-tests-3") as ws_a,
+        client.websocket_connect("/ws?document=review-tests-3") as ws_b,
+    ):
+        ws_a.receive_json()
+        ws_b.receive_json()
+        ws_a.send_json({"type": "join", "session_id": "review-tests-3", "display_name": "Alice"})
+        ws_a.receive_json()
+        ws_b.receive_json()
+
+        ws_a.send_json({"type": "run_all", "session_id": "review-tests-3"})
+        for _ in range(5):
+            ws_a.receive_json()
+        for _ in range(5):
+            ws_b.receive_json()
+
+        ws_a.send_json(
+            {
+                "type": "push_cell",
+                "session_id": "review-tests-3",
+                "cell_id": "check_double",
+                "element_id": "check_double",
+                "source": "print(compute(999))",
+            }
+        )
+        proposed = ws_b.receive_json()
+        alice_user_id = proposed["proposer_user_id"]
+
+        ws_b.send_json(
+            {
+                "type": "accept_proposal",
+                "session_id": "review-tests-3",
+                "cell_id": "check_double",
+                "proposer_user_id": alice_user_id,
+                "element_id": "check_double",
+            }
+        )
+        bob_replies = [ws_b.receive_json() for _ in range(3)]
+        accepted = next(m for m in bob_replies if m["type"] == "proposal_accepted")
+        assert accepted["element_id"] == "check_double"
+        output = next(m for m in bob_replies if m["type"] == "element_output")
+        assert output["element_id"] == "check_double"
+        assert "1998" in output["content"]["stdout"]
+        attribution = next(m for m in bob_replies if m["type"] == "cell_attribution_changed")
+        assert attribution["last_edited_by"] == "Alice"
+
+        alice_broadcast = [ws_a.receive_json() for _ in range(3)]
+        assert accepted in alice_broadcast
+
+        session = client.app.state.registry.get("review-tests-3")
+        instance = session.instances["check_double"]
+        assert instance.elements["check_double"].value == "print(compute(999))"
+        assert instance.test_proposals.get("check_double", {}) == {}
+        assert "print(compute(999))" in session.source_overrides["check_double"]
+        assert instance.last_edited_by == "Alice"
+
+
+def test_websocket_reject_and_withdraw_tests_element_proposal():
+    """TODO.md #65 follow-up: reject_proposal/withdraw_proposal with
+    element_id set clear a pending tests-element proposal without ever
+    calling on_tests_edited (no mutation of ElementInstance.value or
+    source_overrides)."""
+    client = TestClient(create_app(_build_hidden_code_deck(), review_mode=True))
+    with (
+        client.websocket_connect("/ws?document=review-tests-4") as ws_a,
+        client.websocket_connect("/ws?document=review-tests-4") as ws_b,
+    ):
+        ws_a.receive_json()
+        ws_b.receive_json()
+        ws_a.send_json({"type": "join", "session_id": "review-tests-4", "display_name": "Alice"})
+        ws_a.receive_json()
+        ws_b.receive_json()
+
+        ws_a.send_json(
+            {
+                "type": "push_cell",
+                "session_id": "review-tests-4",
+                "cell_id": "check_double",
+                "element_id": "check_double",
+                "source": "print(compute(5))",
+            }
+        )
+        proposed = ws_b.receive_json()
+        alice_user_id = proposed["proposer_user_id"]
+
+        ws_b.send_json(
+            {
+                "type": "reject_proposal",
+                "session_id": "review-tests-4",
+                "cell_id": "check_double",
+                "proposer_user_id": alice_user_id,
+                "element_id": "check_double",
+            }
+        )
+        rejected_to_bob = ws_b.receive_json()
+        rejected_to_alice = ws_a.receive_json()
+        assert rejected_to_bob["type"] == rejected_to_alice["type"] == "proposal_rejected"
+        assert rejected_to_alice["element_id"] == "check_double"
+
+        session = client.app.state.registry.get("review-tests-4")
+        instance = session.instances["check_double"]
+        assert instance.test_proposals.get("check_double", {}) == {}
+        assert instance.elements["check_double"].value == "print(compute(21))"
+
+        # Push again, then withdraw.
+        ws_a.send_json(
+            {
+                "type": "push_cell",
+                "session_id": "review-tests-4",
+                "cell_id": "check_double",
+                "element_id": "check_double",
+                "source": "print(compute(6))",
+            }
+        )
+        ws_b.receive_json()  # cell_proposed
+
+        ws_a.send_json(
+            {
+                "type": "withdraw_proposal",
+                "session_id": "review-tests-4",
+                "cell_id": "check_double",
+                "element_id": "check_double",
+            }
+        )
+        withdrawn = ws_b.receive_json()
+        assert withdrawn["type"] == "proposal_withdrawn"
+        assert withdrawn["element_id"] == "check_double"
+
+        assert instance.test_proposals.get("check_double", {}) == {}
+        assert instance.elements["check_double"].value == "print(compute(21))"
+
+
+def test_websocket_viewer_role_rejects_tests_element_proposal_messages():
+    """TODO.md #65 follow-up: a viewer cannot push/accept/reject/withdraw
+    a tests-element proposal either -- same allowlist-shaped rejection
+    the primary-source path already has, just exercised with element_id
+    set."""
+    client = TestClient(create_app(_build_hidden_code_deck(), review_mode=True))
+    with client.websocket_connect("/ws?document=review-tests-5&role=viewer") as ws:
+        ws.receive_json()
+        ws.send_json(
+            {
+                "type": "push_cell",
+                "session_id": "review-tests-5",
+                "cell_id": "check_double",
+                "element_id": "check_double",
+                "source": "x",
+            }
+        )
+        error = ws.receive_json()
+        assert error["type"] == "error"
+        assert "viewer" in error["message"]

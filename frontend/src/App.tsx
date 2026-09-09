@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { useDeckState } from './deckState'
 import { usePresenceState } from './presenceState'
-import type { CellLayout } from './protocol'
+import type { CellLayout, ServerMessage } from './protocol'
 import { useCodeSlidesSocket } from './useCodeSlidesSocket'
 import { Cell, type CellMeta } from './widgets/Cell'
 import { setDeckCellOrder } from './widgets/deckSource'
@@ -614,11 +614,14 @@ function App() {
           if (cells[msg.cell_id]) {
             cells[msg.cell_id] = { ...cells[msg.cell_id], source: msg.source }
           }
-        } else if (msg.type === 'proposal_accepted') {
+        } else if (msg.type === 'proposal_accepted' && msg.element_id == null) {
           // TODO.md #65: same "every connection converges on the new
           // source" reasoning as cell_source_changed above -- an
           // accepted proposal becomes the document's actual current
-          // source for everyone, editor included.
+          // source for everyone, editor included. Only for the cell's
+          // *primary* source (element_id unset) -- a tests-element
+          // accept is handled separately below, since it belongs in
+          // testSourceOverrides, not cells[cell_id].source.
           if (!changed) cells = { ...cells }
           changed = true
           if (cells[msg.cell_id]) {
@@ -692,6 +695,28 @@ function App() {
         return next
       })
     }
+
+    // TODO.md #65 follow-up: a tests-element proposal_accepted must
+    // update testSourceOverrides (the local echo TestsElementWidget's
+    // editor actually renders from), the same state set_test_source's
+    // own handleChangeTestSource already keeps in sync for the non-
+    // review-mode path -- without this, every connection's test editor
+    // (including the accepter's own) would keep showing pre-accept text
+    // forever, having no other path that ever refreshes it.
+    const acceptedTestSources = newMessages.filter(
+      (m): m is Extract<ServerMessage, { type: 'proposal_accepted' }> =>
+        m.type === 'proposal_accepted' && m.element_id != null,
+    )
+    if (acceptedTestSources.length > 0) {
+      setTestSourceOverrides((prev) => {
+        const next = { ...prev }
+        for (const m of acceptedTestSources) {
+          const elementId = m.element_id as string
+          next[m.cell_id] = { ...next[m.cell_id], [elementId]: m.source }
+        }
+        return next
+      })
+    }
   }, [messages])
 
   function handleSetElementValue(cellId: string, elementId: string, value: unknown) {
@@ -712,25 +737,41 @@ function App() {
   // instead of edit_cell whenever this document is in review mode
   // (Cell.tsx picks between the two based on the reviewMode prop it's
   // given). Does not touch the shared document at all until someone
-  // accepts it.
-  function handlePushCell(cellId: string, source: string) {
+  // accepts it. `elementId`, when given, targets a `tests` element's own
+  // source instead of the cell's primary source (TODO.md #65 follow-up:
+  // many decks -- anything with hide_code=True on every cell -- have no
+  // reachable primary editor at all, only a tests element's editable
+  // source, so review mode must cover that too).
+  function handlePushCell(cellId: string, source: string, elementId?: string) {
     if (!sessionId) return
-    send({ type: 'push_cell', session_id: sessionId, cell_id: cellId, source })
+    send({ type: 'push_cell', session_id: sessionId, cell_id: cellId, source, element_id: elementId })
   }
 
-  function handleWithdrawProposal(cellId: string) {
+  function handleWithdrawProposal(cellId: string, elementId?: string) {
     if (!sessionId) return
-    send({ type: 'withdraw_proposal', session_id: sessionId, cell_id: cellId })
+    send({ type: 'withdraw_proposal', session_id: sessionId, cell_id: cellId, element_id: elementId })
   }
 
-  function handleAcceptProposal(cellId: string, proposerUserId: string) {
+  function handleAcceptProposal(cellId: string, proposerUserId: string, elementId?: string) {
     if (!sessionId) return
-    send({ type: 'accept_proposal', session_id: sessionId, cell_id: cellId, proposer_user_id: proposerUserId })
+    send({
+      type: 'accept_proposal',
+      session_id: sessionId,
+      cell_id: cellId,
+      proposer_user_id: proposerUserId,
+      element_id: elementId,
+    })
   }
 
-  function handleRejectProposal(cellId: string, proposerUserId: string) {
+  function handleRejectProposal(cellId: string, proposerUserId: string, elementId?: string) {
     if (!sessionId) return
-    send({ type: 'reject_proposal', session_id: sessionId, cell_id: cellId, proposer_user_id: proposerUserId })
+    send({
+      type: 'reject_proposal',
+      session_id: sessionId,
+      cell_id: cellId,
+      proposer_user_id: proposerUserId,
+      element_id: elementId,
+    })
   }
 
   function handleRunAll() {
@@ -1331,10 +1372,14 @@ function App() {
               viewerMode={isViewer}
               reviewMode={reviewMode}
               ownUserId={ownIdentity?.userId ?? null}
-              onPushCell={(source) => handlePushCell(cellId, source)}
-              onWithdrawProposal={() => handleWithdrawProposal(cellId)}
-              onAcceptProposal={(proposerUserId) => handleAcceptProposal(cellId, proposerUserId)}
-              onRejectProposal={(proposerUserId) => handleRejectProposal(cellId, proposerUserId)}
+              onPushCell={(source, elementId) => handlePushCell(cellId, source, elementId)}
+              onWithdrawProposal={(elementId) => handleWithdrawProposal(cellId, elementId)}
+              onAcceptProposal={(proposerUserId, elementId) =>
+                handleAcceptProposal(cellId, proposerUserId, elementId)
+              }
+              onRejectProposal={(proposerUserId, elementId) =>
+                handleRejectProposal(cellId, proposerUserId, elementId)
+              }
               onDeleteCell={isViewer ? undefined : () => handleDeleteCell(cellId)}
               onMoveCellUp={isViewer ? undefined : () => handleReorderCells(cellId, -1)}
               onMoveCellDown={isViewer ? undefined : () => handleReorderCells(cellId, 1)}

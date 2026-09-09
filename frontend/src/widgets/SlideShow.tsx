@@ -72,10 +72,10 @@ export interface SlideShowProps {
   // live Cell as Cells view, just one at a time).
   reviewMode?: boolean
   ownUserId?: string | null
-  onPushCell?: (cellId: string, source: string) => void
-  onWithdrawProposal?: (cellId: string) => void
-  onAcceptProposal?: (cellId: string, proposerUserId: string) => void
-  onRejectProposal?: (cellId: string, proposerUserId: string) => void
+  onPushCell?: (cellId: string, source: string, elementId?: string) => void
+  onWithdrawProposal?: (cellId: string, elementId?: string) => void
+  onAcceptProposal?: (cellId: string, proposerUserId: string, elementId?: string) => void
+  onRejectProposal?: (cellId: string, proposerUserId: string, elementId?: string) => void
 }
 
 // Slideshow/presentation mode (TODO.md #10, ARCHITECTURE.md's "one tool,
@@ -304,13 +304,21 @@ export function SlideShow({
               viewerMode={viewerMode}
               reviewMode={reviewMode}
               ownUserId={ownUserId}
-              onPushCell={onPushCell ? (source) => onPushCell(cellId, source) : undefined}
-              onWithdrawProposal={onWithdrawProposal ? () => onWithdrawProposal(cellId) : undefined}
+              onPushCell={
+                onPushCell ? (source, elementId) => onPushCell(cellId, source, elementId) : undefined
+              }
+              onWithdrawProposal={
+                onWithdrawProposal ? (elementId) => onWithdrawProposal(cellId, elementId) : undefined
+              }
               onAcceptProposal={
-                onAcceptProposal ? (proposerUserId) => onAcceptProposal(cellId, proposerUserId) : undefined
+                onAcceptProposal
+                  ? (proposerUserId, elementId) => onAcceptProposal(cellId, proposerUserId, elementId)
+                  : undefined
               }
               onRejectProposal={
-                onRejectProposal ? (proposerUserId) => onRejectProposal(cellId, proposerUserId) : undefined
+                onRejectProposal
+                  ? (proposerUserId, elementId) => onRejectProposal(cellId, proposerUserId, elementId)
+                  : undefined
               }
               onRunCell={(source) => onRunCell(cellId, source)}
               onRunAll={onRunAll}

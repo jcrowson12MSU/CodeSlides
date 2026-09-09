@@ -106,6 +106,23 @@ class CellInstance:
     # signal a document has no proposal workflow active, without needing
     # every call site to separately check `review_mode` too.
     proposals: dict[str, CellProposal] = field(default_factory=dict)
+    # TODO.md #65 follow-up: pending proposals for a `tests` element's
+    # own editable source, keyed by `element_id` then by proposer
+    # `user_id` -- kept separate from `proposals` above (which is only
+    # ever about the cell's *primary* source, `EditCell`/`PushCell`'s
+    # domain) rather than folded into the same dict, since a `tests`
+    # element's source is a completely different piece of state
+    # (`ElementInstance.value`, written by `Kernel.on_tests_edited`/
+    # `set_tests_default`, not `Kernel.on_cell_edited`) that a cell can
+    # have zero, one, or several of, independently of whether its
+    # primary source also has a pending proposal. Needed because many
+    # real decks (e.g. a lecture that sets `hide_code=True` on every
+    # cell) have no reachable primary-editor UI at all -- a `tests`
+    # element is the *only* editable surface a student/collaborator ever
+    # actually touches, so `review_mode` must cover it too, or review
+    # mode silently does nothing on such a deck (the gap this follow-up
+    # closes).
+    test_proposals: dict[str, dict[str, CellProposal]] = field(default_factory=dict)
     # TODO.md #46g-iii: who last made a structural/content change to this
     # cell, on a shared document -- `None` until the first attributable
     # edit (including for a solo, non-collaborative connection, which has
@@ -300,6 +317,10 @@ class Session:
                 # comprehension above already sets) rather than silently
                 # dropped or aliased onto the source Session's own dict.
                 proposals={pid: CellProposal(**vars(p)) for pid, p in inst.proposals.items()},
+                test_proposals={
+                    element_id: {pid: CellProposal(**vars(p)) for pid, p in by_user.items()}
+                    for element_id, by_user in inst.test_proposals.items()
+                },
             )
             for name, inst in self.instances.items()
         }
