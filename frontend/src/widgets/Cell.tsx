@@ -179,6 +179,19 @@ export interface CellProps {
   onWithdrawProposal?: (elementId?: string) => void
   onAcceptProposal?: (proposerUserId: string, elementId?: string) => void
   onRejectProposal?: (proposerUserId: string, elementId?: string) => void
+  // TODO.md #65-x: this cell's locally-staged (not-yet-pushed)
+  // structural changes -- rename, hide toggles, add/remove element,
+  // reorder elements, element config, add/remove primary editor,
+  // main/setup flags -- shown as a plain summary list near a "Push"
+  // button, and this cell's own currently-pending *bundle* (someone's
+  // already-pushed set of such changes awaiting Accept/Reject), reduced
+  // from `cell_bundle_proposed`/etc. into `state.structuralBundle`.
+  pendingActionSummaries?: string[]
+  onPushPendingActions?: () => void
+  onDiscardPendingActions?: () => void
+  onAcceptBundle?: (proposerUserId: string) => void
+  onRejectBundle?: (proposerUserId: string) => void
+  onWithdrawBundle?: () => void
   onRunCell: (source: string) => void
   onRunAll: (source: string) => void
   // TODO.md #46d-i: fired on this cell's primary editor gaining/losing
@@ -420,6 +433,12 @@ export function Cell({
   onWithdrawProposal,
   onAcceptProposal,
   onRejectProposal,
+  pendingActionSummaries,
+  onPushPendingActions,
+  onDiscardPendingActions,
+  onAcceptBundle,
+  onRejectBundle,
+  onWithdrawBundle,
   onRunCell,
   onRunAll,
   onFocusChange,
@@ -1300,6 +1319,84 @@ export function Cell({
             </div>
           )
         })}
+
+      {/* TODO.md #65-x: this connection's own locally-staged structural
+          changes (rename, hide toggles, add/remove element, etc.) --
+          NOT a live preview of the cell as it would look after these
+          apply (that would require replicating server-computed
+          fields), just the plain list of what's about to be pushed,
+          plus the Push button itself. Shown whenever there's anything
+          staged, regardless of collapsed/hideHeader -- same "worth
+          surfacing regardless" reasoning the proposal banner above
+          already uses. */}
+      {reviewMode && pendingActionSummaries && pendingActionSummaries.length > 0 && (
+        <div className="cs-cell-pending-actions">
+          <p className="cs-cell-proposal-header">Changes not yet pushed:</p>
+          <ul>
+            {pendingActionSummaries.map((summary, i) => (
+              <li key={i}>{summary}</li>
+            ))}
+          </ul>
+          <div className="cs-cell-proposal-actions">
+            {onPushPendingActions && (
+              <button type="button" onClick={onPushPendingActions}>
+                Push
+              </button>
+            )}
+            {onDiscardPendingActions && (
+              <button type="button" onClick={onDiscardPendingActions}>
+                Discard
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TODO.md #65-x: a pending structural bundle someone (possibly
+          this connection) has pushed for this cell, awaiting Accept/
+          Reject -- at most one at a time, unlike the per-proposer
+          `proposals` dict above. */}
+      {reviewMode &&
+        !collapsed &&
+        state?.structuralBundle &&
+        (() => {
+          const bundle = state.structuralBundle
+          const isOwnBundle = ownUserId != null && bundle.proposerUserId === ownUserId
+          return (
+            <div className="cs-cell-proposal">
+              <p className="cs-cell-proposal-header">
+                <strong>{bundle.displayName}</strong> proposed these changes to this cell:
+              </p>
+              <ul>
+                {bundle.actionSummaries.map((summary, i) => (
+                  <li key={i}>{summary}</li>
+                ))}
+              </ul>
+              <div className="cs-cell-proposal-actions">
+                {isOwnBundle
+                  ? onWithdrawBundle && (
+                      <button type="button" onClick={onWithdrawBundle}>
+                        Withdraw
+                      </button>
+                    )
+                  : (
+                      <>
+                        {onAcceptBundle && (
+                          <button type="button" onClick={() => onAcceptBundle(bundle.proposerUserId)}>
+                            Accept
+                          </button>
+                        )}
+                        {onRejectBundle && (
+                          <button type="button" onClick={() => onRejectBundle(bundle.proposerUserId)}>
+                            Reject
+                          </button>
+                        )}
+                      </>
+                    )}
+              </div>
+            </div>
+          )
+        })()}
 
       {!hideHeader && !collapsed && editing && (
         <EditCellPanel

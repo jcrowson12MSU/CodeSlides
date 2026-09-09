@@ -91,6 +91,43 @@ class CellProposal:
 
 
 @dataclass
+class StructuralAction:
+    """TODO.md #65-x: one staged structural change (rename, add/remove
+    element, hide toggle, etc.), stored as the exact wire-format dict
+    `protocol.encode()` would produce for the original client message
+    (`payload["type"]` is the message's own `type` tag) -- replaying it
+    is just `protocol.decode_client_message(payload)` followed by an
+    ordinary `handle_message` call, the same dispatch a non-review-mode
+    document already uses for that message type. `summary` is a short,
+    human-readable description (e.g. "Rename to `my_new_name`", "Add
+    slider `speed`") computed once at push time for the reviewer's
+    banner -- kept as plain stored text rather than re-derived at
+    display time, so it still reads correctly even if some later action
+    in the same bundle changes the very cell/element the summary
+    describes (e.g. a rename followed by an element add on the
+    newly-renamed cell)."""
+
+    payload: dict[str, Any]
+    summary: str
+
+
+@dataclass
+class StructuralBundle:
+    """TODO.md #65-x: a cell's one pending set of staged structural
+    changes on a `review_mode` document -- `session.py`'s
+    `CellInstance.structural_bundle` own docstring explains why this is
+    a separate mechanism from `CellProposal`/`proposals`. `actions` is
+    ordered and replayed in that exact order on accept (a later action
+    in the bundle may depend on an earlier one having already applied,
+    e.g. "add element" then "reorder elements" naming it)."""
+
+    proposer_user_id: str
+    display_name: str | None
+    created_at: datetime
+    actions: list[StructuralAction]
+
+
+@dataclass
 class CellInstance:
     """A Cell's live state within one Session."""
 
@@ -123,6 +160,33 @@ class CellInstance:
     # mode silently does nothing on such a deck (the gap this follow-up
     # closes).
     test_proposals: dict[str, dict[str, CellProposal]] = field(default_factory=dict)
+    # TODO.md #65-x: a pending bundle of *structural* changes to this
+    # cell (rename, add/remove element, hide toggles, add/remove
+    # primary editor, reorder elements, element config, main/setup-cell
+    # flags) on a `review_mode` document -- distinct from `proposals`/
+    # `test_proposals` above because these 15 message types each write
+    # straight to disk and reload the Kernel immediately today (unlike
+    # `EditCell`/`SetTestSource`, which only ever stage an in-memory
+    # `source_overrides` entry): there was no existing "hold this until
+    # Save" slot for any of them to intercept. Each pending action is
+    # stored as the *exact wire-format dict* `protocol.encode()` already
+    # produces for that client message (plus a human-readable
+    # `summary`), so accepting a bundle can decode and replay each one
+    # straight through the same `handle_message` dispatch every one of
+    # these types already goes through for a non-review-mode document --
+    # no parallel "apply this action" implementation to keep in sync.
+    # Only one bundle per cell at a time (unlike `proposals`, which is
+    # keyed by every proposer independently) -- the user's own explicit
+    # "atomic accept/reject" decision extends naturally to "one bundle,"
+    # since letting two different people's structural changes to the
+    # same cell coexist as independently-reviewable bundles raises far
+    # murkier conflict questions (two renames? two different added
+    # elements with the same name?) than #65's original per-cell-source
+    # conflict handling ever had to answer. A second push (by anyone)
+    # while one is already pending replaces it outright, same "re-
+    # pushing replaces, doesn't queue" rule `CellProposal` already
+    # follows for a single proposer's own repeated pushes.
+    structural_bundle: StructuralBundle | None = None
     # TODO.md #46g-iii: who last made a structural/content change to this
     # cell, on a shared document -- `None` until the first attributable
     # edit (including for a solo, non-collaborative connection, which has
@@ -321,6 +385,21 @@ class Session:
                     element_id: {pid: CellProposal(**vars(p)) for pid, p in by_user.items()}
                     for element_id, by_user in inst.test_proposals.items()
                 },
+                # TODO.md #65-x: same "clone is a snapshot of current
+                # state" reasoning as proposals/test_proposals above.
+                structural_bundle=(
+                    StructuralBundle(
+                        proposer_user_id=inst.structural_bundle.proposer_user_id,
+                        display_name=inst.structural_bundle.display_name,
+                        created_at=inst.structural_bundle.created_at,
+                        actions=[
+                            StructuralAction(payload=dict(a.payload), summary=a.summary)
+                            for a in inst.structural_bundle.actions
+                        ],
+                    )
+                    if inst.structural_bundle is not None
+                    else None
+                ),
             )
             for name, inst in self.instances.items()
         }

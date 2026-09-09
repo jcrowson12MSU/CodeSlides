@@ -636,18 +636,75 @@ otherwise every rule above (any-editor-accepts, proposer-gets-
 attribution, stale-sibling-conflict via `ToUser`) applies identically.
 
 **Scope boundaries** (all deliberate, per `PROPOSAL_review_workflow.md`'s
-resolved open questions): per-cell only, no batching multiple cells into
-one push; text-diff-only review for v1, no preview execution of a
-pending proposal; structural edits (add/remove/reorder cell, rename,
-add/remove element, etc.) stay immediate/shared exactly as in §5a — only
-a cell's primary source and its `tests` elements' sources go through
-review; element values (`SetElementValue`) are untouched, governed
-entirely by the separate, still-undecided `TODO.md` #63. A viewer-role
-connection can do none of this — `PushCell`/`WithdrawProposal`/
-`AcceptProposal`/`RejectProposal` are simply absent from
-`VIEWER_ALLOWED_MESSAGE_TYPES`'s allowlist, same "blocked by default
-until deliberately added" posture every other mutating message type
-already has.
+resolved open questions): per-cell only, no batching multiple *cells*
+into one push (a single cell's several *structural* changes bundle
+together fine — see below); text-diff-only review for v1, no preview
+execution of a pending proposal; a cell's primary source, its `tests`
+elements' sources, and (as of `TODO.md` #65-x, below) 11 structural
+message types all go through review — element values (`SetElementValue`)
+remain the one significant carve-out, governed entirely by the separate,
+still-undecided `TODO.md` #63, along with deck/slide-scoped operations
+with no single cell to attach a bundle to (`AddCell`, `RemoveCell`,
+`ReorderCells`, `AddSlide`, `RemoveSlide`, `SetSlideOrder`, `SaveDeck`).
+A viewer-role connection can do none of this — every #65 message type is
+simply absent from `VIEWER_ALLOWED_MESSAGE_TYPES`'s allowlist, same
+"blocked by default until deliberately added" posture every other
+mutating message type already has.
+
+**Structural changes (rename, hide toggles, add/remove element, reorder
+elements, element config, add/remove primary editor, main/setup-cell
+flags) go through review too, bundled per cell (`TODO.md` #65-x).**
+These 11 message types (`RenameCell`, `SetMainCell`, `SetSetupCell`,
+`SetHideCode`, `SetHideDef`, `AddElement`, `RemoveElement`,
+`RemovePrimaryEditor`, `AddPrimaryEditor`, `ReorderElements`,
+`SetElementConfig`) are architecturally different from `EditCell`/
+`SetTestSource`: every one of them writes straight to the deck's `.py`
+file and reloads the Kernel *immediately* today, with no existing
+"stage in memory" slot the way `source_overrides` already provides for
+a cell's source — so intercepting them means holding the *entire
+action* until accept, not just delaying an already-deferred write.
+
+- **`CellInstance.structural_bundle`** (`session.py`) holds at most one
+  pending `StructuralBundle` per cell (not one per proposer — unlike
+  `proposals`/`test_proposals`, a second push while one is already
+  pending replaces it outright), each `StructuralAction` storing the
+  exact wire-format dict `protocol.encode()` would produce for the
+  original client message plus a short human-readable `summary`.
+- **`PushCellBundle`** validates every action up front — each must
+  decode successfully and name the bundle's own `cell_id` — before
+  staging any of it, so a malformed action fails the whole push
+  immediately rather than surfacing only when someone tries to accept
+  it later.
+- **`AcceptCellBundle`** replays every staged action, in order, through
+  the *exact same* `handle_message` dispatch a non-review-mode document
+  already uses for each type individually — no parallel "apply this
+  action" implementation to keep in sync. Each action's own reply
+  (`CellRenamed`, `HideCodeSet`, etc., plus their usual `cell_status`/
+  `cell_output`) is appended after `BundleAccepted` in the same reply
+  list, so a client sees exactly what it would have seen had each
+  action been sent individually. Since replaying calls the very
+  handlers this feature gates against `review_mode`, `Session.
+  review_mode` is temporarily flipped to `False` for the duration of the
+  replay (restored immediately after, success or failure) — otherwise
+  the server's own replay would trip the gate it just added.
+- **A `RenameCell` inside a bundle changes the cell's own identity
+  mid-replay** — `session.instances`/`kernel.deck.cells` move to the new
+  key, so anything computed *after* a rename in the same bundle (a later
+  action's own target, the final attribution) must use the *new* id, not
+  the bundle's original one. Attribution reads the final cell id off the
+  *last* replayed action's own reply (`attributed_cell_id`, scanning
+  from the end), the same trap — and the same fix — `TODO.md` #46g-iii
+  already documents for a single rename.
+- **No live client-side preview.** Every one of these 11 message types'
+  server replies carries fields the client cannot cheaply reproduce
+  ahead of time (`instance`/`source`/`elements`/`layout`, all derived
+  server-side from `display_source`/the real parsed `Cell`) — so
+  `App.tsx` stages a plain list of the pushed actions' own `summary`
+  strings (e.g. "Hide code", "Add slider `speed`") near a Push button,
+  rather than attempting to re-render the cell as if each change were
+  already live. A deliberate simplicity/fidelity tradeoff: what you see
+  is always exactly what you asked for, never a simulated re-render that
+  could drift from what actually happens on accept.
 
 ## 6. Output model
 

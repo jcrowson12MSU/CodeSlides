@@ -311,6 +311,40 @@ export interface RejectProposal {
   element_id?: string
 }
 
+// TODO.md #65-x: stage an ordered list of structural changes (rename,
+// hide toggles, add/remove element, reorder elements, element config,
+// add/remove primary editor, main/setup-cell flags) to `cell_id` --
+// none of it is applied until accept_cell_bundle replays it. Each
+// action's `payload` is the exact client-message object App.tsx would
+// otherwise have sent immediately (e.g. a RenameCell shape), plus a
+// short human-readable `summary` for the reviewer's banner.
+export interface PushCellBundle {
+  type: 'push_cell_bundle'
+  session_id: string
+  cell_id: string
+  actions: Array<{ payload: Record<string, unknown>; summary: string }>
+}
+
+export interface WithdrawCellBundle {
+  type: 'withdraw_cell_bundle'
+  session_id: string
+  cell_id: string
+}
+
+export interface AcceptCellBundle {
+  type: 'accept_cell_bundle'
+  session_id: string
+  cell_id: string
+  proposer_user_id: string
+}
+
+export interface RejectCellBundle {
+  type: 'reject_cell_bundle'
+  session_id: string
+  cell_id: string
+  proposer_user_id: string
+}
+
 export type ClientMessage =
   | Join
   | SetPresence
@@ -319,6 +353,10 @@ export type ClientMessage =
   | WithdrawProposal
   | AcceptProposal
   | RejectProposal
+  | PushCellBundle
+  | WithdrawCellBundle
+  | AcceptCellBundle
+  | RejectCellBundle
   | RunAll
   | SetElementValue
   | SetUiState
@@ -477,6 +515,44 @@ export interface ProposalConflict {
   cell_id: string
   source: string
   element_id?: string
+}
+
+// TODO.md #65-x: broadcast (peers-only) when a push_cell_bundle stages
+// or replaces a pending structural bundle. `action_summaries` are the
+// plain human-readable strings only -- a receiving peer's reviewer
+// banner never needs the full `payload`, only the server's own
+// accept_cell_bundle replay ever decodes one.
+export interface CellBundleProposed {
+  type: 'cell_bundle_proposed'
+  session_id: string
+  cell_id: string
+  proposer_user_id: string
+  proposer_display_name: string
+  action_summaries: string[]
+  created_at: string
+}
+
+export interface BundleWithdrawn {
+  type: 'bundle_withdrawn'
+  session_id: string
+  cell_id: string
+  proposer_user_id: string
+}
+
+export interface BundleAccepted {
+  type: 'bundle_accepted'
+  session_id: string
+  cell_id: string
+  accepted_from_user_id: string
+  accepted_by_user_id: string
+  action_summaries: string[]
+}
+
+export interface BundleRejected {
+  type: 'bundle_rejected'
+  session_id: string
+  cell_id: string
+  rejected_by_user_id: string
 }
 
 // TODO.md #46d-i: one connected peer's identity/presence, as bundled in
@@ -720,6 +796,10 @@ export type ServerMessage =
   | ProposalAccepted
   | ProposalRejected
   | ProposalConflict
+  | CellBundleProposed
+  | BundleWithdrawn
+  | BundleAccepted
+  | BundleRejected
   | ElementOutput
   | GraphUpdated
   | SessionCloned

@@ -165,6 +165,28 @@ function App() {
   // panel only shows the error that's actually about it. Cleared on the
   // next edit-panel action for that cell.
   const [editErrors, setEditErrors] = useState<Record<string, string>>({})
+  // TODO.md #65-x: on a review_mode document, one of the 11 structural
+  // message types (rename, hide toggles, add/remove element, reorder
+  // elements, element config, add/remove primary editor, main/setup
+  // flags) is staged here instead of sent immediately -- each entry is
+  // exactly the `{payload, summary}` shape `push_cell_bundle` expects,
+  // so pushing is just `send({type: 'push_cell_bundle', ..., actions:
+  // pendingActions[cellId]})` with no further transformation. Cleared
+  // on push (server round-trip decides success/failure from there,
+  // same as every other message this app sends) or on withdraw.
+  //
+  // Deliberately NOT rendered as a live preview of the cell's actual
+  // post-change UI (that would require replicating server-computed
+  // fields -- Cell.tsx's `instance`/`source`/`elements`/`layout` are
+  // all derived server-side from `display_source`/the Cell's real
+  // parsed state, not available client-side before the round-trip) --
+  // just a plain list of the summaries themselves, shown near the Push
+  // button, so what you're about to push is always exactly what you
+  // asked for, never a simulated re-render that could drift from what
+  // actually happens on accept.
+  const [pendingActions, setPendingActions] = useState<
+    Record<string, Array<{ payload: Record<string, unknown>; summary: string }>>
+  >({})
   // Feedback for a rejected add_slide (e.g. no cells selected, or the
   // deck wasn't started from a file) -- same "clear on next attempt"
   // shape as editErrors, just not keyed by cell since a slide isn't one.
@@ -978,53 +1000,129 @@ function App() {
     })
   }
 
+  // TODO.md #65-x: the single interception point every one of the 11
+  // structural handlers below routes through -- on a review_mode
+  // document, stage `message` (with its own summary) into
+  // pendingActions[cellId] instead of sending it; otherwise send it
+  // immediately exactly as before this feature existed. `message` is
+  // always a plain client-message object shaped for `send`, reused
+  // as-is for the staged payload -- `push_cell_bundle`'s own `actions`
+  // field expects exactly this `{payload, summary}` shape.
+  function stageOrSend(cellId: string, message: Record<string, unknown>, summary: string) {
+    if (!sessionId) return
+    if (reviewMode) {
+      setPendingActions((prev) => ({
+        ...prev,
+        [cellId]: [...(prev[cellId] ?? []), { payload: message, summary }],
+      }))
+      return
+    }
+    send(message as unknown as Parameters<typeof send>[0])
+  }
+
+  function handlePushPendingActions(cellId: string) {
+    if (!sessionId) return
+    const actions = pendingActions[cellId]
+    if (!actions || actions.length === 0) return
+    send({ type: 'push_cell_bundle', session_id: sessionId, cell_id: cellId, actions })
+    setPendingActions((prev) => {
+      const next = { ...prev }
+      delete next[cellId]
+      return next
+    })
+  }
+
+  function handleDiscardPendingActions(cellId: string) {
+    setPendingActions((prev) => {
+      if (!(cellId in prev)) return prev
+      const next = { ...prev }
+      delete next[cellId]
+      return next
+    })
+  }
+
+  function handleWithdrawBundle(cellId: string) {
+    if (!sessionId) return
+    send({ type: 'withdraw_cell_bundle', session_id: sessionId, cell_id: cellId })
+  }
+
+  function handleAcceptBundle(cellId: string, proposerUserId: string) {
+    if (!sessionId) return
+    send({ type: 'accept_cell_bundle', session_id: sessionId, cell_id: cellId, proposer_user_id: proposerUserId })
+  }
+
+  function handleRejectBundle(cellId: string, proposerUserId: string) {
+    if (!sessionId) return
+    send({ type: 'reject_cell_bundle', session_id: sessionId, cell_id: cellId, proposer_user_id: proposerUserId })
+  }
+
   function handleRenameCell(cellId: string, newName: string) {
     if (!sessionId) return
     clearEditError(cellId)
-    send({ type: 'rename_cell', session_id: sessionId, cell_id: cellId, new_name: newName })
+    stageOrSend(
+      cellId,
+      { type: 'rename_cell', session_id: sessionId, cell_id: cellId, new_name: newName },
+      `Rename to \`${newName}\``,
+    )
   }
 
   function handleSetMainCell(cellId: string) {
     if (!sessionId) return
     clearEditError(cellId)
-    send({ type: 'set_main_cell', session_id: sessionId, cell_id: cellId })
+    stageOrSend(cellId, { type: 'set_main_cell', session_id: sessionId, cell_id: cellId }, 'Set as main cell')
   }
 
   function handleSetSetupCell(cellId: string) {
     if (!sessionId) return
     clearEditError(cellId)
-    send({ type: 'set_setup_cell', session_id: sessionId, cell_id: cellId })
+    stageOrSend(cellId, { type: 'set_setup_cell', session_id: sessionId, cell_id: cellId }, 'Set as setup cell')
   }
 
   function handleSetHideCode(cellId: string, hideCode: boolean) {
     if (!sessionId) return
     clearEditError(cellId)
-    send({ type: 'set_hide_code', session_id: sessionId, cell_id: cellId, hide_code: hideCode })
+    stageOrSend(
+      cellId,
+      { type: 'set_hide_code', session_id: sessionId, cell_id: cellId, hide_code: hideCode },
+      hideCode ? 'Hide code' : 'Show code',
+    )
   }
 
   function handleSetHideDef(cellId: string, hideDef: boolean) {
     if (!sessionId) return
     clearEditError(cellId)
-    send({ type: 'set_hide_def', session_id: sessionId, cell_id: cellId, hide_def: hideDef })
+    stageOrSend(
+      cellId,
+      { type: 'set_hide_def', session_id: sessionId, cell_id: cellId, hide_def: hideDef },
+      hideDef ? 'Hide function definition line' : 'Show function definition line',
+    )
   }
 
   function handleAddElement(cellId: string, name: string, kind: string, config: Record<string, unknown>) {
     if (!sessionId) return
     clearEditError(cellId)
-    send({
-      type: 'add_element',
-      session_id: sessionId,
-      cell_id: cellId,
-      element_name: name,
-      kind,
-      config,
-    })
+    stageOrSend(
+      cellId,
+      {
+        type: 'add_element',
+        session_id: sessionId,
+        cell_id: cellId,
+        element_name: name,
+        kind,
+        config,
+      },
+      `Add ${kind} \`${name}\``,
+    )
   }
 
   function handleRemoveElement(cellId: string, elementName: string) {
     if (!sessionId) return
     clearEditError(cellId)
-    send({ type: 'remove_element', session_id: sessionId, cell_id: cellId, element_name: elementName })
+    stageOrSend(
+      cellId,
+      { type: 'remove_element', session_id: sessionId, cell_id: cellId, element_name: elementName },
+      `Remove element \`${elementName}\``,
+    )
   }
 
   // CELL_QUADRANT_LAYOUT_TODO.md item 2b: the primary code editor is
@@ -1039,25 +1137,41 @@ function App() {
   function handleRemovePrimaryEditor(cellId: string) {
     if (!sessionId) return
     clearEditError(cellId)
-    send({ type: 'remove_primary_editor', session_id: sessionId, cell_id: cellId })
+    stageOrSend(
+      cellId,
+      { type: 'remove_primary_editor', session_id: sessionId, cell_id: cellId },
+      'Remove primary code editor',
+    )
   }
 
   function handleAddPrimaryEditor(cellId: string) {
     if (!sessionId) return
     clearEditError(cellId)
-    send({ type: 'add_primary_editor', session_id: sessionId, cell_id: cellId })
+    stageOrSend(
+      cellId,
+      { type: 'add_primary_editor', session_id: sessionId, cell_id: cellId },
+      'Add primary code editor',
+    )
   }
 
   function handleReorderElements(cellId: string, elementOrder: string[]) {
     if (!sessionId) return
     clearEditError(cellId)
-    send({ type: 'reorder_elements', session_id: sessionId, cell_id: cellId, element_order: elementOrder })
+    stageOrSend(
+      cellId,
+      { type: 'reorder_elements', session_id: sessionId, cell_id: cellId, element_order: elementOrder },
+      'Reorder elements',
+    )
   }
 
   function handleSetElementConfig(cellId: string, elementId: string, config: Record<string, unknown>) {
     if (!sessionId) return
     clearEditError(cellId)
-    send({ type: 'set_element_config', session_id: sessionId, cell_id: cellId, element_id: elementId, config })
+    stageOrSend(
+      cellId,
+      { type: 'set_element_config', session_id: sessionId, cell_id: cellId, element_id: elementId, config },
+      `Change \`${elementId}\` settings`,
+    )
   }
 
   function handleChangeNotesSource(cellId: string, elementId: string, source: string) {
@@ -1380,6 +1494,12 @@ function App() {
               onRejectProposal={(proposerUserId, elementId) =>
                 handleRejectProposal(cellId, proposerUserId, elementId)
               }
+              pendingActionSummaries={pendingActions[cellId]?.map((a) => a.summary)}
+              onPushPendingActions={() => handlePushPendingActions(cellId)}
+              onDiscardPendingActions={() => handleDiscardPendingActions(cellId)}
+              onAcceptBundle={(proposerUserId) => handleAcceptBundle(cellId, proposerUserId)}
+              onRejectBundle={(proposerUserId) => handleRejectBundle(cellId, proposerUserId)}
+              onWithdrawBundle={() => handleWithdrawBundle(cellId)}
               onDeleteCell={isViewer ? undefined : () => handleDeleteCell(cellId)}
               onMoveCellUp={isViewer ? undefined : () => handleReorderCells(cellId, -1)}
               onMoveCellDown={isViewer ? undefined : () => handleReorderCells(cellId, 1)}

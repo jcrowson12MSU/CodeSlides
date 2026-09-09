@@ -152,6 +152,89 @@ class RejectProposal:
 
 
 @dataclass
+class PushCellBundle:
+    """TODO.md #65-x: on a `review_mode` document, stage an ordered list
+    of structural changes to `cell_id` (rename, add/remove element, hide
+    toggles, reorder elements, element config, add/remove primary
+    editor, main/setup-cell flags) -- none of `session.
+    source_overrides`/the deck's `.py` file/the Kernel's loaded Deck is
+    touched until `AcceptCellBundle` replays them. Replaces this same
+    connection's own prior pending bundle for `cell_id`, if any (same
+    "re-pushing replaces" rule `PushCell` already follows). Distinct
+    from `PushCell` (which only ever concerns a cell's *primary source
+    text*) since these 15 message types write to disk and reload the
+    Kernel immediately today -- there's no existing "hold this in
+    memory" slot for any of them to intercept, so this is a parallel
+    mechanism, not a reuse of `CellProposal`.
+
+    Each entry of `actions` is a plain `{"payload": {...}, "summary":
+    str}` dict (matching this codebase's existing `list[dict[str, Any]]`
+    precedent for structured sub-records, e.g. `ElementAdded.elements`,
+    rather than a nested dataclass -- `decode_client_message`'s generic
+    `cls(**fields)` construction doesn't recursively reconstruct nested
+    dataclasses from JSON, so a nested-dataclass field would silently
+    decode as a plain dict anyway). `payload` is the exact wire-format
+    dict `protocol.encode()` would produce for the original client
+    message (`AddElement`, `RenameCell`, `SetHideCode`, etc.;
+    `payload["type"]` is that message's own type tag), so accepting a
+    bundle can `decode_client_message` and replay each one through the
+    ordinary dispatch -- no separate "apply this action" implementation
+    needed. `summary` is a short, human-readable description for the
+    reviewer's banner (e.g. "Rename to `foo`"), computed once by the
+    pushing client."""
+
+    type: ClassVar[str] = "push_cell_bundle"
+    session_id: str
+    cell_id: str
+    actions: list[dict[str, Any]]
+
+
+@dataclass
+class WithdrawCellBundle:
+    """TODO.md #65-x: the proposer cancels their own pending structural
+    bundle for `cell_id`, before anyone accepts or rejects it. A no-op
+    (not an error) if the sender has no pending bundle for this cell."""
+
+    type: ClassVar[str] = "withdraw_cell_bundle"
+    session_id: str
+    cell_id: str
+
+
+@dataclass
+class AcceptCellBundle:
+    """TODO.md #65-x: any editor-role peer accepts `proposer_user_id`'s
+    pending structural bundle for `cell_id` -- replays every staged
+    action, in order, through the ordinary `handle_message` dispatch
+    (exactly what a non-review-mode document already does for each of
+    these message types individually), then broadcasts `BundleAccepted`
+    plus whatever each replayed action's own reply normally is. Applied
+    atomically: if any action in the bundle fails, none of its later
+    actions are attempted and nothing already-applied within this same
+    accept is rolled back further than "stop replaying" (each action is
+    itself already atomic -- an immediate disk write -- so a mid-bundle
+    failure leaves the document in the state that resulted from
+    whichever earlier actions in the bundle already succeeded, not a
+    half-applied single action)."""
+
+    type: ClassVar[str] = "accept_cell_bundle"
+    session_id: str
+    cell_id: str
+    proposer_user_id: str
+
+
+@dataclass
+class RejectCellBundle:
+    """TODO.md #65-x: any editor-role peer explicitly dismisses
+    `proposer_user_id`'s pending structural bundle for `cell_id` without
+    replaying any of it."""
+
+    type: ClassVar[str] = "reject_cell_bundle"
+    session_id: str
+    cell_id: str
+    proposer_user_id: str
+
+
+@dataclass
 class RunAll:
     """Run every cell once, in topological order, for `session_id`."""
 
@@ -689,6 +772,69 @@ class ProposalConflict:
 
 
 @dataclass
+class CellBundleProposed:
+    """TODO.md #65-x: broadcast (peers-only, `Broadcast`-wrapped -- same
+    "proposer already has this state" reasoning `CellProposed` already
+    uses) when a `PushCellBundle` stages or replaces a pending
+    structural bundle. `actions` carries only the `summary` strings (not
+    the full wire-format `payload`s -- a receiving peer's reviewer
+    banner only ever displays the summaries, it never needs to replay
+    anything itself; only the server's own `AcceptCellBundle` handling
+    ever decodes/replays a payload)."""
+
+    type: ClassVar[str] = "cell_bundle_proposed"
+    session_id: str
+    cell_id: str
+    proposer_user_id: str
+    proposer_display_name: str
+    action_summaries: list[str]
+    created_at: str
+
+
+@dataclass
+class BundleWithdrawn:
+    """TODO.md #65-x: broadcast (peers-only) when a proposer withdraws
+    their own pending structural bundle."""
+
+    type: ClassVar[str] = "bundle_withdrawn"
+    session_id: str
+    cell_id: str
+    proposer_user_id: str
+
+
+@dataclass
+class BundleAccepted:
+    """TODO.md #65-x: sent to everyone (unwrapped, sender-and-peers-alike
+    -- same default every pre-#46d message type already uses) when an
+    `AcceptCellBundle` finishes replaying a bundle's actions. Carries
+    only the outcome summary; the replayed actions' own individual
+    replies (`CellRenamed`, `ElementAdded`, etc., plus their usual
+    `cell_status`/`cell_output`) follow immediately after this in the
+    same reply list, exactly as if each had been sent individually on a
+    non-review-mode document."""
+
+    type: ClassVar[str] = "bundle_accepted"
+    session_id: str
+    cell_id: str
+    accepted_from_user_id: str
+    accepted_by_user_id: str
+    action_summaries: list[str]
+
+
+@dataclass
+class BundleRejected:
+    """TODO.md #65-x: sent to everyone (unwrapped -- same reasoning
+    `ProposalRejected` already documents: the proposer being rejected
+    may not be who sent the rejection, so unwrapped delivery is the only
+    shape guaranteed to reach them)."""
+
+    type: ClassVar[str] = "bundle_rejected"
+    session_id: str
+    cell_id: str
+    rejected_by_user_id: str
+
+
+@dataclass
 class ElementOutput:
     """A viewer element (turtle_canvas/image/iframe/notes) received new
     content from its owning cell's execution (ARCHITECTURE.md section 3a).
@@ -1127,6 +1273,10 @@ ClientMessage = (
     | WithdrawProposal
     | AcceptProposal
     | RejectProposal
+    | PushCellBundle
+    | WithdrawCellBundle
+    | AcceptCellBundle
+    | RejectCellBundle
     | RunAll
     | SetElementValue
     | SetUiState
@@ -1164,6 +1314,10 @@ ServerMessage = (
     | ProposalAccepted
     | ProposalRejected
     | ProposalConflict
+    | CellBundleProposed
+    | BundleWithdrawn
+    | BundleAccepted
+    | BundleRejected
     | ElementOutput
     | GraphUpdated
     | SessionCloned
@@ -1202,6 +1356,10 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
         WithdrawProposal,
         AcceptProposal,
         RejectProposal,
+        PushCellBundle,
+        WithdrawCellBundle,
+        AcceptCellBundle,
+        RejectCellBundle,
         RunAll,
         SetElementValue,
         SetUiState,

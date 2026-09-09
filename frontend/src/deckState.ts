@@ -63,6 +63,12 @@ export interface CellState {
   // elements each with their own independent pending proposal(s).
   elementProposals: Record<string, Record<string, { displayName: string; source: string; createdAt: string }>>
   elementConflicts: Record<string, string>
+  // TODO.md #65-x: a pending *structural* bundle (rename, hide toggles,
+  // add/remove element, reorder elements, element config, add/remove
+  // primary editor, main/setup-cell flags) for this cell -- at most one
+  // at a time (a second push replaces it), unlike `proposals`'
+  // per-proposer keying. `null` when there's no pending bundle.
+  structuralBundle: { proposerUserId: string; displayName: string; actionSummaries: string[] } | null
 }
 
 export type DeckState = Record<string, CellState>
@@ -80,6 +86,7 @@ const EMPTY_CELL: CellState = {
   conflict: null,
   elementProposals: {},
   elementConflicts: {},
+  structuralBundle: null,
 }
 
 export function reduceDeckState(messages: ServerMessage[]): DeckState {
@@ -208,6 +215,27 @@ export function reduceDeckState(messages: ServerMessage[]): DeckState {
         }
         break
       }
+      case 'cell_bundle_proposed':
+        state[message.cell_id] = {
+          ...cellFor(message.cell_id),
+          structuralBundle: {
+            proposerUserId: message.proposer_user_id,
+            displayName: message.proposer_display_name,
+            actionSummaries: message.action_summaries,
+          },
+        }
+        break
+      case 'bundle_withdrawn':
+      case 'bundle_rejected':
+        // TODO.md #65-x: only one bundle is ever pending per cell, so
+        // either message simply clears it -- no per-proposer bookkeeping
+        // needed the way `proposals`'s dict-keyed-by-user_id delete
+        // requires.
+        state[message.cell_id] = { ...cellFor(message.cell_id), structuralBundle: null }
+        break
+      case 'bundle_accepted':
+        state[message.cell_id] = { ...cellFor(message.cell_id), structuralBundle: null }
+        break
       default:
         break
     }
