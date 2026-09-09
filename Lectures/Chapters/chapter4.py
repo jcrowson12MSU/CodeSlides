@@ -131,6 +131,7 @@ expression is `True`; otherwise, the *else* branch executes."""
         ui.tests('Hotel discount', default='num_years = 501\nhotel_rate = 160\n\nif num_years == 50:\n    print("Congratulations on 50 years of marriage!")\n    hotel_rate = hotel_rate / 2\n\nprint(f"Your hotel rate: ${hotel_rate:.2f}")'),
     ],
     hide_code=True,
+    layout={'column_fraction': 0.5, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Hotel discount': 'top-right'}, 'extra_code_fraction': 0.5},
 )
 def equality_operator(num_years_text):
     """## The Equality Operator: `==`
