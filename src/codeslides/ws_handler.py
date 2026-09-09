@@ -77,16 +77,37 @@ from codeslides.serialization import (
 )
 from codeslides.session import Session
 
+# A connection is identified by a fresh id per websocket, distinct from
+# the (possibly shared) session_id its Session lives under -- this is
+# what lets SessionRegistry.broadcast address "every other connection
+# on this document" without conflating "which document" with "which
+# browser tab."
+ConnectionId = str
+
 
 @dataclass
 class SessionRegistry:
     """Owns every live Session for one Kernel/Deck, keyed by session_id.
-    Each Session is fully isolated (ARCHITECTURE.md section 1) -- this
-    registry only tracks *which* Sessions exist, it never lets them share
-    state with each other."""
+
+    A `session_id` doubles as a *document id*: `create()` with no id makes
+    a brand-new isolated Session (today's default, one per browser tab,
+    ARCHITECTURE.md section 1), while `create_or_join(document_id)` (TODO.md
+    #46a) attaches a connection to an existing shared Session if one is
+    already registered under that id, or creates one otherwise. Either
+    way, `sessions` alone still fully determines "which Sessions exist";
+    `connections` is purely bookkeeping for `broadcast` and never itself
+    holds Session state.
+    """
 
     kernel: Kernel
     sessions: dict[str, Session] = field(default_factory=dict)
+    # session_id -> {connection_id -> a transport-level send callback}.
+    # The callback is `Callable[[ServerMessage], Awaitable[None]]` in
+    # practice (server.py registers `websocket.send_json`-wrapping
+    # closures here), but kept untyped/Any here so this module -- per its
+    # own module docstring -- stays free of any FastAPI/websockets
+    # dependency and fully unit-testable without a running transport.
+    connections: dict[str, dict[ConnectionId, object]] = field(default_factory=dict)
 
     def create(self) -> Session:
         session = Session(deck=self.kernel.deck)
@@ -103,6 +124,61 @@ class SessionRegistry:
         clone = source.clone()
         self.sessions[clone.session_id] = clone
         return clone
+
+    def create_or_join(self, document_id: str | None) -> Session:
+        """Resolve the Session a new connection should attach to.
+
+        `document_id is None` preserves today's behavior exactly: a fresh,
+        fully isolated Session with its own random `session_id` (solo
+        `/ws` connections, and every existing test, are unaffected). A
+        given `document_id` makes that id double as the Session's
+        `session_id` -- the first connection to use it creates the shared
+        Session, every later connection with the same id joins the same
+        Session/namespace/`source_overrides` instead of getting its own.
+        """
+        if document_id is None:
+            return self.create()
+        existing = self.sessions.get(document_id)
+        if existing is not None:
+            return existing
+        session = Session(deck=self.kernel.deck, session_id=document_id)
+        self.sessions[session.session_id] = session
+        return session
+
+    def add_connection(self, session_id: str, connection_id: ConnectionId, send: object) -> None:
+        self.connections.setdefault(session_id, {})[connection_id] = send
+
+    def remove_connection(self, session_id: str, connection_id: ConnectionId) -> bool:
+        """Drop `connection_id` from `session_id`'s fan-out set. Returns
+        True if that was the last connection on this Session -- callers
+        use this to start the keep-warm-then-expire grace period (TODO.md
+        #46a-iii) rather than tearing the Session down immediately, since
+        a reload or a momentary network drop is a normal, not an
+        exceptional, way to lose a connection."""
+        peers = self.connections.get(session_id)
+        if peers is None:
+            return False
+        peers.pop(connection_id, None)
+        if not peers:
+            del self.connections[session_id]
+            return True
+        return False
+
+    def peers(self, session_id: str, *, exclude: ConnectionId | None = None) -> list[object]:
+        """The send-callbacks for every connection on `session_id` other
+        than `exclude` -- what `broadcast` fans a reply out to."""
+        peers = self.connections.get(session_id, {})
+        return [send for connection_id, send in peers.items() if connection_id != exclude]
+
+    def discard_session(self, session_id: str) -> None:
+        """Tear down a Session once its keep-warm grace period (TODO.md
+        #46a-iii) has expired with nobody having reconnected. A no-op if a
+        connection *did* reconnect in the meantime (the caller is
+        expected to check `connections` before calling this, but this
+        also guards against a stale timer firing after the fact)."""
+        if session_id in self.connections:
+            return
+        self.sessions.pop(session_id, None)
 
 
 def _effective_display_source(session: Session, cell) -> str:
