@@ -329,6 +329,171 @@ def test_websocket_shared_document_concurrent_cell_edits_last_write_wins():
         assert "+ 1" not in session.source_overrides["live_demo"]
 
 
+def test_websocket_attribution_records_last_editor_per_cell():
+    """TODO.md #46g-ii/#46g-iii/#46g-vi: EditCell records who made the
+    change on the cell's own CellInstance -- derived entirely from the
+    connection's own joined identity (never a client-supplied field, so
+    there's nothing for a malicious client to spoof), attributed
+    correctly to each of two peers editing different cells."""
+    client = TestClient(create_app(_build_overlapping_deps_deck()))
+
+    with (
+        client.websocket_connect("/ws?document=attribution-1") as ws_a,
+        client.websocket_connect("/ws?document=attribution-1") as ws_b,
+    ):
+        ws_a.receive_json()  # session_created
+        ws_b.receive_json()  # session_created
+
+        ws_a.send_json({"type": "join", "session_id": "attribution-1", "display_name": "Alice"})
+        ws_a.receive_json()  # join_ack
+        ws_b.send_json({"type": "join", "session_id": "attribution-1", "display_name": "Bob"})
+        ws_b.receive_json()  # presence_update about Alice, or join_ack (order unspecified)
+        ws_b.receive_json()
+        ws_a.receive_json()  # presence_update about Bob joining
+
+        # run_all first, so both cell_a and cell_b (and so combined,
+        # which depends on both) start from a clean, fully-defined
+        # baseline -- otherwise editing just cell_a below would also
+        # re-run combined into a NameError (b undefined), an unrelated
+        # side effect that would make the exact reply count depend on
+        # the deck's error-reporting shape instead of just this test's
+        # own scenario.
+        ws_a.send_json({"type": "run_all", "session_id": "attribution-1"})
+        for _ in range(6):
+            ws_a.receive_json()
+        for _ in range(6):
+            ws_b.receive_json()
+
+        ws_a.send_json(
+            {
+                "type": "edit_cell",
+                "session_id": "attribution-1",
+                "cell_id": "cell_a",
+                "source": "def cell_a():\n    a = 100\n    return a\n",
+            }
+        )
+        # cell_source_changed, cell_status/cell_output for cell_a,
+        # cell_status/cell_output for combined (cell_a's only dependent),
+        # and (TODO.md #46g-iv) cell_attribution_changed -- sent to
+        # sender and peers alike, same as the other five.
+        a_own_replies = [ws_a.receive_json() for _ in range(6)]
+        b_broadcast_replies = [ws_b.receive_json() for _ in range(6)]
+        a_attribution = next(m for m in a_own_replies if m["type"] == "cell_attribution_changed")
+        assert a_attribution["cell_id"] == "cell_a"
+        assert a_attribution["last_edited_by"] == "Alice"
+        b_attribution = next(m for m in b_broadcast_replies if m["type"] == "cell_attribution_changed")
+        assert b_attribution == a_attribution
+
+        ws_b.send_json(
+            {
+                "type": "edit_cell",
+                "session_id": "attribution-1",
+                "cell_id": "cell_b",
+                "source": "def cell_b():\n    b = 1000\n    return b\n",
+            }
+        )
+        for _ in range(6):
+            ws_b.receive_json()  # own reply
+        for _ in range(6):
+            ws_a.receive_json()  # broadcast of B's edit
+
+        session = client.app.state.registry.get("attribution-1")
+        assert session.instances["cell_a"].last_edited_by == "Alice"
+        assert session.instances["cell_a"].last_edited_at is not None
+        assert session.instances["cell_b"].last_edited_by == "Bob"
+        assert session.instances["cell_b"].last_edited_at is not None
+        # combined was never directly edited by either peer (it only
+        # re-ran as a side effect of cell_a/cell_b's dependency graph) --
+        # confirms attribution isn't spuriously applied to every
+        # downstream cell an edit happens to affect, only the one
+        # actually named in the EditCell message.
+        assert session.instances["combined"].last_edited_by is None
+
+
+def test_websocket_attribution_survives_last_write_wins_discard():
+    """TODO.md #46g-vi: when two peers edit the *same* cell and
+    last-write-wins (46b-i) discards the first edit, the *surviving*
+    edit's attribution must be what's recorded -- not a stale
+    attribution from the discarded edit, and not the discarded editor's
+    name winning by having been recorded first."""
+    client = TestClient(create_app(_build_deck()))
+
+    with (
+        client.websocket_connect("/ws?document=attribution-2") as ws_a,
+        client.websocket_connect("/ws?document=attribution-2") as ws_b,
+    ):
+        ws_a.receive_json()
+        ws_b.receive_json()
+        ws_a.send_json({"type": "join", "session_id": "attribution-2", "display_name": "Alice"})
+        ws_a.receive_json()
+        ws_b.send_json({"type": "join", "session_id": "attribution-2", "display_name": "Bob"})
+        ws_b.receive_json()
+        ws_b.receive_json()
+        ws_a.receive_json()
+
+        # Alice edits live_demo first...
+        ws_a.send_json(
+            {
+                "type": "edit_cell",
+                "session_id": "attribution-2",
+                "cell_id": "live_demo",
+                "source": "def live_demo(speed):\n    result = base * speed + 1\n    return result\n",
+            }
+        )
+        for _ in range(4):
+            ws_a.receive_json()
+        for _ in range(4):
+            ws_b.receive_json()
+
+        session = client.app.state.registry.get("attribution-2")
+        assert session.instances["live_demo"].last_edited_by == "Alice"
+
+        # ...then Bob edits the same cell, discarding Alice's edit
+        # (last-write-wins, TODO.md #46b-i) -- attribution must flip to
+        # Bob, the surviving editor, not stay stuck on Alice.
+        ws_b.send_json(
+            {
+                "type": "edit_cell",
+                "session_id": "attribution-2",
+                "cell_id": "live_demo",
+                "source": "def live_demo(speed):\n    result = base * speed + 2\n    return result\n",
+            }
+        )
+        b_replies = [ws_b.receive_json() for _ in range(4)]
+        for _ in range(4):
+            ws_a.receive_json()
+
+        assert session.instances["live_demo"].last_edited_by == "Bob"
+        attribution = next(m for m in b_replies if m["type"] == "cell_attribution_changed")
+        assert attribution["last_edited_by"] == "Bob"
+
+
+def test_websocket_solo_connection_edits_never_get_attributed():
+    """TODO.md #46g-i: a solo (non-collaborative) connection never sends
+    Join, so it has no display_name to attribute with -- EditCell must
+    not crash or attribute to some placeholder, just leave
+    last_edited_by unset, exactly as before this feature existed."""
+    client = TestClient(create_app(_build_deck()))
+
+    with client.websocket_connect("/ws") as ws:
+        hello = ws.receive_json()
+        session_id = hello["session_id"]
+        ws.send_json(
+            {
+                "type": "edit_cell",
+                "session_id": session_id,
+                "cell_id": "live_demo",
+                "source": "def live_demo(speed):\n    return 42\n",
+            }
+        )
+        ws.receive_json()
+        ws.receive_json()
+        ws.receive_json()
+
+        session = client.app.state.registry.get(session_id)
+        assert session.instances["live_demo"].last_edited_by is None
+
+
 def test_websocket_shared_document_overlapping_edits_from_two_peers_never_corrupt_state():
     """TODO.md #46c-iv: two peers editing *different* upstream cells that
     both feed a shared downstream cell (overlapping rerun sets) must
@@ -793,3 +958,156 @@ def test_websocket_default_role_is_editor_for_solo_and_shared_connections():
         ws.send_json({"type": "run_all", "session_id": hello["session_id"]})
         received = [ws.receive_json() for _ in range(4)]
         assert all(m["type"] != "error" for m in received)
+
+
+_FILE_BACKED_DECK_SOURCE = (
+    "from codeslides import App\n\n"
+    "app = App()\n\n"
+    '@app.cell(instance="editable")\n'
+    "def cell_a():\n"
+    "    a = 1\n"
+    "    return a\n"
+)
+
+
+def test_websocket_attribution_persists_across_save_and_simulated_restart(tmp_path):
+    """TODO.md #46g-v: attribution for a saved cell survives a `save_deck`
+    to disk and a subsequent server restart (simulated here by
+    constructing a completely fresh `create_app`/Kernel/SessionRegistry
+    against the same deck_path, exactly what a real process restart
+    would do) -- via the sidecar file, not the deck's own `.py` source,
+    which has no metadata slot for this."""
+    from codeslides.loader import load_deck
+
+    deck_path = tmp_path / "deck.py"
+    deck_path.write_text(_FILE_BACKED_DECK_SOURCE)
+
+    client = TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path)))
+    with client.websocket_connect("/ws?document=persist-1") as ws:
+        hello = ws.receive_json()
+        session_id = hello["session_id"]
+        ws.send_json({"type": "join", "session_id": session_id, "display_name": "Alice"})
+        ws.receive_json()  # join_ack
+        ws.send_json(
+            {
+                "type": "edit_cell",
+                "session_id": session_id,
+                "cell_id": "cell_a",
+                "source": "def cell_a():\n    a = 999\n    return a\n",
+            }
+        )
+        for _ in range(4):
+            ws.receive_json()
+        ws.send_json({"type": "save_deck", "session_id": session_id})
+        saved = ws.receive_json()
+        assert saved["type"] == "deck_saved"
+
+    sidecar_path = tmp_path / "deck.py.codeslides-attribution.json"
+    assert sidecar_path.exists()
+
+    # Simulate a full server restart: a brand-new create_app call means a
+    # brand-new Kernel and SessionRegistry, sharing nothing in memory
+    # with the one above -- the only thing connecting them is deck_path
+    # (the .py file) and, if this feature works, the sidecar.
+    restarted_client = TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path)))
+    with restarted_client.websocket_connect("/ws?document=persist-2") as ws:
+        hello = ws.receive_json()
+        session = restarted_client.app.state.registry.get(hello["session_id"])
+        assert session.instances["cell_a"].last_edited_by == "Alice"
+        assert session.instances["cell_a"].last_edited_at is not None
+
+
+def test_websocket_attribution_sidecar_merges_rather_than_overwrites(tmp_path):
+    """TODO.md #46g-v: saving cell_a's attribution must not erase
+    cell_b's already-persisted attribution from an earlier save --
+    save_attribution merges into the existing sidecar, never replaces it
+    wholesale."""
+    from codeslides.loader import load_deck
+
+    deck_source = (
+        "from codeslides import App\n\n"
+        "app = App()\n\n"
+        '@app.cell(instance="editable")\n'
+        "def cell_a():\n"
+        "    a = 1\n"
+        "    return a\n\n"
+        '@app.cell(instance="editable")\n'
+        "def cell_b():\n"
+        "    b = 2\n"
+        "    return b\n"
+    )
+    deck_path = tmp_path / "deck.py"
+    deck_path.write_text(deck_source)
+
+    client = TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path)))
+    with client.websocket_connect("/ws?document=persist-3") as ws:
+        hello = ws.receive_json()
+        session_id = hello["session_id"]
+        ws.send_json({"type": "join", "session_id": session_id, "display_name": "Alice"})
+        ws.receive_json()
+
+        ws.send_json(
+            {
+                "type": "edit_cell",
+                "session_id": session_id,
+                "cell_id": "cell_a",
+                "source": "def cell_a():\n    a = 100\n    return a\n",
+            }
+        )
+        for _ in range(4):
+            ws.receive_json()
+        ws.send_json({"type": "save_deck", "session_id": session_id})
+        ws.receive_json()
+
+        ws.send_json(
+            {
+                "type": "edit_cell",
+                "session_id": session_id,
+                "cell_id": "cell_b",
+                "source": "def cell_b():\n    b = 200\n    return b\n",
+            }
+        )
+        for _ in range(4):
+            ws.receive_json()
+        ws.send_json({"type": "save_deck", "session_id": session_id})
+        ws.receive_json()
+
+    import json
+
+    sidecar_path = tmp_path / "deck.py.codeslides-attribution.json"
+    sidecar = json.loads(sidecar_path.read_text())
+    assert sidecar["cell_a"]["last_edited_by"] == "Alice"
+    assert sidecar["cell_b"]["last_edited_by"] == "Alice"
+
+
+def test_websocket_solo_connection_never_writes_an_attribution_sidecar(tmp_path):
+    """TODO.md #46g-v: a solo (non-collaborative) connection has no
+    display_name to attribute with, so saving its edits must not create
+    an attribution sidecar file at all -- confirms this feature adds no
+    new on-disk artifact for the overwhelming majority of non-
+    collaborative usage."""
+    from codeslides.loader import load_deck
+
+    deck_path = tmp_path / "deck.py"
+    deck_path.write_text(_FILE_BACKED_DECK_SOURCE)
+
+    client = TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path)))
+    with client.websocket_connect("/ws") as ws:
+        hello = ws.receive_json()
+        session_id = hello["session_id"]
+        ws.send_json(
+            {
+                "type": "edit_cell",
+                "session_id": session_id,
+                "cell_id": "cell_a",
+                "source": "def cell_a():\n    a = 42\n    return a\n",
+            }
+        )
+        for _ in range(3):
+            ws.receive_json()
+        ws.send_json({"type": "save_deck", "session_id": session_id})
+        saved = ws.receive_json()
+        assert saved["type"] == "deck_saved"
+
+    sidecar_path = tmp_path / "deck.py.codeslides-attribution.json"
+    assert not sidecar_path.exists()

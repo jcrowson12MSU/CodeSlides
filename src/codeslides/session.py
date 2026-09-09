@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from codeslides.deck import Cell, Deck
@@ -73,6 +74,24 @@ class CellInstance:
     error: str | None = None
     collapsed: bool = False  # pure UI state (ARCHITECTURE.md section 8)
     elements: dict[str, ElementInstance] = field(default_factory=dict)
+    # TODO.md #46g-iii: who last made a structural/content change to this
+    # cell, on a shared document -- `None` until the first attributable
+    # edit (including for a solo, non-collaborative connection, which has
+    # no identity to attribute to at all, per TODO.md #46d-ii/#46g-i:
+    # only a connection that has sent `Join` has a `display_name`).
+    # Deliberately just "who touched this last," not a full
+    # `edit_history` log (46g-iii's own "cheapest v1" scoping) --
+    # `display_name` is stored directly (denormalized), not just a
+    # `user_id`, so attribution still reads correctly after that peer
+    # disconnects and their `Peer` record is gone. `SetElementValue`
+    # (slider/input drags) deliberately never stamps this -- per the
+    # user's explicit direction, transient interactive input state isn't
+    # a "content edit" worth attributing, distinct from the separate,
+    # not-yet-implemented decision to also make such values
+    # per-connection-local rather than shared (see TODO.md's newly added
+    # item on that).
+    last_edited_by: str | None = None
+    last_edited_at: datetime | None = None
 
 
 @dataclass
@@ -218,6 +237,16 @@ class Session:
                 elements={
                     ename: ElementInstance(**vars(einst)) for ename, einst in inst.elements.items()
                 },
+                # TODO.md #46g-iii: a clone is a snapshot of *current*
+                # state (this whole method's own docstring), and
+                # attribution is part of that state same as status/
+                # output/error above -- omitting it here would silently
+                # reset "who last edited this cell" to unattributed the
+                # moment anyone clones a Session, which is exactly the
+                # kind of easy-to-miss regression a field-by-field
+                # reconstruction like this one invites.
+                last_edited_by=inst.last_edited_by,
+                last_edited_at=inst.last_edited_at,
             )
             for name, inst in self.instances.items()
         }

@@ -492,6 +492,31 @@ class CellSourceChanged:
 
 
 @dataclass
+class CellAttributionChanged:
+    """TODO.md #46g-iv: a peer made an attributable change (per
+    `ws_handler.ATTRIBUTABLE_MESSAGE_TYPES`) to `cell_id` -- sent to
+    sender and peers alike (same "everyone converges on the same
+    resulting state" default `cell_status`/`cell_output`/
+    `cell_source_changed` already use), alongside whichever reply the
+    triggering message's own handler already produces. A dedicated
+    message rather than adding fields to `CellSourceChanged` (EditCell
+    only) or any one structural-edit reply, since 14 differently-shaped
+    message types can trigger attribution (RenameCell, SetHideCode,
+    AddElement, etc.) and none of their existing replies is a natural
+    place to bolt "who did this" onto uniformly. `last_edited_at` is an
+    ISO 8601 string (`datetime.isoformat()`), not a raw `datetime` --
+    JSON has no native datetime type, and the frontend only ever displays
+    it, never computes with it, so a plain string round-trips cleanly
+    with no client-side parsing needed."""
+
+    type: ClassVar[str] = "cell_attribution_changed"
+    session_id: str
+    cell_id: str
+    last_edited_by: str
+    last_edited_at: str
+
+
+@dataclass
 class ElementOutput:
     """A viewer element (turtle_canvas/image/iframe/notes) received new
     content from its owning cell's execution (ARCHITECTURE.md section 3a).
@@ -949,6 +974,7 @@ ServerMessage = (
     CellStatus
     | CellOutput
     | CellSourceChanged
+    | CellAttributionChanged
     | ElementOutput
     | GraphUpdated
     | SessionCloned

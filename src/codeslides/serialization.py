@@ -15,6 +15,7 @@ byte-identical.
 from __future__ import annotations
 
 import ast
+import json
 import textwrap
 from collections.abc import Callable
 from pathlib import Path
@@ -798,6 +799,56 @@ def save_edits(deck_path: str, source_overrides: dict[str, str]) -> None:
         ) from exc
 
     path.write_text(updated)
+
+
+def attribution_sidecar_path(deck_path: str) -> Path:
+    """TODO.md #46g-v: where a deck's persisted per-cell attribution
+    (`last_edited_by`/`last_edited_at`, TODO.md #46g-iii) lives on disk --
+    a small sidecar JSON file next to the deck's own `.py` file, not
+    embedded in it. A sidecar (not trailing comment metadata inside the
+    `.py` file itself) was the explicit choice: attribution is
+    incidental collaboration metadata, not part of the lesson's actual
+    code, and keeping it out of the `.py` file means it never shows up
+    as noise in a diff/review of the lesson content itself, and a
+    hand-written or already-existing deck file never needs touching to
+    gain this. `<deck>.py` -> `<deck>.py.codeslides-attribution.json`,
+    analogous to how a `.gitignore`d lockfile or cache sits next to the
+    file it's about without being part of it."""
+    return Path(deck_path).with_suffix(Path(deck_path).suffix + ".codeslides-attribution.json")
+
+
+def load_attribution(deck_path: str) -> dict[str, dict[str, str]]:
+    """TODO.md #46g-v: read a deck's sidecar attribution file, if one
+    exists -- `{cell_name: {"last_edited_by": str, "last_edited_at":
+    iso8601 str}}`. Returns `{}` (not an error) if the sidecar doesn't
+    exist yet (a deck nobody has ever saved with attribution before, or a
+    solo-only deck that's never had a `display_name`-carrying edit to
+    record) or if it exists but isn't valid JSON (a hand-edited or
+    corrupted sidecar must not prevent the deck itself from loading --
+    attribution is incidental metadata, never load-bearing for the
+    lesson's actual code)."""
+    path = attribution_sidecar_path(deck_path)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def save_attribution(deck_path: str, attribution: dict[str, dict[str, str]]) -> None:
+    """TODO.md #46g-v: write a deck's sidecar attribution file, merging
+    `attribution` (cells actually saved in *this* `save_deck`, per
+    `ws_handler.py`'s `SaveDeck` handler) into whatever the sidecar
+    already holds for other cells -- a `save_deck` that only touches some
+    cells must not erase another cell's previously-persisted attribution
+    by overwriting the whole file with a partial update."""
+    existing = load_attribution(deck_path)
+    existing.update(attribution)
+    attribution_sidecar_path(deck_path).write_text(json.dumps(existing, indent=2, sort_keys=True) + "\n")
 
 
 def _slide_cells_spans(source: str) -> list[tuple[int, int, int, int, list[str]]]:

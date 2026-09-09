@@ -1080,6 +1080,22 @@ export function Cell({
           <h3>{cellId}</h3>
           {state && <span className={`cs-status cs-status-${state.status}`}>{state.status}</span>}
           {meta.instance === 'static' && <span className="cs-badge-static">read-only</span>}
+          {/* TODO.md #46g-iv: minimum viable attribution -- a plain
+              "last edited by X" label, `null` (rendered as nothing)
+              until the first attributable edit on a shared document, or
+              always for a solo connection (never has an identity to
+              attribute with). Matching this to the editor's live
+              presence color (46d-ii) is the sub-task's own explicitly
+              named stretch goal, not done here: `last_edited_by` is a
+              plain name string, not a connection_id, and the peer who
+              made a past edit may have since disconnected (attribution
+              deliberately outlives the connection, per 46g-iii), so
+              there's often no live color to match against anyway. */}
+          {state?.lastEditedBy && (
+            <span className="cs-last-edited-by" title={state.lastEditedAt ?? undefined}>
+              last edited by {state.lastEditedBy}
+            </span>
+          )}
           {collapsed && <span className="cs-collapsed-preview">{firstLine(meta.source)}</span>}
           {!collapsed && (
             <button

@@ -304,6 +304,15 @@ button.cs-save-button {
   padding: 0 0.35rem;
 }
 
+/* TODO.md #46g-iv: minimum-viable attribution label in the cell header --
+   plain, low-emphasis text, not a badge, since this is informational
+   rather than a status the user needs to act on. */
+.cs-last-edited-by {
+  font-size: var(--cs-font-sm);
+  color: #999;
+  font-style: italic;
+}
+
 /* TODO.md #29: `align-items: stretch` (was `flex-start`) so the left
    and right columns always match each other's own natural height,
    rather than each capping independently -- previously a fixed

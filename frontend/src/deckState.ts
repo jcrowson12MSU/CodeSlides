@@ -35,6 +35,17 @@ export interface CellState {
   // its own separate always-visible result box).
   error: string | null
   elementContent: Record<string, unknown>
+  // TODO.md #46g-iv: who last made an attributable change to this cell
+  // on a shared document (server.py's ATTRIBUTABLE_MESSAGE_TYPES --
+  // EditCell, RenameCell, SetHideCode, etc., deliberately excluding a
+  // slider/input drag), and when -- both `null` until the first such
+  // edit, which is also what a solo (non-collaborative) connection
+  // always sees, since it never has a joined identity to attribute
+  // with. `lastEditedAt` is the ISO 8601 string the server already
+  // sends (protocol.py's CellAttributionChanged), not a parsed Date --
+  // this is only ever displayed, never computed with.
+  lastEditedBy: string | null
+  lastEditedAt: string | null
 }
 
 export type DeckState = Record<string, CellState>
@@ -46,6 +57,8 @@ const EMPTY_CELL: CellState = {
   data: undefined,
   error: null,
   elementContent: {},
+  lastEditedBy: null,
+  lastEditedAt: null,
 }
 
 export function reduceDeckState(messages: ServerMessage[]): DeckState {
@@ -70,6 +83,13 @@ export function reduceDeckState(messages: ServerMessage[]): DeckState {
           kind: message.output.kind,
           data: message.output.data,
           error: message.error,
+        }
+        break
+      case 'cell_attribution_changed':
+        state[message.cell_id] = {
+          ...cellFor(message.cell_id),
+          lastEditedBy: message.last_edited_by,
+          lastEditedAt: message.last_edited_at,
         }
         break
       case 'element_output': {
