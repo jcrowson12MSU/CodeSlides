@@ -4264,3 +4264,10 @@ reshape the plan below and are called out explicitly where they apply:
     (e.g. "Bob is exploring live_demo") at all, or is it invisible to
     everyone else by design, matching "never touches the server"
     literally?
+
+- [ ] **65/66. Push/pull-request style collaborative editing + a
+  collapsible chat panel** -- see `PROPOSAL_review_workflow.md` for the
+  full design writeup, open questions, and draft sub-item breakdown.
+  Not started; blocked on resolving that doc's open questions (review
+  permissions/accept semantics, preview execution, opt-in scope, chat
+  persistence/layout, etc.) before implementation begins.
