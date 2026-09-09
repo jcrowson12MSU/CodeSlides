@@ -2570,7 +2570,7 @@ reshape the plan below and are called out explicitly where they apply:
     document" error after acting, rather than never being offered the
     control at all.
 
-  - **46f. Update ARCHITECTURE.md section 9** ("what's deliberately
+  - [x] **46f. Update ARCHITECTURE.md section 9** ("what's deliberately
     deferred") once a concrete design lands, and remove or revise the
     "Session model assumes one editor per Session" language there --
     keep it in sync with whatever ships, rather than descoping this note
@@ -2578,6 +2578,37 @@ reshape the plan below and are called out explicitly where they apply:
     ARCHITECTURE.md section documenting the connection/broadcast model
     from 46a once it exists, parallel to today's section 4 ("Process &
     concurrency model") and section 5 ("Websocket protocol").
+
+    Implemented: added ARCHITECTURE.md section 5a ("Collaborative
+    editing (shared documents)"), documenting the join/broadcast/
+    conflict-resolution/concurrency/identity-presence/access-control/
+    lifecycle/security-posture design that actually shipped across
+    46a-46e, with real file/function references throughout (not
+    aspirational -- confirmed against the current code, not memory).
+    Section 9's collaborative-editing bullet is removed (it's no longer
+    deferred) and replaced with specific call-outs for what's genuinely
+    still deferred within the feature: 46d-iv's character-position
+    cursor decorations, 46b-iv's CRDT/OT merging, 46e's frontend
+    viewer-role UI (hiding controls), and 46e-iii's persistent-identity
+    punt. Section 1's core invariant ("no two Sessions ever share any
+    state") is amended with an explicit note that a shared document is a
+    different axis (multiple *connections* on one Session), not a
+    relaxation of the invariant itself, so the two don't read as
+    contradicting each other. Section 4 also picked up an unrelated
+    pre-existing correction found while updating it for this task: it
+    described a "kernel subprocess per Deck" design that was never
+    actually built (confirmed: no subprocess/multiprocessing anywhere in
+    kernel.py/server.py) -- corrected to describe the real in-process
+    `Kernel` design, and folded in 46c's atomicity finding (no `await`
+    point in the hot path is what actually provides "effectively
+    single-threaded," not any lock that exists in the code).
+
+    Also updated VISION.md (outside 46f's literal text, but the same
+    class of doc-contradicts-reality problem this task exists to avoid):
+    removed the "Planned: collaborative editing" section, which still
+    said the feature wasn't built, and folded it into a new 6th core
+    principle instead, since it's now a real, shipped capability rather
+    than a future direction.
 
   - **46g. Attribution: track and surface who made each edit.**
     Nothing today identifies *who* made a change -- confirmed by
