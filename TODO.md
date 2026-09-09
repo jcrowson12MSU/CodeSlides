@@ -2043,6 +2043,52 @@ reshape the plan below and are called out explicitly where they apply:
     websocket connections attach to the same `Session`/namespace instead
     of each getting its own, while `SessionRegistry.clone` keeps
     producing fully independent copies as it does now.
+
+    - **46a-i. Add a connection layer above `Session`.** Today
+      `server.py`'s `websocket_endpoint` (lines 118-138) does
+      `session = registry.create()` once per connection and
+      `Session.session_id` (session.py line 99, a bare
+      `uuid.uuid4().hex`) is the *only* identity in the system --
+      nothing distinguishes "this browser tab" from "this document."
+      Introduce a `Connection`/`Peer` concept (new dataclass, e.g. in
+      `ws_handler.py`) that wraps one websocket + a reference to the
+      `Session` it's attached to, so `SessionRegistry.sessions` can move
+      from `dict[session_id, Session]` to something like
+      `dict[document_id, Session]` with a separate
+      `dict[connection_id, (document_id, websocket)]` for fan-out.
+    - **46a-ii. Add server->all-peers broadcast.** `handle_message`
+      (ws_handler.py:237-972) currently returns
+      `list[ServerMessage]` that `server.py:134-136`'s `for reply in
+      handle_message(...)` sends back **only to the caller's own
+      websocket**. Collaborative mode needs a second delivery path: the
+      resulting `CellStatus`/`CellOutput`/`ElementOutput`/etc. messages
+      (protocol.py:412-747) must also reach every *other* connection
+      attached to the same shared Session. Concretely: give
+      `SessionRegistry` a `broadcast(session_id, messages, exclude=connection_id)`
+      that iterates the connections attached to that session's document
+      and calls `websocket.send_json` on each; wire `websocket_endpoint`
+      to call it instead of (or in addition to) replying only to
+      `websocket`.
+    - **46a-iii. Fix the disconnect leak before scaling up connection
+      count.** `server.py:137-138` catches `WebSocketDisconnect` and does
+      *nothing* -- confirmed no cleanup of `registry.sessions` occurs on
+      disconnect today. With one Session per tab this is a slow memory
+      leak; with N connections sharing one Session it's worse, since a
+      stale connection reference left in the fan-out list would make
+      `broadcast` keep trying (and failing) to write to a dead socket.
+      Add connection deregistration in the `except WebSocketDisconnect`
+      block, and when the *last* connection leaves a shared document
+      decide whether to keep the `Session` warm (so a reconnect resumes
+      shared state) or tear it down -- needs a policy, not just a fix.
+    - **46a-iv. Decide the URL/routing scheme for "join this document."**
+      Today `/ws` (server.py:118) takes no parameters -- every connection
+      is a brand-new isolated Session. Joining an *existing* shared
+      Session needs some addressable identifier in the connect flow
+      (e.g. `/ws?document=<id>` or a first-message "join" envelope
+      analogous to the existing `CloneSession` message,
+      protocol.py:74-84) so `registry.create()` becomes
+      `registry.create_or_join(document_id)`.
+
   - **46b. Concurrent-edit conflict resolution for cell source.** Two
     people editing the same `instance="editable"` cell's source
     simultaneously need either last-write-wins with a visible "someone
@@ -2051,6 +2097,51 @@ reshape the plan below and are called out explicitly where they apply:
     picking one. This is the "evaluate feasibility" part of the old
     item: prototype last-write-wins first since it's cheap, and only
     reach for CRDT/OT if that proves unusably lossy in practice.
+
+    - **46b-i. Prototype last-write-wins first.** `EditCell`
+      (protocol.py:24-34, wire type `"edit_cell"`) already carries the
+      full new `source` string and folds it into
+      `session.source_overrides[cell_name]` via
+      `Kernel.on_cell_edited` (kernel.py:855-918) -- this is *already*
+      whole-document replacement, so naive LWW ("last `EditCell` for a
+      given `cell_id` wins, full stop") is close to free: no protocol
+      change needed, just the broadcast wiring from 46a-ii so every
+      peer's `CodeEditor.tsx` receives the update.
+    - **46b-ii. Add a "someone else is editing" indicator**, since LWW
+      alone silently discards a concurrent edit with no signal to the
+      person who lost. Needs: (1) a lightweight "cell X is being edited
+      by user Y" presence message broadcast on editor focus (ties into
+      46d's presence plumbing -- build them together, not separately),
+      and (2) a frontend affordance in `Cell.tsx`/`CodeEditor.tsx` (e.g.
+      a colored border or name badge) shown while another peer's cursor
+      is in that cell.
+    - **46b-iii. Note the specific data-loss risk LWW has here that
+      Google Docs' character-level OT doesn't:** because
+      `CodeEditor.tsx`'s remote-update path (lines 439-449, confirmed by
+      the architecture research) applies an incoming `source` as a
+      **full-document replacement transaction**, not a patch, two people
+      typing in the same cell within the same round-trip will have one
+      of them silently lose every keystroke since their last sync, and
+      mid-replacement the cursor position/undo history for the
+      "losing" editor is destroyed too. Decide, and document, whether
+      this is acceptable for the target use case (a classroom, likely
+      one instructor + a few students rarely colliding on the exact
+      same cell) before investing in CRDT/OT -- if unacceptable,
+      evaluate `y-codemirror.next` bound to CodeMirror 6 (confirmed
+      compatible: `@codemirror/state@^6.7.1`/`@codemirror/view@^6.43.6`
+      in `frontend/package.json` are new enough), which would replace
+      whole-document `EditCell` sends with incremental Yjs update
+      messages and a new `Session`-side Yjs doc per editable cell.
+    - **46b-iv. If CRDT/OT is chosen, scope the migration explicitly**
+      as its own follow-up task rather than bolting it onto 46a -- it
+      changes the wire protocol (`EditCell`'s `source: str` field would
+      need to become or be accompanied by a binary Yjs update payload),
+      requires a Yjs doc lifecycle tied to `Session` lifetime (created
+      on first join, persisted/GC'd on last-peer-leave per 46a-iii's
+      policy), and needs a decode step before `Kernel.on_cell_edited`
+      still receives a plain string (Yjs's CRDT state, not the
+      resolved text, is what's actually synced).
+
   - **46c. Concurrent execution semantics.** If two editors' changes to
     different cells both trigger re-runs against the *same* namespace,
     define run ordering and what happens when two overlapping
@@ -2058,19 +2149,181 @@ reshape the plan below and are called out explicitly where they apply:
     last-one-wins per affected cell) -- today's `Kernel.run_all` /
     `on_cell_edited` assume one caller at a time against a given
     `Session`.
+
+    - **46c-i. Add the mutual-exclusion primitive that doesn't exist
+      today.** Confirmed: `kernel.py` has no `asyncio.Lock`, no
+      `threading.Lock`, no queue anywhere -- single-caller safety today
+      is an accident of `server.py:129`'s `await websocket.receive_json()`
+      processing one message at a time *per connection*, which
+      guarantees nothing once a second connection can call
+      `on_cell_edited`/`on_element_changed`/`run_all` against the same
+      `session.namespace` concurrently. Add an `asyncio.Lock` (one per
+      shared `Session`, held for the duration of a full
+      edit-then-rerun pass) so `Kernel`'s mutating methods stay
+      effectively single-threaded per document even with N connections
+      calling in.
+    - **46c-ii. Define the queue-vs-coalesce policy explicitly**, since
+      a lock alone only prevents corruption, not confusing behavior:
+      if student A edits `cell_1` and student B edits `cell_2`
+      (independent, non-overlapping rerun sets) within the same
+      lock-held window, both should probably run back-to-back (queue);
+      if both edit the *same* cell before either rerun completes, running
+      the first edit's stale source is wasted work -- consider
+      coalescing to "only the latest queued edit per cell_id survives"
+      before executing, rather than running every intermediate
+      keystroke's edit in sequence.
+    - **46c-iii. Decide what happens to a rerun already in flight when a
+      newer edit to one of its *dependency* cells arrives mid-run** --
+      today's single-connection model can't have this race at all since
+      the browser tab that would send the second edit is blocked
+      waiting for the first `CellStatus`/`CellOutput` replies; with
+      concurrent connections this becomes possible and needs an explicit
+      answer (abort and restart the affected subgraph, or let it finish
+      and immediately re-trigger).
+    - **46c-iv. Add a regression test exercising this directly**,
+      mirroring the existing clone-isolation regression test called out
+      in TODO.md #45 -- two simulated concurrent `on_cell_edited`
+      calls (or two `TestClient.websocket_connect` sessions attached to
+      the same document, per the real end-to-end style already used in
+      `tests/test_server_ws.py`) against overlapping dependency sets,
+      asserting the final `session.namespace` matches one of the two
+      well-defined orderings decided in 46c-ii, never a torn/partial
+      state.
+
   - **46d. Presence UI.** Show which students/instructor are connected to
     a shared document and (ideally) a cursor/selection indicator per
     editor in the CodeMirror instance, similar to Google Docs' colored
     cursors.
+
+    - **46d-i. Add a presence protocol message pair**, since none exists
+      today (confirmed: no message in `protocol.py`'s `ClientMessage`/
+      `ServerMessage` unions carries cursor/focus/user info) -- e.g.
+      `SetPresence` (client->server: `session_id, cell_id?,
+      cursor_pos?`) sent on `CodeEditor.tsx` focus/selection change
+      (parallel to the existing `updateListener` at lines 398-401, which
+      already fires on every doc change and could gain a selection-change
+      sibling), and `PresenceUpdate` (server->client, broadcast via
+      46a-ii: `connection_id/user_id, display_name, color, cell_id?,
+      cursor_pos?`) fanned out to every other peer on the document.
+    - **46d-ii. Assign each connected peer a stable display identity +
+      color** for the lifetime of the connection (ties directly into
+      46g's attribution identity -- build one identity concept and reuse
+      it for both presence coloring and edit attribution, don't invent
+      two). A simple deterministic color-from-id hash is enough for v1;
+      Google Docs-style user-choice avatar colors can come later.
+    - **46d-iii. Render a connected-peers list** (e.g. a small avatar/name
+      row in `App.tsx`'s toolbar area) reacting to `PresenceUpdate`
+      messages, independent of the harder per-cursor decoration work.
+    - **46d-iv. Render in-editor cursor/selection decorations per remote
+      peer** in `CodeEditor.tsx` using CodeMirror 6's decoration API
+      (`EditorView.decorations` / a `StateField` holding remote cursor
+      positions) -- this is the hardest part of 46d and can ship after
+      46d-iii; a text-only "Jane is editing this cell" banner (reusing
+      46b-ii's indicator) is an acceptable intermediate step if
+      real-time cursor rendering slips.
+
   - **46e. Access control for who can join a shared document.** At
     minimum a shareable session link; consider read-only "viewer" vs.
     "editor" roles for students watching an instructor live-edit
     without being able to edit themselves.
+
+    - **46e-i. Add the join-link mechanism** built on top of 46a-iv's
+      routing decision -- e.g. `codeslides present --collaborative
+      lesson.py` prints a URL containing the document id, since there is
+      no existing auth/identity system to gate this any other way today
+      (confirmed: no login flow, no cookies, no headers checked anywhere
+      in `server.py`).
+    - **46e-ii. Add a role field to the join flow** (`"editor"` vs.
+      `"viewer"`), stored per-connection (alongside the identity from
+      46g), and enforce it server-side in `handle_message` -- a viewer's
+      `EditCell`/`SetElementValue`/etc. messages should be rejected with
+      an `ErrorMessage` (the existing fallback pattern at
+      ws_handler.py:972) rather than trusting the frontend to simply not
+      render edit controls, since a viewer could otherwise hand-craft
+      websocket messages.
+    - **46e-iii. Decide session-link security posture** -- an
+      unguessable-but-unauthenticated URL (like a Google Docs "anyone
+      with the link" share) is the minimum viable option and matches
+      this project's total absence of auth infrastructure today; explicitly
+      punt on real accounts/login for v1 unless a concrete need for
+      persistent per-student identity across sessions (e.g. gradebook
+      integration) emerges later.
+
   - **46f. Update ARCHITECTURE.md section 9** ("what's deliberately
     deferred") once a concrete design lands, and remove or revise the
     "Session model assumes one editor per Session" language there --
     keep it in sync with whatever ships, rather than descoping this note
-    but leaving the architecture doc contradicting it.
+    but leaving the architecture doc contradicting it. Also add a new
+    ARCHITECTURE.md section documenting the connection/broadcast model
+    from 46a once it exists, parallel to today's section 4 ("Process &
+    concurrency model") and section 5 ("Websocket protocol").
+
+  - **46g. Attribution: track and surface who made each edit.**
+    Nothing today identifies *who* made a change -- confirmed by
+    exhaustive search: no `user_id`/`author`/`username`/`identity`/auth
+    concept exists anywhere in `src/` or `frontend/src/`, and no
+    protocol message (`EditCell` included, protocol.py:24-34) carries
+    any field beyond `session_id`/`cell_id`. This has to be built from
+    scratch, not extended from an existing stub.
+
+    - **46g-i. Introduce a lightweight identity concept**, minimal for a
+      classroom setting with no real auth (per 46e-iii): on joining a
+      shared document, a connection supplies a display name (typed in a
+      join-screen prompt, e.g. "Enter your name to join") which the
+      server assigns a `user_id` (a fresh UUID, same pattern as
+      `Session.session_id` at session.py:99) plus the color from
+      46d-ii. Persist this pairing in the new `Connection`/`Peer`
+      object from 46a-i for the life of the connection; regenerate a
+      fresh one on reconnect for v1 (no durable accounts) unless 46e-iii
+      later decides persistent identity is needed.
+    - **46g-ii. Add `user_id` (and a denormalized `display_name`, so
+      history survives a peer disconnecting) to every mutating client
+      message that should carry attribution** -- at minimum `EditCell`,
+      `SetElementValue`, `SetUiState`, `SetTestSource`, `AddCell`,
+      `RemoveCell`, `RenameCell`, and the other structural-edit messages
+      enumerated in ws_handler.py's dispatch chain (lines 242-929).
+      Populate it in `useCodeSlidesSocket.ts`'s `send()` (currently a
+      bare `JSON.stringify`/`socket.send`, per the architecture
+      research) by threading the joined identity from 46g-i into every
+      outgoing message, rather than trusting the server to infer it
+      from the connection (still validate/stamp server-side too, so a
+      malicious client can't spoof another user's `user_id`).
+    - **46g-iii. Extend `Session`/`CellInstance` to record per-cell edit
+      history**, not just current state -- `CellInstance` (session.py:
+      67-75) today holds only `status`/`output`/`error`/`collapsed`/
+      `elements`, no history at all. Add something like
+      `last_edited_by: str | None` and `last_edited_at: datetime | None`
+      fields (cheapest v1: just "who touched this last", not a full
+      log), extended later to `edit_history: list[EditRecord]` if a full
+      audit trail is wanted. Populate it inside `Kernel.on_cell_edited`
+      (kernel.py:855-918) and the other mutating `Kernel` methods listed
+      in 46g-ii, alongside their existing `session.source_overrides`/
+      `session.instances` writes.
+    - **46g-iv. Surface attribution in the frontend.** Minimum: a
+      "last edited by <name>" label near a cell's editor (`Cell.tsx`),
+      reusing the color from 46d-ii so it visually matches that peer's
+      presence indicator/cursor. Stretch: a per-cell edit history panel
+      if 46g-iii's fuller `edit_history` is built.
+    - **46g-v. Decide whether attribution survives a `SaveDeck`
+      (protocol.py:113-124) to disk.** Today's persisted format is a
+      plain `.py` file (`session.source_overrides` written back via
+      `save_edits`, per TODO.md #47's description) with no metadata
+      slot for "who wrote this line" -- attribution as scoped in 46g-iii
+      is Session-lifetime-only (lost on server restart, consistent with
+      ARCHITECTURE.md section 9's existing "Persisting Session state
+      across server restarts" non-goal) unless this sub-task explicitly
+      extends the on-disk format (e.g. a sidecar `.codeslides-history`
+      file or trailing comment metadata) to persist it -- don't silently
+      let attribution disappear on save without an explicit decision
+      either way.
+    - **46g-vi. Add a regression test for attribution correctness**,
+      analogous to 46c-iv: two simulated peers editing different cells
+      of the same shared document, asserting each cell's recorded
+      `last_edited_by` matches the peer that actually sent that
+      `EditCell`, including the case where peer A's edit is the one
+      discarded by 46b's last-write-wins policy (make sure the
+      *surviving* edit's attribution is the one that ends up displayed,
+      not a stale one from the loser).
 
 - [x] **47. Persist a `tests` element's edited source when Save is clicked -- it currently only lives in memory.**
   Discovered while fixing #43: unlike a code edit or a notes edit (both
