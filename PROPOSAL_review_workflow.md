@@ -1,11 +1,10 @@
 # Proposal: Push/pull-request style collaboration + collapsible chat panel
 
-Status: **draft, needs clarification before implementation** (see the
-"Open questions" section at the end of each part, and the summary list at
-the very bottom). Nothing described here has been built. This document is
-meant to become a new numbered section of `TODO.md` once the open
-questions are resolved — see the "Proposed TODO items" section for the
-draft item list to fold in there.
+Status: **design decided, not yet implemented.** Every open question
+below has been answered (inline, marked **Decision:**) and folded into
+`TODO.md` #65/#66. Nothing described here has been built yet — this
+document is the design record those TODO items point back to, the same
+role `ARCHITECTURE.md` §5a plays for #46a–#46g.
 
 ## 0. Why this is a bigger change than it sounds
 
@@ -92,91 +91,69 @@ cell, similar to today's presence cursor bar) and can:
 - **Reject** (or just ignore) — the proposal stays pending (or is
   explicitly dismissed) and the accepted source is untouched.
 
-### 1.3 Open questions — model semantics
+### 1.3 Model semantics — decided
 
-These need answers before implementation, because each answer changes
-the data model and the protocol:
+1. **Who can accept a push?** **Decision: any editor-role peer**, fully
+   symmetric — no new reviewer/owner/instructor role. Nothing in the
+   original request calls for a distinct approver role, and this
+   codebase has exactly one permission axis today (`editor`/`viewer`,
+   `ws_handler.VIEWER_ALLOWED_MESSAGE_TYPES`); inventing a second one
+   (who assigns it? a new query param? first-connection-wins?) is
+   unrequested scope. Revisit only if real classroom use shows students
+   accepting each other's pushes causes problems an instructor-only gate
+   would fix.
+2. **Consent count to accept?** **Decision: any single peer's accept
+   merges it for everyone** — matches "other people could see what's
+   been pushed and accept the changes that they want" read literally,
+   and there's exactly one shared Session/namespace to merge into, so
+   multi-party consent has no natural home (whose "vote" would even be
+   authoritative, with no reviewer role per #1?).
+3. **Stale proposal when the base moved on first?** **Decision: flag it
+   as conflicting, don't silently discard or auto-rebase.** The proposer
+   keeps their pending proposal; the UI marks it "base changed since you
+   proposed this" and lets them re-diff against the new accepted source
+   and re-push (or withdraw) rather than losing work silently. Silent
+   discard would be a worse experience than today's already-accepted
+   last-write-wins, since a review step exists specifically to make
+   changes deliberate — losing one without telling anyone would
+   undermine the entire point of the feature.
+4. **Does a pending proposal ever execute?** **Decision: (a), no preview
+   execution for v1** — reviewers see a text diff only, never proposed
+   output, until they accept. Simplest, cheapest, and matches "propose
+   text, not behavior." Options (b)/(c) (`Session.clone()`-based preview)
+   are real, valuable follow-ups but add real lifecycle complexity
+   (stale clones, re-sync-on-diverge) not justified until diff-only
+   proves insufficient in practice.
+5. **Opt-in scope?** **Decision: (ii), a document-level opt-in flag** —
+   `codeslides edit|present --collaborative` gets a sibling flag (e.g.
+   `--review-mode`), off by default, that switches *that document's*
+   pushes from immediate-broadcast to propose/accept. Not a wholesale
+   replacement (today's always-live default keeps working for existing
+   users/decks unchanged) and not per-cell (option iii is materially
+   more complex — mixed-mode cells on one document — for a distinction
+   nobody has asked for yet).
+6. **Batching?** **Decision: per-cell only**, no multi-cell batched
+   pushes. Matches this codebase's existing per-cell granularity
+   everywhere (`EditCell`, `source_overrides`, attribution, etc.);
+   batching would need a new grouping concept invented from scratch for
+   a use case not in the original request.
+7. **Structural edits (add/remove/reorder cell, add/remove element,
+   rename, etc.)?** **Decision: stay immediate/shared, outside the
+   review flow.** The request specifically says "push a **cell**... when
+   they are ready," which reads as cell *source* content, not deck
+   structure. Structural edits are coarser and rarer than content edits;
+   routing them through review too would be a much larger change
+   (concurrent structural proposals — e.g. two people both proposing a
+   rename — have no analogue in the current per-cell model at all) for
+   a case not asked for.
+8. **Element values (sliders/text inputs)?** **Confirmed: out of
+   scope**, unaffected by this proposal, governed entirely by `TODO.md`
+   #63's separate (also not-yet-decided) per-connection-local question.
 
-1. **Who can accept a push — anyone, or only specific roles?** Today's
-   only role distinction is `editor` vs `viewer`
-   (`ws_handler.VIEWER_ALLOWED_MESSAGE_TYPES`). Is "accept" available to
-   any editor-role peer (fully symmetric, like a shared Google Doc), or
-   does this introduce a new notion of reviewer/owner/instructor that
-   doesn't exist anywhere in the current permission model? If the latter,
-   how is that role assigned (another URL parameter like `?role=`, a
-   first-connection-becomes-owner rule, something else)?
-2. **Does accepting require unanimous/any-one consent, or a specific
-   count?** "Other people could see what's been pushed and accept the
-   changes that they want" reads like *any single peer* accepting is
-   enough to merge it in for everyone (since there's only one shared
-   Session/namespace to merge into) — is that right, or should it take
-   e.g. all-other-peers agreement first?
-3. **What happens to a pending proposal for cell X while accepted-X
-   changes underneath it** (someone else's push to the same cell got
-   accepted first)? Does the older proposal get silently rebased/
-   discarded, flagged as conflicting, or does the proposer see a merge
-   conflict UI? (This is the multi-cell analogue of today's
-   already-accepted last-write-wins tradeoff, but now with a visible
-   staging step, so simply discarding might feel worse than today's
-   "silently overwritten" behavior, not better — worth being deliberate
-   about.)
-4. **Does a pending (not-yet-accepted) proposal ever execute at all?**
-   Three real options, each with different complexity:
-   - **(a) No preview execution** — reviewers only ever see a text diff
-     of the proposed source vs. current source, never its output, until
-     accepted. Simplest, cheapest, matches "propose text, not behavior."
-   - **(b) Local-only preview execution** — accepting connection can
-     click "preview" to run the proposed source *against a clone of the
-     current Session* (a `Session.clone()` already exists for exactly
-     this kind of isolated what-if execution) and see the output before
-     deciding, without affecting the shared Session or other peers.
-     More useful, but real added complexity (temporary clone lifecycle,
-     what happens if the clone's namespace has since diverged from the
-     accepted namespace by the time you click Accept).
-   - **(c) Speculative execution visible only to the proposer** — the
-     proposer sees their own draft's live output as they type (using
-     their own private clone), closer to "editing your own copy," while
-     everyone else still only sees the last *accepted* state. This is
-     probably the most intuitive from a UX standpoint but is the most
-     implementation work (a private Session-clone per in-progress draft,
-     kept in sync with upstream accepted changes somehow).
-5. **Should this be opt-in per document, or replace the current
-   always-live model entirely?** The request says "create a branch where
-   the collaboration works more like push and pull requests" — does that
-   mean: (i) a wholesale replacement of today's model, (ii) a new mode
-   selected at document-creation time (`--collaborative` gets a
-   sibling flag, e.g. `--review-mode`), or (iii) a per-cell setting
-   (some cells stay always-live, e.g. instructor-authored scaffolding;
-   others require review, e.g. student exercise cells)? This materially
-   changes scope — (iii) in particular is a much larger feature than
-   (i) or (ii).
-6. **Does "push" operate per-cell only, or can someone stage and push a
-   batch of several cells at once** (a single logical change spanning
-   multiple cells, like a git commit touching several files)? Per-cell
-   is far simpler and matches this codebase's existing per-cell
-   granularity everywhere else (`EditCell`, `source_overrides`, etc.);
-   batching would need a new grouping concept with no current analogue.
-7. **What about non-source-code changes** — structural edits like add/
-   remove cell, add/remove element, reorder cells, rename cell
-   (`AddCell`/`RemoveCell`/`ReorderCells`/`RenameCell`/etc., all
-   currently take effect immediately like a code edit does)? Are those
-   part of the push/review flow too, or do they stay immediate/shared
-   as they are today (only *cell source* goes through review)? The
-   original ask says "push a cell when they are ready," which reads as
-   scoped to cell source specifically, but this needs to be explicit
-   since it's a real scope boundary.
-8. **What about element values** (`SetElementValue` — slider positions,
-   text-input contents)? These are already a separate, explicitly
-   deferred question (`TODO.md` #63) about whether they should even be
-   shared at all on a collaborative document. Confirming: element values
-   are **out of scope** for this proposal and continue to behave exactly
-   as they do today (or as #63 eventually decides) — correct?
+### 1.4 Protocol sketch
 
-### 1.4 Protocol sketch (subject to the answers above)
-
-New message types (`protocol.py`), assuming per-cell text-only review
-(the simplest reading of the ask) and no preview execution (option 4a
-above) as the default starting point:
+New message types (`protocol.py`), reflecting the decisions above
+(per-cell, text-diff-only review, any-editor-can-accept):
 
 - `PushCell { cell_id, source }` (client -> server): stage a proposal,
   replacing the sender's own prior pending proposal for that cell, if any.
@@ -195,12 +172,20 @@ above) as the default starting point:
   `cell_source_changed`): the cell's new accepted source + re-run
   results, exactly like today's post-edit broadcast, plus which proposal
   (and whose) was just merged.
-- `RejectProposal { cell_id, proposer_user_id }` (client -> server,
-  optional depending on whether "reject" is even a first-class action vs.
-  just "don't accept it").
+- `RejectProposal { cell_id, proposer_user_id }` (client -> server):
+  explicit dismissal, distinct from just ignoring a proposal — clears it
+  from the pending list and notifies the proposer (`ProposalRejected`,
+  `SenderOnly` to the proposer) rather than leaving it lingering
+  indefinitely with no signal either way.
+- `ProposalConflict` (broadcast, `SenderOnly` to the proposer): sent
+  instead of clearing their proposal when the accepted source for that
+  cell changed since they proposed (decision #3 above) — carries the new
+  accepted source so their client can re-diff.
 
-This list is a starting sketch to make the scope concrete, not a final
-API — it will need revision once the open questions above are answered.
+Also gated behind decision #5's document-level flag: a document created
+in review mode reports it in `SessionCreated`/on join (a `review_mode:
+bool` field), so the frontend knows whether "Push" or "Save" is the
+right affordance for a given cell without guessing from other state.
 
 ## 2. Chat panel
 
@@ -240,113 +225,72 @@ execution/reactivity model. Concretely:
   behavior" default.
 - Since a **viewer**-role connection is currently restricted to a strict
   allowlist of message types (`VIEWER_ALLOWED_MESSAGE_TYPES = (Join,
-  SetPresence)`), a decision is needed: can a `viewer` send chat
-  messages at all, or only read them? (Sending seems reasonable — chat
-  isn't a document mutation — but it's a deliberate addition to that
-  allowlist either way, worth calling out explicitly rather than
-  quietly falling out of some other change.)
+  SetPresence)`), **decision: add `SendChatMessage` to that allowlist** —
+  a viewer can send chat, since chat is not a document mutation and
+  excluding a read-only visitor from a conversation about what they're
+  viewing would be an odd, unrequested restriction.
 
-### 2.2 Open questions — chat panel
+### 2.2 Chat panel — decided
 
-1. **Persistence**: in-memory-only (gone when the Session's grace period
-   expires / server restarts) or sidecar-persisted? Leaning towards
-   asking rather than assuming, since the two options have very
-   different implementation cost and different user expectations
-   ("did my chat history survive a refresh three days later?").
-2. **Scope**: one chat stream per shared document (matches "the
-   document" being the unit of collaboration everywhere else in this
-   codebase), or could there ever be per-cell threads? Assuming
-   single document-wide stream unless told otherwise — much simpler and
-   matches the "lives in the corner, not attached to any one cell" framing
-   of the request.
-3. **Does a solo (non-collaborative, no `?document=`) connection get a
-   chat panel at all?** Presumably not — there's nobody to chat with,
-   same reasoning the join-screen/presence UI is gated on `isViewer`/
-   `documentId` today. Assuming: chat panel only renders when a
-   `documentId` is present, same gate as `PeerList`.
-4. **Any moderation/deletion capability**, or is chat strictly
-   append-only for v1 (matching how nothing else in this codebase
-   supports deleting/editing a past action)? Assuming append-only unless
-   told otherwise.
-5. **Layout mechanics when expanded**: does it overlay on top of the
-   existing right-side element-tabs panel (`TODO.md` #56), sit beside it
-   in a third column, or replace it while expanded? The request says
-   "to the right of the cells," which is compatible with either "instead
-   of the tabs panel" or "a new column further right than the tabs
-   panel" — worth confirming which, since today's layout is
-   cells-column + tabs-column with no third column anywhere.
+1. **Persistence?** **Decision: in-memory only for v1** — lives on the
+   `Session` and is gone when its grace period expires or the server
+   restarts, same lifetime as everything else a `Session` holds today
+   (`ARCHITECTURE.md` §9's "Sessions are in-memory"). No existing
+   precedent in this codebase persists anything this ephemeral other
+   than attribution (which is about *code*, a fundamentally durable
+   artifact); sidecar persistence is a reasonable future addition if
+   real use shows people wanting chat history to survive a restart, but
+   isn't justified up front.
+2. **Scope?** **Decision: one chat stream per shared document** — no
+   per-cell threads. Matches "the document" as the unit of collaboration
+   everywhere else in this codebase, and the request's own framing
+   ("lives in the lower-right corner," not attached to any one cell).
+3. **Solo connections?** **Decision: no chat panel without a
+   `documentId`** — same gate `PeerList`/the join-screen already use;
+   there's nobody to chat with on a solo connection.
+4. **Moderation/deletion?** **Decision: append-only for v1** — no
+   edit/delete. Matches how nothing else in this codebase supports
+   mutating a past action once broadcast (an accepted cell edit, a
+   presence update, etc. are all similarly append-only in spirit); add
+   deletion later only if abuse/mistakes in real use call for it.
+5. **Layout when expanded?** **Decision: a third column, alongside the
+   existing right-side element-tabs panel (`TODO.md` #56), not
+   replacing it.** Today's layout is cells-column + tabs-column; adding
+   chat as a further right-hand column keeps both simultaneously
+   available (a common real scenario: reading a peer's chat message
+   while still looking at a `notes`/`image` tab) rather than forcing a
+   choice between them. Collapsed, it's just the corner affordance and
+   costs no layout space either way.
 
-## 3. Interaction between the two features
+## 3. Interaction between the two features — decided
 
-Worth deciding explicitly rather than assuming: does a `PushCell`/
-`AcceptProposal` action get announced in chat automatically (a small
-system message, e.g. "Alice pushed a change to `live_demo`"), the way
-some code-review tools post bot comments for status changes? Not
-required for either feature to work independently, but it's a natural
-connector between them if wanted.
+**Decision: yes**, a `PushCell`/`AcceptProposal`/`RejectProposal` posts
+an automatic system message into that document's chat stream (e.g.
+"Alice pushed a change to `live_demo`", "Bob accepted Alice's change to
+`live_demo`") — rendered visually distinct from a person's own message
+(e.g. no color/avatar, centered/muted styling), the same convention most
+code-review and chat tools use for bot/status events. Low implementation
+cost (the server already knows exactly when these events happen; it's
+just also appending a `ChatMessageReceived` at that moment) and directly
+useful for exactly the classroom/async scenario motivating this whole
+feature: someone catching up on a document later can see both the
+conversation and what got pushed/accepted in one place, without having
+to separately notice the cell's own attribution.
 
-## Proposed TODO items (draft numbering — to be inserted into `TODO.md`
-once the open questions above are resolved; numbers are placeholders)
+## TODO items (see `TODO.md` #65/#66 for the authoritative, current
+sub-item breakdown — this section is a design-level summary, not the
+task list itself)
 
-- [ ] **65. Design and implement push/review-based collaborative editing
-  (cell-level "propose then accept" workflow), as an alternative or
-  addition to today's always-live shared-document model.**
-  - 65-i. Resolve the open model questions in Part 1.3 above (review
-    permissions, accept semantics, preview execution, opt-in scope,
-    batching, structural-edit scope, element-value scope).
-  - 65-ii. Extend `CellInstance`/`Session` to hold pending proposals
-    alongside the accepted source (Part 1.1).
-  - 65-iii. New protocol messages for push/accept/reject/withdraw (Part
-    1.4), plus server-side handling in `ws_handler.py`/`kernel.py`.
-  - 65-iv. Frontend: local per-connection draft state for a cell (not
-    sent until pushed), a "Push" action, a proposal indicator/diff view,
-    and Accept/Reject controls for reviewers.
-  - 65-v. Decide and implement conflict handling for a proposal whose
-    base has moved on by the time it's reviewed (Part 1.3.3).
-  - 65-vi. Update `ARCHITECTURE.md` §5a (or add a §5b) documenting the
-    shipped design, per this project's own convention of writing up what
-    landed, not just what was planned.
-- [ ] **66. Add a collapsible chat panel for shared documents (lower-right
-  corner collapsed, full-height right-side column when expanded).**
-  - 66-i. Resolve the open questions in Part 2.2 (persistence, scope,
-    solo-connection gating, moderation, layout mechanics relative to the
-    existing element-tabs panel).
-  - 66-ii. New protocol messages (`SendChatMessage`/
-    `ChatMessageReceived`) and server-side broadcast handling, including
-    the `VIEWER_ALLOWED_MESSAGE_TYPES` allowlist decision.
-  - 66-iii. Frontend chat panel component: collapsed corner affordance,
-    expand/collapse animation, full-height layout when expanded,
-    message list + input, presence-style color/name reuse from
-    `presenceState.ts`.
-  - 66-iv. If persisted (per 66-i's decision): sidecar file format and
-    load/save wiring, mirroring `serialization.py`'s attribution sidecar
-    precedent.
+- **65. Push/review-based collaborative editing**: a document-level
+  opt-in (`--review-mode`), per-cell only, text-diff-only review (no
+  preview execution for v1), any editor can accept, stale proposals are
+  flagged rather than discarded, structural edits and element values
+  stay out of scope.
+- **66. Collapsible chat panel**: one document-wide stream, in-memory
+  only, append-only, gated on `documentId` (no chat for solo sessions),
+  rendered as a third column alongside the existing element-tabs panel
+  when expanded, viewers can send messages, and push/accept/reject
+  actions post automatic system messages into it.
 
-## Summary of everything that needs an answer before implementation
-
-1. Who can accept a pushed proposal — any peer, or a distinct
-   reviewer/owner role?
-2. Does accepting require just one peer's approval, or more?
-3. What happens to a proposal that's now stale because the cell's
-   accepted source moved on first — discard, flag conflict, or something
-   else?
-4. Does a pending proposal ever execute (no preview / reviewer-triggered
-   clone preview / live preview for the proposer only)?
-5. Is review-mode a full replacement for today's live model, a
-   document-level opt-in flag, or a per-cell setting?
-6. Is pushing strictly per-cell, or can multiple cells be batched into
-   one push?
-7. Do structural edits (add/remove/reorder cell, rename, add/remove
-   element, etc.) go through review too, or only cell *source* edits?
-8. Confirm element values (sliders/text inputs) stay out of scope here,
-   deferred to #63 as already planned.
-9. Chat: in-memory only, or persisted to a sidecar file?
-10. Chat: one stream per document, or per-cell threads too?
-11. Chat: gate the panel on `documentId` being present (no chat for solo
-    sessions) — confirm this assumption.
-12. Chat: append-only for v1, or does it need edit/delete?
-13. Chat panel layout: does it replace, sit beside, or otherwise
-    coexist with today's existing right-side element-tabs panel when
-    expanded?
-14. Should push/accept actions post an automatic system message into
-    chat?
+Both are ready to move from design to implementation planning; see
+`TODO.md` for the concrete sub-item sequencing.
