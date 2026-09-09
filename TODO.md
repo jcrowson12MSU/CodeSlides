@@ -2238,6 +2238,22 @@ reshape the plan below and are called out explicitly where they apply:
       still receives a plain string (Yjs's CRDT state, not the
       resolved text, is what's actually synced).
 
+      Reconsidered explicitly, not implemented: asked to "start
+      implementing 46b-iv" directly, without any reported evidence that
+      46b-iii's own gating condition ("revisit only if real classroom
+      usage shows this losing-keystrokes case happening often enough to
+      be disruptive -- not preemptively") had actually been met. Walked
+      through the concrete tradeoff with the user (last-write-wins as-is
+      vs. the real architectural cost of a CRDT migration: new wire
+      protocol shape, a Yjs document lifecycle with no precedent
+      anywhere in the current Session model, a decode layer in front of
+      `Kernel.on_cell_edited`, a new frontend dependency, and materially
+      harder testing than string-overwrite LWW) -- decided to hold off
+      and keep last-write-wins, reaffirming 46b-iii's original decision
+      rather than overriding it without the evidence it calls for. No
+      code changed. Revisit if and when actual classroom usage surfaces
+      this as a real, observed problem -- not before.
+
   - [x] **46c. Concurrent execution semantics.** If two editors' changes to
     different cells both trigger re-runs against the *same* namespace,
     define run ordering and what happens when two overlapping
