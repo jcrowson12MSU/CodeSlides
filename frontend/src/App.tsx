@@ -31,15 +31,30 @@ function initialViewMode(): ViewMode {
 
 // TODO.md #46a-iv/#46d: `?document=<id>` in the URL means this is a
 // collaborative connection to a shared document -- present only when a
-// document link was explicitly opened (46e's future join-link UI is what
-// will actually generate these links; for now the param is read
-// directly, same "read it straight off window.location.search" pattern
-// initialViewMode already uses for `?mode=`). `null` (the overwhelmingly
-// common case: a plain `codeslides edit`/`present` open) means a solo,
-// fully isolated connection exactly as before #46a -- no join-screen, no
-// presence, nothing about this feature changes that path's behavior.
+// document link was explicitly opened (46e's join-link UI, `codeslides
+// edit/present --collaborative`, is what actually generates these links;
+// the param is read directly here, same "read it straight off
+// window.location.search" pattern initialViewMode already uses for
+// `?mode=`). `null` (the overwhelmingly common case: a plain `codeslides
+// edit`/`present` open) means a solo, fully isolated connection exactly
+// as before #46a -- no join-screen, no presence, nothing about this
+// feature changes that path's behavior.
 function documentIdFromUrl(): string | null {
   return new URLSearchParams(window.location.search).get('document')
+}
+
+// TODO.md #46e-ii: `?role=viewer` in the URL (the viewer link
+// `--collaborative` also prints) must reach the /ws connection URL, not
+// just get silently dropped -- the server enforces this role
+// server-side regardless of what the frontend does with it, but a
+// viewer link that connects as an unrestricted editor because this
+// param never made it onto the websocket URL would defeat the whole
+// point of having a separate viewer link at all. Any value other than
+// the literal "viewer" (including no ?role= at all -- true for every
+// solo connection and every plain editor link) is editor, matching
+// server.py's own "anything but literal 'viewer' is editor" fallback.
+function roleFromUrl(): 'editor' | 'viewer' {
+  return new URLSearchParams(window.location.search).get('role') === 'viewer' ? 'viewer' : 'editor'
 }
 
 // Two views over the same deck (ARCHITECTURE.md's "one tool, two modes"
@@ -172,11 +187,16 @@ function App() {
   // TODO.md #46d: null for the overwhelmingly common solo case (no
   // `?document=` in the URL) -- the socket connects to plain `/ws`
   // exactly as before this feature existed. A non-null id connects to
-  // `/ws?document=<id>` instead, joining (or creating) that shared
-  // document's Session.
+  // `/ws?document=<id>[&role=viewer]` instead, joining (or creating)
+  // that shared document's Session -- `role` (TODO.md #46e-ii) is
+  // meaningless without a document, so it's only ever appended alongside
+  // one, never on its own.
   const documentId = useMemo(documentIdFromUrl, [])
+  const role = useMemo(roleFromUrl, [])
   const { sessionId, messages, send } = useCodeSlidesSocket(
-    documentId ? `/ws?document=${encodeURIComponent(documentId)}` : undefined,
+    documentId
+      ? `/ws?document=${encodeURIComponent(documentId)}${role === 'viewer' ? '&role=viewer' : ''}`
+      : undefined,
   )
   const cellState = useDeckState(messages)
   const presenceState = usePresenceState(messages)

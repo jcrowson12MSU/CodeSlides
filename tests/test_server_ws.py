@@ -662,3 +662,134 @@ def test_websocket_solo_connection_never_sends_or_receives_presence():
         # exactly the pre-#46d message set -- no join_ack/presence_update
         # ever appears for a solo connection that never sent Join.
         assert {m["type"] for m in received} == {"cell_status", "cell_output"}
+
+
+def test_websocket_viewer_role_rejects_mutating_messages():
+    """TODO.md #46e-ii: a `?role=viewer` connection can join and report
+    presence, but every mutating message type (run_all, edit_cell,
+    set_element_value, save_deck, ...) is rejected with an ErrorMessage
+    before it ever reaches the Kernel -- never silently ignored, and
+    never trusted to be blocked only by the frontend hiding controls.
+
+    Uses a second (editor-role) connection to confirm SetPresence
+    actually took effect for the viewer, rather than just sending it and
+    trusting silence -- silence is indistinguishable between "worked, no
+    reply expected" and "the server hung/crashed," so asserting on a
+    peer's resulting broadcast is the only way to prove it actually did
+    something rather than merely not producing an error."""
+    client = TestClient(create_app(_build_deck()))
+
+    with (
+        client.websocket_connect("/ws?document=viewer-1&role=viewer") as ws,
+        client.websocket_connect("/ws?document=viewer-1") as ws_editor,
+    ):
+        ws.receive_json()  # session_created
+        ws_editor.receive_json()  # session_created
+
+        ws.send_json({"type": "run_all", "session_id": "viewer-1"})
+        error = ws.receive_json()
+        assert error["type"] == "error"
+        assert "viewer" in error["message"]
+
+        ws.send_json(
+            {
+                "type": "edit_cell",
+                "session_id": "viewer-1",
+                "cell_id": "live_demo",
+                "source": "def live_demo(speed):\n    return 999\n",
+            }
+        )
+        error2 = ws.receive_json()
+        assert error2["type"] == "error"
+
+        ws.send_json(
+            {
+                "type": "set_element_value",
+                "session_id": "viewer-1",
+                "cell_id": "live_demo",
+                "element_id": "speed",
+                "value": 7,
+            }
+        )
+        error3 = ws.receive_json()
+        assert error3["type"] == "error"
+
+        ws.send_json({"type": "save_deck", "session_id": "viewer-1"})
+        error4 = ws.receive_json()
+        assert error4["type"] == "error"
+
+        # Join and SetPresence are the only allowed message types for a
+        # viewer -- confirms the rejection isn't blanket-blocking
+        # everything, just the mutating set.
+        ws.send_json({"type": "join", "session_id": "viewer-1", "display_name": "Watcher"})
+        join_ack = ws.receive_json()
+        assert join_ack["type"] == "join_ack"
+        viewer_connection_id = join_ack["connection_id"]
+        # The viewer's own join also broadcasts an initial presence_update
+        # (cell_id still None at that point) to the editor -- drain it
+        # before checking the *next* one, from the set_presence below.
+        join_presence_to_editor = ws_editor.receive_json()
+        assert join_presence_to_editor["type"] == "presence_update"
+        assert join_presence_to_editor["connection_id"] == viewer_connection_id
+
+        ws.send_json(
+            {"type": "set_presence", "session_id": "viewer-1", "cell_id": "live_demo", "cursor_pos": 0}
+        )
+        presence_to_editor = ws_editor.receive_json()
+        assert presence_to_editor["type"] == "presence_update"
+        assert presence_to_editor["connection_id"] == viewer_connection_id
+        assert presence_to_editor["cell_id"] == "live_demo"
+
+        # The connection must still be alive and able to send further
+        # messages after multiple rejections -- a rejection must not
+        # silently break or close the websocket.
+        ws.send_json({"type": "run_all", "session_id": "viewer-1"})
+        error5 = ws.receive_json()
+        assert error5["type"] == "error"
+
+
+def test_websocket_viewer_role_does_not_affect_other_peers_editor_access():
+    """TODO.md #46e-ii: a viewer's restriction is per-connection -- an
+    editor sharing the same document is completely unaffected and can
+    still make changes, which the viewer (having joined) can see via the
+    normal broadcast path."""
+    client = TestClient(create_app(_build_deck()))
+
+    with (
+        client.websocket_connect("/ws?document=viewer-2") as ws_editor,
+        client.websocket_connect("/ws?document=viewer-2&role=viewer") as ws_viewer,
+    ):
+        ws_editor.receive_json()
+        ws_viewer.receive_json()
+
+        ws_editor.send_json({"type": "run_all", "session_id": "viewer-2"})
+        editor_received = [ws_editor.receive_json() for _ in range(4)]
+        assert {m["type"] for m in editor_received} == {"cell_status", "cell_output"}
+
+        # The viewer, having sent nothing, still receives the broadcast
+        # of the editor's run_all -- viewing still works normally.
+        viewer_received = [ws_viewer.receive_json() for _ in range(4)]
+        outputs = {
+            m["cell_id"]: m["output"]["value"] for m in viewer_received if m["type"] == "cell_output"
+        }
+        assert outputs == {"setup": 5, "live_demo": 15}
+
+
+def test_websocket_default_role_is_editor_for_solo_and_shared_connections():
+    """TODO.md #46e-ii: omitting `?role=` entirely -- true for every solo
+    `/ws` connection and for a shared `?document=<id>` connection that
+    doesn't ask for viewer -- must behave exactly as "editor", the
+    unrestricted default that predates this feature."""
+    client = TestClient(create_app(_build_deck()))
+
+    with client.websocket_connect("/ws") as ws:
+        hello = ws.receive_json()
+        ws.send_json({"type": "run_all", "session_id": hello["session_id"]})
+        received = [ws.receive_json() for _ in range(4)]
+        assert all(m["type"] != "error" for m in received)
+
+    with client.websocket_connect("/ws?document=viewer-3") as ws:
+        hello = ws.receive_json()
+        ws.send_json({"type": "run_all", "session_id": hello["session_id"]})
+        received = [ws.receive_json() for _ in range(4)]
+        assert all(m["type"] != "error" for m in received)

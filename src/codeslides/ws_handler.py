@@ -116,12 +116,13 @@ def _color_for_connection(connection_id: ConnectionId) -> str:
 @dataclass
 class Peer:
     """One live websocket connection attached to a Session -- identity
-    (TODO.md #46d-ii/#46g-i) plus live presence (#46d-i), alongside the
-    transport-level `send` callback #46a-ii's broadcast already needed.
-    `user_id`/`display_name` are unset (`None`) until this connection's
-    `Join` message arrives; a solo (non-collaborative) `/ws` connection
-    never sends one, so they stay `None` for its whole lifetime -- there
-    being no other peer to identify to, that's correct, not incomplete."""
+    (TODO.md #46d-ii/#46g-i) plus live presence (#46d-i) and role
+    (#46e-ii), alongside the transport-level `send` callback #46a-ii's
+    broadcast already needed. `user_id`/`display_name` are unset (`None`)
+    until this connection's `Join` message arrives; a solo
+    (non-collaborative) `/ws` connection never sends one, so they stay
+    `None` for its whole lifetime -- there being no other peer to
+    identify to, that's correct, not incomplete."""
 
     # `Callable[[ServerMessage], Awaitable[None]]` in practice
     # (server.py registers a `websocket.send_json`-wrapping closure
@@ -129,6 +130,15 @@ class Peer:
     # docstring -- stays free of any FastAPI/websockets dependency and
     # fully unit-testable without a running transport.
     send: object
+    # TODO.md #46e-ii: fixed for the connection's lifetime, set from the
+    # `?role=` query param at connect time (server.py) -- unlike
+    # user_id/display_name, this exists even for a connection that never
+    # sends Join, since it gates whether a message is handled at all
+    # (see MUTATING_MESSAGE_TYPES below), including messages sent before
+    # any identity is established. "editor" (the default) can do
+    # everything a solo connection always could; "viewer" can only join
+    # and report presence -- every mutating message type is rejected.
+    role: str = "editor"
     user_id: str | None = None
     display_name: str | None = None
     color: str | None = None
@@ -223,8 +233,10 @@ class SessionRegistry:
         self.sessions[session.session_id] = session
         return session
 
-    def add_connection(self, session_id: str, connection_id: ConnectionId, send: object) -> None:
-        self.connections.setdefault(session_id, {})[connection_id] = Peer(send=send)
+    def add_connection(
+        self, session_id: str, connection_id: ConnectionId, send: object, role: str = "editor"
+    ) -> None:
+        self.connections.setdefault(session_id, {})[connection_id] = Peer(send=send, role=role)
 
     def remove_connection(self, session_id: str, connection_id: ConnectionId) -> bool:
         """Drop `connection_id` from `session_id`'s fan-out set. Returns
@@ -422,6 +434,34 @@ def _element_output_messages(session: Session, results: dict[str, ExecutionResul
     return messages
 
 
+# TODO.md #46e-ii: the only message types a "viewer" role connection may
+# ever send -- an allowlist, not a denylist of "editing" types, so a
+# future message type defaults to blocked-for-viewers until someone
+# deliberately adds it here, rather than silently allowed. Join is
+# needed so a viewer can identify itself at all (46d-ii's join screen
+# doesn't know a connection's role in advance); SetPresence is needed so
+# a viewer's cursor/cell-focus still shows up to others, matching "watch
+# an instructor live-edit" -- a viewer should still be visible as a
+# person watching, just unable to change anything. Every other message
+# type mutates shared Session state (a code edit, a slider drag, slide
+# navigation, adding/removing a cell, saving, cloning -- CloneSession
+# included, since a clone is a brand-new Session with no role tracking
+# of its own, and letting a viewer make one would hand them an
+# unrestricted editable copy) and is rejected outright for a viewer, per
+# the "block everything except pure viewing" decision behind 46e-ii --
+# not evaluated case by case against "does this really count as
+# editing," since that judgment call is exactly what an allowlist is
+# meant to avoid needing. Enforced in server.py's websocket loop, before
+# handle_message is even called -- not here, because a viewer's role
+# lives on `registry.connections[<this connection's actual session_id>]
+# [connection_id]`, and server.py already has that session_id in a local
+# variable, whereas handle_message would have to trust whatever
+# session_id (or, for CloneSession, source_session_id -- a different
+# field entirely) the message itself claims, which is exactly the kind
+# of client-supplied value a security check must not rely on.
+VIEWER_ALLOWED_MESSAGE_TYPES: tuple[type, ...] = (Join, SetPresence)
+
+
 def handle_message(
     registry: SessionRegistry, message: ClientMessage, connection_id: str | None = None
 ) -> list[ServerMessage]:
@@ -441,7 +481,11 @@ def handle_message(
     an argument they'd never use -- `Join`/`SetPresence` themselves
     return an `ErrorMessage` if `connection_id` is omitted, which
     shouldn't happen in practice since `server.py` always passes its own
-    connection's id for every call it makes."""
+    connection's id for every call it makes.
+
+    Viewer-role enforcement (TODO.md #46e-ii) happens in `server.py`,
+    before this function is even called, not in here -- see
+    `VIEWER_ALLOWED_MESSAGE_TYPES`'s own comment for why."""
     if isinstance(message, Join):
         if connection_id is None:
             return [ErrorMessage(message="join requires a connection_id", session_id=message.session_id)]

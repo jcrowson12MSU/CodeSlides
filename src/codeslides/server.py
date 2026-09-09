@@ -25,7 +25,13 @@ from codeslides.protocol import (
     encode,
 )
 from codeslides.serialization import display_source
-from codeslides.ws_handler import Broadcast, SenderOnly, SessionRegistry, handle_message
+from codeslides.ws_handler import (
+    VIEWER_ALLOWED_MESSAGE_TYPES,
+    Broadcast,
+    SenderOnly,
+    SessionRegistry,
+    handle_message,
+)
 
 FRONTEND_DIST = Path(__file__).parent / "static"
 
@@ -142,7 +148,9 @@ def create_app(
         }
 
     @api.websocket("/ws")
-    async def websocket_endpoint(websocket: WebSocket, document: str | None = None) -> None:
+    async def websocket_endpoint(
+        websocket: WebSocket, document: str | None = None, role: str = "editor"
+    ) -> None:
         """One connection per browser tab. With no `?document=` query
         param, behaves exactly as before this Session's connection is
         implicitly created fresh and fully isolated (ARCHITECTURE.md
@@ -155,16 +163,27 @@ def create_app(
         connection whose message triggered it -- except a
         `ws_handler.Broadcast`-wrapped reply (TODO.md #46d's `Join`/
         `SetPresence` handling), which goes to peers only, never back to
-        the sender."""
+        the sender.
+
+        `?role=viewer` (TODO.md #46e-ii) restricts this connection to
+        `VIEWER_ALLOWED_MESSAGE_TYPES` -- everything else is rejected
+        with an `ErrorMessage` before `handle_message` is even called.
+        Any value other than the literal `"viewer"` (including an absent
+        `role` param) is treated as `"editor"`, today's -- and every
+        solo connection's -- unrestricted default; there's no allowlist
+        of valid role strings to reject an unrecognized one against, on
+        the same "fail open to today's existing behavior" principle
+        `create_or_join`'s `document=None` default already follows."""
         await websocket.accept()
         registry: SessionRegistry = api.state.registry
         session = registry.create_or_join(document)
         connection_id = uuid.uuid4().hex
+        peer_role = "viewer" if role == "viewer" else "editor"
 
         async def send(message) -> None:
             await websocket.send_json(encode(message))
 
-        registry.add_connection(session.session_id, connection_id, send)
+        registry.add_connection(session.session_id, connection_id, send, role=peer_role)
         await send(SessionCreated(session_id=session.session_id))
         try:
             while True:
@@ -173,6 +192,14 @@ def create_app(
                     message = decode_client_message(payload)
                 except ValueError as exc:
                     await send(ErrorMessage(message=str(exc)))
+                    continue
+                if peer_role == "viewer" and not isinstance(message, VIEWER_ALLOWED_MESSAGE_TYPES):
+                    await send(
+                        ErrorMessage(
+                            message="viewers cannot make changes to this document",
+                            session_id=session.session_id,
+                        )
+                    )
                     continue
                 replies = handle_message(registry, message, connection_id)
                 # Every reply routes to exactly one audience (TODO.md

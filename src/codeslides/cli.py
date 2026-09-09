@@ -13,6 +13,7 @@ default.
 from __future__ import annotations
 
 import argparse
+import secrets
 import sys
 import webbrowser
 
@@ -22,6 +23,35 @@ from codeslides.loader import load_deck
 from codeslides.server import create_app
 
 __all__ = ["load_deck", "main"]
+
+
+def _build_urls(
+    base_url: str, *, present_mode: bool, collaborative: bool, document_id: str | None = None
+) -> tuple[str, str | None]:
+    """Compose the URL(s) `main()` opens/prints, kept as a pure function
+    (no argparse, no server, no `secrets` call) so it's directly
+    unit-testable. Returns `(open_url, viewer_url)` -- `open_url` is
+    always what the browser is opened to (the editor link in
+    collaborative mode, matching "the person running this CLI command is
+    the instructor" -- TODO.md #46e-i); `viewer_url` is `None` unless
+    `collaborative` is set, since there's nothing to separately print
+    otherwise.
+
+    `document_id` is a parameter (not generated in here via
+    `secrets.token_urlsafe`) purely so a test can assert on an exact,
+    reproducible URL rather than pattern-matching a random one -- `main`
+    always calls this with a freshly generated id, per TODO.md #46e-iii's
+    security posture (an unguessable-but-unauthenticated link)."""
+    mode_query = "mode=slides" if present_mode else None
+    if not collaborative:
+        url = base_url + ("?" + mode_query if mode_query else "")
+        return url, None
+
+    editor_query = f"document={document_id}"
+    viewer_query = f"document={document_id}&role=viewer"
+    editor_url = base_url + "?" + "&".join(q for q in (mode_query, editor_query) if q)
+    viewer_url = base_url + "?" + "&".join(q for q in (mode_query, viewer_query) if q)
+    return editor_url, viewer_url
 
 
 def main() -> None:
@@ -40,6 +70,24 @@ def main() -> None:
             default=True,
             help="Don't automatically open the deck in a browser tab",
         )
+        # TODO.md #46e-i: opts into TODO.md #46a's shared-document mode
+        # (`/ws?document=<id>`) instead of the default solo, fully
+        # isolated connection every plain `edit`/`present` still gets.
+        # Printing an editor link and a separate viewer link (46e-ii) is
+        # the entire "join-link mechanism" this sub-task calls for --
+        # there is no server-side registration step beyond that, since
+        # SessionRegistry.create_or_join already creates a shared Session
+        # lazily the first time any connection actually uses this id
+        # (including this process's own auto-opened browser tab).
+        sub.add_argument(
+            "--collaborative",
+            action="store_true",
+            default=False,
+            help=(
+                "Start a shared document other people can join via a printed link "
+                "(TODO.md #46a/#46e), instead of the default solo session"
+            ),
+        )
 
     args = parser.parse_args()
 
@@ -50,12 +98,32 @@ def main() -> None:
         raise SystemExit(1) from None
 
     app = create_app(deck, deck_path=args.path)
-    url = f"http://{args.host}:{args.port}/"
-    if args.command == "present":
-        url += "?mode=slides"
+    base_url = f"http://{args.host}:{args.port}/"
 
     print(f"codeslides {args.command}: {args.path}")
     print(f"Serving on http://{args.host}:{args.port} (watching {args.path} for changes)")
+
+    # TODO.md #46e-iii's security posture: an unguessable-but-
+    # unauthenticated URL, like a Google Docs "anyone with the link"
+    # share -- `secrets.token_urlsafe` (not `uuid4`, which
+    # SessionRegistry.create_or_join would also accept as a document_id,
+    # but isn't specifically designed to resist guessing) is the same
+    # primitive Python's own docs recommend for exactly this "URL-safe,
+    # hard to guess" use case. No login, no per-student accounts --
+    # explicitly punted per 46e-iii, unless a concrete future need (e.g.
+    # gradebook integration) requires persistent identity across
+    # sessions.
+    document_id = secrets.token_urlsafe(16) if args.collaborative else None
+    url, viewer_url = _build_urls(
+        base_url,
+        present_mode=args.command == "present",
+        collaborative=args.collaborative,
+        document_id=document_id,
+    )
+    if viewer_url is not None:
+        print("Collaborative mode: share one of these links --")
+        print(f"  Editor (can make changes): {url}")
+        print(f"  Viewer (read-only):        {viewer_url}")
 
     if args.open_browser:
         webbrowser.open(url)

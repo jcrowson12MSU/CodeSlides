@@ -2475,18 +2475,32 @@ reshape the plan below and are called out explicitly where they apply:
       yet. The text-only fallback this sub-task explicitly sanctions
       ("Jane is editing this cell") is what shipped instead.
 
-  - **46e. Access control for who can join a shared document.** At
+  - [x] **46e. Access control for who can join a shared document.** At
     minimum a shareable session link; consider read-only "viewer" vs.
     "editor" roles for students watching an instructor live-edit
     without being able to edit themselves.
 
-    - **46e-i. Add the join-link mechanism** built on top of 46a-iv's
+    - [x] **46e-i. Add the join-link mechanism** built on top of 46a-iv's
       routing decision -- e.g. `codeslides present --collaborative
       lesson.py` prints a URL containing the document id, since there is
       no existing auth/identity system to gate this any other way today
       (confirmed: no login flow, no cookies, no headers checked anywhere
       in `server.py`).
-    - **46e-ii. Add a role field to the join flow** (`"editor"` vs.
+
+      Implemented: a new `--collaborative` flag on both `edit`/`present`
+      (`cli.py`) generates a `secrets.token_urlsafe(16)` document id and
+      prints two links -- editor (`?document=<id>`) and viewer
+      (`?document=<id>&role=viewer`, 46e-ii) -- composing correctly with
+      `present`'s existing `?mode=slides`. The browser this process
+      auto-opens always gets the editor link (the person running the CLI
+      command is the instructor). URL composition is a pure
+      `_build_urls` helper, tested directly (5 new tests in
+      `tests/test_cli.py`) rather than only via a slow/flaky subprocess
+      launch. No server-side "registration" step needed beyond printing
+      the link -- `SessionRegistry.create_or_join` (46a) already creates
+      the shared Session lazily the moment any connection (including
+      this process's own auto-opened tab) actually uses the id.
+    - [x] **46e-ii. Add a role field to the join flow** (`"editor"` vs.
       `"viewer"`), stored per-connection (alongside the identity from
       46g), and enforce it server-side in `handle_message` -- a viewer's
       `EditCell`/`SetElementValue`/etc. messages should be rejected with
@@ -2494,13 +2508,67 @@ reshape the plan below and are called out explicitly where they apply:
       ws_handler.py:972) rather than trusting the frontend to simply not
       render edit controls, since a viewer could otherwise hand-craft
       websocket messages.
-    - **46e-iii. Decide session-link security posture** -- an
+
+      Implemented: `Peer` (ws_handler.py, from 46d) gains a `role`
+      field, set from a new `?role=` query param on `/ws` and defaulting
+      to `"editor"` for anything but the literal `"viewer"` (including
+      every solo connection and every existing test, which never pass
+      it). Enforcement is an **allowlist** (`Join`/`SetPresence` only),
+      not a denylist of "editing" message types, so a future message
+      type defaults to blocked-for-viewers until deliberately added to
+      the allowlist -- matches the "block everything except pure
+      viewing" decision (a viewer can still identify itself and show up
+      in the peer list, just can't change anything, including cloning a
+      session, which would otherwise hand them an unrestricted editable
+      copy with no role tracking of its own). Enforced in `server.py`'s
+      websocket loop, *before* `handle_message` is even called -- not
+      inside `handle_message` itself, because a viewer's role lives on
+      the connection's actual session (a local variable `server.py`
+      already has), not on any field the incoming message itself
+      supplies (which a check must never trust for this purpose, and
+      which for `CloneSession` isn't even called `session_id`).
+
+      Building the frontend wiring for this caught a real bug before it
+      shipped: `App.tsx`'s websocket-URL construction (from 46d) read
+      `?document=` off the page URL but silently dropped `?role=`
+      entirely, so opening a viewer link would have connected as an
+      unrestricted editor with the server-side block never engaging at
+      all. Fixed by adding `roleFromUrl()` alongside the existing
+      `documentIdFromUrl()` and appending `&role=viewer` to the `/ws`
+      URL when present. Caught via real two-browser Playwright
+      verification, not just unit tests: confirmed the exact attack
+      scenario (a viewer typing malicious source into `live_demo` and
+      pressing Shift+Enter) is rejected server-side by checking a
+      *second, fresh* editor connection to the same shared document
+      still sees the deck's original, unmutated source -- proving the
+      Session itself was never touched, not just that some error
+      appeared somewhere on the viewer's own page (whose local editor
+      still shows the rejected keystrokes, since the frontend doesn't
+      roll back the editor's live content on rejection -- a real but
+      deliberately out-of-scope UX gap, see below).
+    - [x] **46e-iii. Decide session-link security posture** -- an
       unguessable-but-unauthenticated URL (like a Google Docs "anyone
       with the link" share) is the minimum viable option and matches
       this project's total absence of auth infrastructure today; explicitly
       punt on real accounts/login for v1 unless a concrete need for
       persistent per-student identity across sessions (e.g. gradebook
       integration) emerges later.
+
+      Decided and implemented as described: `secrets.token_urlsafe(16)`
+      (not `uuid4`, which `create_or_join` would also accept as a
+      `document_id` but isn't specifically designed to resist guessing)
+      for the document id, no login, no accounts. Revisit only if a
+      concrete future need for persistent per-student identity emerges.
+
+    Not done, left as explicit follow-on UX work (functionally safe
+    without it -- the server-side block is the actual security
+    boundary, per 46e-ii's own text): the frontend doesn't hide or
+    disable mutating controls (Save, Add cell, an editable cell's
+    editor) for a viewer, and doesn't roll back a viewer's own
+    just-typed-but-rejected keystrokes in their local editor view --
+    today a viewer sees a generic "viewers cannot make changes to this
+    document" error after acting, rather than never being offered the
+    control at all.
 
   - **46f. Update ARCHITECTURE.md section 9** ("what's deliberately
     deferred") once a concrete design lands, and remove or revise the
