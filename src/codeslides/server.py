@@ -8,6 +8,7 @@ import asyncio
 import contextlib
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -18,6 +19,7 @@ from watchfiles import Change, awatch
 from codeslides.deck import Deck
 from codeslides.kernel import Kernel
 from codeslides.protocol import (
+    CellAttributionChanged,
     ErrorMessage,
     PresenceLeft,
     SessionCreated,
@@ -26,10 +28,12 @@ from codeslides.protocol import (
 )
 from codeslides.serialization import display_source
 from codeslides.ws_handler import (
+    ATTRIBUTABLE_MESSAGE_TYPES,
     VIEWER_ALLOWED_MESSAGE_TYPES,
     Broadcast,
     SenderOnly,
     SessionRegistry,
+    attributed_cell_id,
     handle_message,
 )
 
@@ -202,6 +206,41 @@ def create_app(
                     )
                     continue
                 replies = handle_message(registry, message, connection_id)
+                if isinstance(message, ATTRIBUTABLE_MESSAGE_TYPES):
+                    # TODO.md #46g-ii/#46g-iii: attribution is derived
+                    # entirely server-side from this connection's own
+                    # Peer record -- never from a client-supplied field,
+                    # so there is nothing for a malicious client to spoof
+                    # (same trust boundary as 46e-ii's role check just
+                    # above, and the same reason it lives in server.py
+                    # rather than inside handle_message: the connection's
+                    # real identity is this local variable, not anything
+                    # the incoming message claims). A solo connection, or
+                    # a connection that hasn't sent Join yet, has no
+                    # display_name to attribute with, so this is a silent
+                    # no-op for them -- exactly like SetPresence's own
+                    # "no identity, nothing to record" handling.
+                    peer = registry.get_peer(session.session_id, connection_id)
+                    cell_id = attributed_cell_id(replies)
+                    if peer is not None and peer.display_name is not None and cell_id is not None:
+                        instance = session.instances.get(cell_id)
+                        if instance is not None:
+                            instance.last_edited_by = peer.display_name
+                            instance.last_edited_at = datetime.now(UTC)
+                            # TODO.md #46g-iv: sent to sender and peers
+                            # alike, same default every pre-#46d message
+                            # type already uses -- everyone on the
+                            # document needs the same "who last touched
+                            # this cell" picture, not just the peers who
+                            # didn't make the edit.
+                            replies.append(
+                                CellAttributionChanged(
+                                    session_id=session.session_id,
+                                    cell_id=cell_id,
+                                    last_edited_by=instance.last_edited_by,
+                                    last_edited_at=instance.last_edited_at.isoformat(),
+                                )
+                            )
                 # Every reply routes to exactly one audience (TODO.md
                 # #46d introduced the first two message types needing
                 # anything other than the third, original, default):

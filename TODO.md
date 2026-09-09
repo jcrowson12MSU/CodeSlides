@@ -2610,7 +2610,7 @@ reshape the plan below and are called out explicitly where they apply:
     principle instead, since it's now a real, shipped capability rather
     than a future direction.
 
-  - **46g. Attribution: track and surface who made each edit.**
+  - [x] **46g. Attribution: track and surface who made each edit.**
     Nothing today identifies *who* made a change -- confirmed by
     exhaustive search: no `user_id`/`author`/`username`/`identity`/auth
     concept exists anywhere in `src/` or `frontend/src/`, and no
@@ -2618,64 +2618,122 @@ reshape the plan below and are called out explicitly where they apply:
     any field beyond `session_id`/`cell_id`. This has to be built from
     scratch, not extended from an existing stub.
 
-    - **46g-i. Introduce a lightweight identity concept**, minimal for a
-      classroom setting with no real auth (per 46e-iii): on joining a
-      shared document, a connection supplies a display name (typed in a
-      join-screen prompt, e.g. "Enter your name to join") which the
-      server assigns a `user_id` (a fresh UUID, same pattern as
-      `Session.session_id` at session.py:99) plus the color from
-      46d-ii. Persist this pairing in the new `Connection`/`Peer`
-      object from 46a-i for the life of the connection; regenerate a
-      fresh one on reconnect for v1 (no durable accounts) unless 46e-iii
-      later decides persistent identity is needed.
-    - **46g-ii. Add `user_id` (and a denormalized `display_name`, so
-      history survives a peer disconnecting) to every mutating client
-      message that should carry attribution** -- at minimum `EditCell`,
-      `SetElementValue`, `SetUiState`, `SetTestSource`, `AddCell`,
-      `RemoveCell`, `RenameCell`, and the other structural-edit messages
-      enumerated in ws_handler.py's dispatch chain (lines 242-929).
-      Populate it in `useCodeSlidesSocket.ts`'s `send()` (currently a
-      bare `JSON.stringify`/`socket.send`, per the architecture
-      research) by threading the joined identity from 46g-i into every
-      outgoing message, rather than trusting the server to infer it
-      from the connection (still validate/stamp server-side too, so a
-      malicious client can't spoof another user's `user_id`).
-    - **46g-iii. Extend `Session`/`CellInstance` to record per-cell edit
-      history**, not just current state -- `CellInstance` (session.py:
-      67-75) today holds only `status`/`output`/`error`/`collapsed`/
-      `elements`, no history at all. Add something like
-      `last_edited_by: str | None` and `last_edited_at: datetime | None`
-      fields (cheapest v1: just "who touched this last", not a full
-      log), extended later to `edit_history: list[EditRecord]` if a full
-      audit trail is wanted. Populate it inside `Kernel.on_cell_edited`
-      (kernel.py:855-918) and the other mutating `Kernel` methods listed
-      in 46g-ii, alongside their existing `session.source_overrides`/
-      `session.instances` writes.
-    - **46g-iv. Surface attribution in the frontend.** Minimum: a
-      "last edited by <name>" label near a cell's editor (`Cell.tsx`),
-      reusing the color from 46d-ii so it visually matches that peer's
-      presence indicator/cursor. Stretch: a per-cell edit history panel
-      if 46g-iii's fuller `edit_history` is built.
-    - **46g-v. Decide whether attribution survives a `SaveDeck`
-      (protocol.py:113-124) to disk.** Today's persisted format is a
-      plain `.py` file (`session.source_overrides` written back via
-      `save_edits`, per TODO.md #47's description) with no metadata
-      slot for "who wrote this line" -- attribution as scoped in 46g-iii
-      is Session-lifetime-only (lost on server restart, consistent with
-      ARCHITECTURE.md section 9's existing "Persisting Session state
-      across server restarts" non-goal) unless this sub-task explicitly
-      extends the on-disk format (e.g. a sidecar `.codeslides-history`
-      file or trailing comment metadata) to persist it -- don't silently
-      let attribution disappear on save without an explicit decision
-      either way.
-    - **46g-vi. Add a regression test for attribution correctness**,
-      analogous to 46c-iv: two simulated peers editing different cells
-      of the same shared document, asserting each cell's recorded
-      `last_edited_by` matches the peer that actually sent that
-      `EditCell`, including the case where peer A's edit is the one
-      discarded by 46b's last-write-wins policy (make sure the
-      *surviving* edit's attribution is the one that ends up displayed,
-      not a stale one from the loser).
+    Two scope decisions made with the user before implementing, both
+    narrowing/adjusting this sub-task's original text:
+    - **Attribution is derived entirely server-side**, not client-
+      supplied (46g-ii's literal text asked for `user_id`/`display_name`
+      fields on every mutating message, validated server-side). Since
+      46d-ii/46e-ii already built exactly the `connection_id` ->
+      `Peer` lookup this needs (used for role enforcement), adding
+      client-supplied identity fields to ~14 message types would have
+      been redundant surface with a real spoofing-validation burden
+      repeated across every one of them -- `server.py`'s websocket loop
+      already knows the connection's real identity in a local variable,
+      the same trust boundary 46e-ii's viewer-role check already
+      established. Zero protocol/frontend changes were needed for this
+      half of the feature as a direct result.
+    - **`SetElementValue` (a slider/input drag) is explicitly excluded
+      from attribution**, per the user's explicit direction: transient
+      interactive input state isn't a "content edit" worth attributing.
+      The user separately wants such values to become genuinely
+      per-connection-local (not just unattributed) on a shared document
+      -- a distinct, larger architectural change against #46a's shared-
+      namespace model, scoped as its own new item, TODO.md #63, not
+      implemented here.
+
+    - [x] **46g-i. Introduce a lightweight identity concept** -- already
+      fully implemented by TODO.md #46d-ii (the join-screen `display_name`
+      prompt, server-assigned `user_id` + color, `Peer` dataclass) before
+      this sub-task started; confirmed against the current code rather
+      than re-built.
+    - [x] **46g-ii. Attribution derivation** -- implemented as the
+      server-derived design above, not the originally-proposed
+      client-supplied-and-validated one (see the scope-decision note).
+      `ws_handler.ATTRIBUTABLE_MESSAGE_TYPES` is an explicit allowlist of
+      14 message types (`EditCell`, `SetTestSource`, `SetCellLayout`,
+      `RenameCell`, `SetMainCell`, `SetSetupCell`, `SetHideCode`,
+      `SetHideDef`, `AddElement`, `RemoveElement`, `RemovePrimaryEditor`,
+      `AddPrimaryEditor`, `ReorderElements`, `SetElementConfig`) -- same
+      allowlist-not-denylist shape and rationale as 46e-ii's
+      `VIEWER_ALLOWED_MESSAGE_TYPES` (a future message type defaults to
+      *not* attributed until deliberately added). Deck/slide-level
+      operations with no single cell to attribute to (`AddSlide`,
+      `SetSlideOrder`, `RemoveSlide`, `ReorderCells`, `SaveDeck`,
+      `RunAll`, `CloneSession`, `NavigateSlide`), pure UI state
+      (`SetUiState`'s collapse toggle), and `AddCell` (no prior instance
+      to have been "last edited") are deliberately excluded too, per a
+      scoping decision confirmed with the user: attribution covers "who
+      last changed THIS cell's content/structure," not a full audit log
+      of every session interaction. `ws_handler.attributed_cell_id`
+      extracts the target cell from the triggering message's *replies*
+      (not the incoming message itself), since some operations redirect
+      the target -- `RenameCell`'s `CellRenamed` reply carries the
+      cell's *new* name, which is where attribution correctly lands, not
+      the stale pre-rename id the client sent.
+    - [x] **46g-iii. Extend `Session`/`CellInstance`** -- implemented
+      exactly as scoped: `CellInstance` (session.py) gains
+      `last_edited_by: str | None` and `last_edited_at: datetime | None`,
+      "who touched this last," not a full history log. Stamped from
+      `server.py`'s websocket loop (not inside `Kernel`, since that's
+      where the connection's real identity lives) immediately after
+      `handle_message` returns, for any `ATTRIBUTABLE_MESSAGE_TYPES`
+      message from a connection with a joined identity. `Session.clone`
+      was found to silently drop these two fields on the first pass
+      (its field-by-field `CellInstance` reconstruction didn't carry
+      them) -- fixed before it shipped, caught by re-reading the method
+      rather than by a failing test.
+    - [x] **46g-iv. Surface attribution in the frontend** -- implemented
+      as the sub-task's own stated minimum: a plain "last edited by
+      &lt;name&gt;" label in `Cell.tsx`'s header, sourced from a new
+      dedicated broadcast message, `CellAttributionChanged`
+      (`protocol.py`/`protocol.ts`), reduced into `deckState.ts`'s
+      existing `CellState` (`lastEditedBy`/`lastEditedAt`) the same way
+      `cell_status`/`cell_output` already are. A dedicated message
+      rather than extending `CellSourceChanged` (`EditCell`-only) or any
+      one structural-edit reply, since attribution can come from 14
+      differently-shaped message types with no single natural place to
+      bolt it onto uniformly. The color-matching stretch goal (reusing a
+      peer's live presence color) was not built -- `last_edited_by` is a
+      plain name, not a `connection_id`, and that peer may have already
+      disconnected by the time attribution is displayed (attribution
+      deliberately outlives the connection), so there's often no live
+      color to match against anyway. Verified end-to-end in a real
+      two-browser Playwright session: an edit's attribution appears
+      immediately for both the editor and, via broadcast, the other
+      peer, and correctly flips to the surviving editor after a
+      last-write-wins conflict.
+    - [x] **46g-v. Decide whether attribution survives a `SaveDeck` to
+      disk** -- decided with the user: **yes**, via a sidecar file
+      (`serialization.py`'s `attribution_sidecar_path`/`load_attribution`/
+      `save_attribution`: `<deck>.py.codeslides-attribution.json`, a flat
+      `{cell_name: {last_edited_by, last_edited_at}}` map), not trailing
+      comment metadata inside the `.py` file itself -- attribution is
+      incidental collaboration metadata, not lesson content, so keeping
+      it out of the tracked source means it never shows up as diff noise
+      and a hand-written deck never needs touching to gain this.
+      Written on `SaveDeck` for exactly the cells actually saved in that
+      operation (merged into, not overwriting, whatever the sidecar
+      already holds for other cells); loaded and merged into a fresh
+      `Session`'s `CellInstance`s in `SessionRegistry`'s two Session-
+      construction paths (`create`/`create_or_join`), so attribution
+      survives a full server restart, verified directly (not assumed) by
+      simulating one: a completely fresh `create_app` call against the
+      same `deck_path`, sharing no in-memory state with the original.
+      Added `*.codeslides-attribution.json` to `.gitignore` -- generated
+      per-server metadata, not version-controlled lesson content, same
+      category as a lockfile.
+    - [x] **46g-vi. Regression tests** -- 6 new tests across
+      `tests/test_server_ws.py`: two peers editing different cells
+      attribute correctly (and a cell only re-run as a side effect, never
+      directly edited, is correctly left unattributed); attribution
+      flips to the surviving editor after a last-write-wins discard
+      (46b-i); a solo connection's edits are never attributed; and three
+      covering the sidecar (persists across a simulated restart, merges
+      rather than overwrites across separate saves, and a solo
+      connection's save never creates a sidecar file at all). Full
+      suite: 605 passed, `ruff check src` clean, frontend `tsc -b &&
+      vite build` clean -- all verified from a fresh venv and a real
+      browser, not just claimed.
 
 - [x] **47. Persist a `tests` element's edited source when Save is clicked -- it currently only lives in memory.**
   Discovered while fixing #43: unlike a code edit or a notes edit (both
@@ -4009,3 +4067,49 @@ reshape the plan below and are called out explicitly where they apply:
   Write a README with install/usage instructions and screenshots/gifs,
   polish styling of editor and presentation modes, and prepare for local
   `pip install` (editable) / eventual PyPI packaging.
+
+- [ ] **63. Make input-element values (sliders, text inputs) per-connection-local on a shared document, instead of shared/broadcast.**
+  Surfaced while scoping TODO.md #46g's attribution work: the user
+  explicitly said `SetElementValue` (a slider drag, a text-input edit)
+  should "only be changed locally" on a shared document -- distinct from
+  and larger than 46g's own decision to simply not *attribute*
+  `SetElementValue` (an already-shipped, narrower change; see #46g-iii).
+  Today `SetElementValue` re-runs the owning cell against the Session's
+  one shared namespace and broadcasts the result to every connection
+  (ws_handler.py's `SetElementValue` handler, `Kernel.on_element_changed`)
+  -- moving a slider is visible, identically, to everyone on the
+  document. This item is that slider position (and the resulting cell
+  re-run/output) becoming independent per connection instead.
+
+  Explicitly **not started** -- this needs its own design pass before
+  implementation, since it cuts against #46a's foundational "one Session
+  = one namespace, shared by every attached connection" model in a way
+  none of #46b-#46g did (they all still assumed one shared namespace,
+  just added identity/presence/access-control/attribution on top of it).
+  Real open questions to resolve first, not yet answered:
+  - Does the *whole* cell's output fork per-connection once any of its
+    input elements go per-connection-local, or only the specific
+    element's own displayed value while the cell's Python-level result
+    stays one shared value in the namespace? (These give different
+    answers to "what does the cell's `cell_output` show a peer who
+    didn't touch the slider.")
+  - If two peers each set a different value on the *same* element, is
+    that even a meaningful conflict once values are per-connection (each
+    peer's own value is just its own, no last-write-wins needed), or does
+    "per-connection-local value, shared re-run" reintroduce exactly the
+    conflict 46b-i already solved for `EditCell`?
+  - Does this apply to every `instance="editable"` cell's elements
+    uniformly, or should an author be able to opt a specific slider back
+    into shared/broadcast behavior (e.g. an instructor's own demo slider
+    that's *meant* to be a shared control everyone watches update
+    together, vs. one meant for each student to explore independently)?
+  - How does `session.instances[cell].elements[element].value` (today: one
+    value, shared) need to change shape to hold "one value per
+    connection" -- keyed by `connection_id`? What happens to that
+    per-connection value when the owning connection disconnects (kept
+    for a reconnect within the grace period, per #46a-iii's precedent, or
+    discarded immediately)?
+  - How does this interact with `clone_session` (ARCHITECTURE.md section
+    5) and 46e's viewer role -- does a viewer even get to set a
+    per-connection-local value at all, or is that itself still a
+    "change" 46e-ii's allowlist should keep blocking?

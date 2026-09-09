@@ -345,6 +345,18 @@ export interface CellSourceChanged {
   source: string
 }
 
+// TODO.md #46g-iv: sent to sender and peers alike whenever an
+// attributable change (server.py's ATTRIBUTABLE_MESSAGE_TYPES) lands on
+// cell_id -- last_edited_at is an ISO 8601 string, display-only, never
+// parsed into a Date on this side.
+export interface CellAttributionChanged {
+  type: 'cell_attribution_changed'
+  session_id: string
+  cell_id: string
+  last_edited_by: string
+  last_edited_at: string
+}
+
 export interface ElementOutput {
   type: 'element_output'
   session_id: string
@@ -605,6 +617,7 @@ export type ServerMessage =
   | CellStatus
   | CellOutput
   | CellSourceChanged
+  | CellAttributionChanged
   | ElementOutput
   | GraphUpdated
   | SessionCloned

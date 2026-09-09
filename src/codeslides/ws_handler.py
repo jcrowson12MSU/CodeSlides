@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from codeslides.kernel import ExecutionResult, Kernel
 from codeslides.output import resolve_output, wire_safe_value
@@ -79,6 +80,7 @@ from codeslides.serialization import (
     InvalidSourceError,
     SaveConflictError,
     display_source,
+    save_attribution,
     save_edits,
     write_export,
 )
@@ -197,8 +199,35 @@ class SessionRegistry:
     sessions: dict[str, Session] = field(default_factory=dict)
     connections: dict[str, dict[ConnectionId, Peer]] = field(default_factory=dict)
 
+    def _seed_persisted_attribution(self, session: Session) -> None:
+        """TODO.md #46g-v: load a deck's sidecar attribution file (if the
+        Kernel has a `deck_path` and the sidecar exists) and apply it to
+        the freshly-constructed `session`'s `CellInstance`s -- called
+        once, right after construction, from both `create` and
+        `create_or_join`, so attribution survives a server restart the
+        same way the deck's `.py` source itself does. A no-op (silently)
+        for a deck with no `deck_path` (most of this test suite, and any
+        in-process-only usage -- there's no file for a sidecar to live
+        next to) or one whose sidecar names a cell that no longer exists
+        in the current Deck (a cell renamed/removed on disk since the
+        sidecar was last written -- stale sidecar entries for cells that
+        no longer exist are simply not applied, not an error)."""
+        if self.kernel.deck_path is None:
+            return
+        from codeslides.serialization import load_attribution
+
+        attribution = load_attribution(self.kernel.deck_path)
+        for name, record in attribution.items():
+            instance = session.instances.get(name)
+            if instance is None:
+                continue
+            instance.last_edited_by = record.get("last_edited_by")
+            last_edited_at = record.get("last_edited_at")
+            instance.last_edited_at = datetime.fromisoformat(last_edited_at) if last_edited_at else None
+
     def create(self) -> Session:
         session = Session(deck=self.kernel.deck)
+        self._seed_persisted_attribution(session)
         self.sessions[session.session_id] = session
         return session
 
@@ -230,6 +259,7 @@ class SessionRegistry:
         if existing is not None:
             return existing
         session = Session(deck=self.kernel.deck, session_id=document_id)
+        self._seed_persisted_attribution(session)
         self.sessions[session.session_id] = session
         return session
 
@@ -460,6 +490,64 @@ def _element_output_messages(session: Session, results: dict[str, ExecutionResul
 # field entirely) the message itself claims, which is exactly the kind
 # of client-supplied value a security check must not rely on.
 VIEWER_ALLOWED_MESSAGE_TYPES: tuple[type, ...] = (Join, SetPresence)
+
+# TODO.md #46g-ii/#46g-iii: message types that count as "editing a cell"
+# for attribution purposes -- an explicit allowlist, same shape/rationale
+# as VIEWER_ALLOWED_MESSAGE_TYPES above (a future message type defaults
+# to *not* attributed until someone deliberately adds it, rather than
+# silently attributed to the wrong thing). Deliberately excludes
+# `SetElementValue` (a slider/input drag) per the user's explicit
+# direction: transient interactive input state isn't a "content edit"
+# worth attributing, as distinct from the separate, not-yet-implemented
+# question of whether such values should also become per-connection-local
+# rather than shared (see TODO.md). Also excludes every deck/slide-level
+# operation with no single cell to attribute to (AddSlide, SetSlideOrder,
+# RemoveSlide, ReorderCells, SaveDeck, RunAll, CloneSession,
+# NavigateSlide) and pure UI state with no content change (SetUiState's
+# collapse/minimize toggle, ARCHITECTURE.md section 8) -- scope is "who
+# last changed THIS cell's content/structure," not a full audit log of
+# every session interaction. `AddCell` is excluded too: the newly-created
+# cell has no prior instance to have been "last edited," and
+# `CellAdded`'s reply doesn't represent an edit to existing content the
+# same way the rest of this list does.
+ATTRIBUTABLE_MESSAGE_TYPES: tuple[type, ...] = (
+    EditCell,
+    SetTestSource,
+    SetCellLayout,
+    RenameCell,
+    SetMainCell,
+    SetSetupCell,
+    SetHideCode,
+    SetHideDef,
+    AddElement,
+    RemoveElement,
+    RemovePrimaryEditor,
+    AddPrimaryEditor,
+    ReorderElements,
+    SetElementConfig,
+)
+
+
+def attributed_cell_id(replies: list[ServerMessage]) -> str | None:
+    """TODO.md #46g-iii: which cell (if any) an `ATTRIBUTABLE_MESSAGE_TYPES`
+    message's replies actually ended up changing -- the *reply's* own
+    `cell_id`, not the original client message's, since some operations
+    rename or otherwise redirect the target (`RenameCell`'s `CellRenamed`
+    reply carries the cell's *new* name, which is where attribution
+    belongs; using the incoming message's stale pre-rename `cell_id`
+    would attribute the edit to a cell identity that no longer exists).
+    Returns the first non-error reply carrying a `cell_id` attribute, or
+    `None` if the call failed -- `ErrorMessage` is explicitly excluded
+    even though it also has a `cell_id` field, since several handlers
+    (e.g. EditCell's "unknown cell" case) populate it with the offending
+    id from a call that made no actual change to attribute."""
+    for reply in replies:
+        if isinstance(reply, ErrorMessage):
+            continue
+        cell_id = getattr(reply, "cell_id", None)
+        if cell_id is not None:
+            return cell_id
+    return None
 
 
 def handle_message(
@@ -774,6 +862,25 @@ def handle_message(
                 # bad edit) still has it.
                 return [ErrorMessage(message=str(exc), session_id=message.session_id)]
         saved = sorted(session.source_overrides)
+        # TODO.md #46g-v: persist attribution for exactly the cells whose
+        # source is actually being written to disk in this Save -- a
+        # cell edited by someone but never saved has no on-disk change to
+        # attribute, so it's correctly left out of the sidecar. Only
+        # cells with a recorded editor are included (a solo/unattributed
+        # edit has nothing to persist); silently skipped rather than an
+        # error, since "no attribution to save" is the ordinary case for
+        # any deck that's never had a collaborative edit.
+        attribution_to_save = {
+            name: {
+                "last_edited_by": session.instances[name].last_edited_by,
+                "last_edited_at": session.instances[name].last_edited_at.isoformat(),
+            }
+            for name in saved
+            if session.instances[name].last_edited_by is not None
+            and session.instances[name].last_edited_at is not None
+        }
+        if attribution_to_save:
+            save_attribution(deck_path, attribution_to_save)
         # Saved edits are now the on-disk baseline -- clear them so this
         # Session's effective graph reverts to reading straight off
         # `Kernel.deck` again (identical to a fresh Session's), rather
