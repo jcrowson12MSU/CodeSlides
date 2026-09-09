@@ -4333,6 +4333,41 @@ reshape the plan below and are called out explicitly where they apply:
   correct diff; Bob accepts; both Alice's and Bob's editors converge on
   the accepted source and the banner disappears on both sides.
 
+  - [x] 65-ix. **Follow-up, found via real user testing**: the initial
+    #65 shipment only covered a cell's *primary* source (`EditCell`'s
+    domain) -- on any deck with `hide_code=True` on every cell (a common
+    shape for a lecture deck that hides its implementation from
+    students, e.g. `Lectures/Chapters/chapter4.py`), the *only* editable
+    surface is a `ui.tests(...)` element's own source, which went
+    through the untouched, always-live `SetTestSource` -- so `--review-
+    mode` silently had no effect at all on such a deck: an edit applied
+    immediately and reached nobody else, no proposal, no banner, no
+    error. Extended `PushCell`/`WithdrawProposal`/`AcceptProposal`/
+    `RejectProposal` and their server replies with an optional
+    `element_id`; `CellInstance.test_proposals: dict[element_id,
+    dict[user_id, CellProposal]]` (`session.py`) holds these separately
+    from the primary-source `proposals` dict. `SetTestSource` is now
+    rejected on a `review_mode` document, same posture `EditCell`
+    already has. Accepting a tests-element proposal reuses `Kernel.
+    on_tests_edited` (the same path `SetTestSource` always used) and
+    attributes to the proposer, mirroring the primary-source accept
+    path. 4 new backend tests (620 total) against a
+    `_build_hidden_code_deck()` fixture shaped like the real deck that
+    exposed the gap. Frontend: `TestsElementWidget.tsx` grew the same
+    proposal/conflict/Accept/Reject/Withdraw UI `Cell.tsx`'s primary
+    editor already had; also fixed a real bug found in verification --
+    `App.tsx`'s `proposal_accepted` handler was writing every accepted
+    proposal's source into the cell's *primary* `source` field
+    regardless of `element_id`, and a tests-element accept was never
+    written into `testSourceOverrides` at all, so an accepted change
+    never appeared in anyone's test editor (including the accepter's
+    own) until an unrelated reload. Re-verified end-to-end against the
+    actual `chapter4.py` deck with two real browser contexts: pushing a
+    change to the "Hotel rate trace" test element correctly shows Bob a
+    proposal banner with the right diff, leaves Bob's own editor
+    untouched until he acts, and after Accept both peers' editors show
+    the new test source with its real re-run result.
+
 - [ ] **66. Collapsible chat panel for shared documents** -- lower-right
   corner collapsed to a small affordance; expands to a full-height
   third column to the right of the cells and the existing element-tabs

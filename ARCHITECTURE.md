@@ -617,16 +617,35 @@ than silently broadcasting when it shouldn't) — instead:
   they played in triggering it — needs the same "this proposal is gone"
   update.
 
+**`tests` element sources are covered too, not just a cell's primary
+source.** Found via real usage: a deck with `hide_code=True` on every
+cell (a common shape for a lecture deck that hides its implementation
+from students — `Lectures/Chapters/chapter4.py` is one) has no reachable
+primary editor at all; the *only* editable surface a student/collaborator
+ever touches is a `ui.tests(...)` element's own source. Without covering
+this, `--review-mode` silently did nothing on such a deck — an edit went
+straight through the untouched, always-live `SetTestSource` (rejected
+outright on a `review_mode` document now, same posture `EditCell` has)
+with no proposal, no banner, no error. `PushCell`/`WithdrawProposal`/
+`AcceptProposal`/`RejectProposal` all take an optional `element_id`:
+when set, the proposal lives in `CellInstance.test_proposals[element_id]`
+(keyed by proposer `user_id`, same shape as `proposals`) instead of
+`proposals` directly, and accepting reuses `Kernel.on_tests_edited` (the
+path `SetTestSource` always used) rather than `on_cell_edited` —
+otherwise every rule above (any-editor-accepts, proposer-gets-
+attribution, stale-sibling-conflict via `ToUser`) applies identically.
+
 **Scope boundaries** (all deliberate, per `PROPOSAL_review_workflow.md`'s
 resolved open questions): per-cell only, no batching multiple cells into
 one push; text-diff-only review for v1, no preview execution of a
 pending proposal; structural edits (add/remove/reorder cell, rename,
-add/remove element, etc.) stay immediate/shared exactly as in §5a, only
-cell *source* goes through review; element values (`SetElementValue`)
-are untouched, governed entirely by the separate, still-undecided
-`TODO.md` #63. A viewer-role connection can do none of this — `PushCell`/
-`WithdrawProposal`/`AcceptProposal`/`RejectProposal` are simply absent
-from `VIEWER_ALLOWED_MESSAGE_TYPES`'s allowlist, same "blocked by default
+add/remove element, etc.) stay immediate/shared exactly as in §5a — only
+a cell's primary source and its `tests` elements' sources go through
+review; element values (`SetElementValue`) are untouched, governed
+entirely by the separate, still-undecided `TODO.md` #63. A viewer-role
+connection can do none of this — `PushCell`/`WithdrawProposal`/
+`AcceptProposal`/`RejectProposal` are simply absent from
+`VIEWER_ALLOWED_MESSAGE_TYPES`'s allowlist, same "blocked by default
 until deliberately added" posture every other mutating message type
 already has.
 

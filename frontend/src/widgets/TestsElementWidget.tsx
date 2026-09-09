@@ -18,9 +18,36 @@ export interface TestsElementWidgetProps {
   source: string
   result: TestResult | null
   onChangeSource: (source: string) => void
+  // TODO.md #65 follow-up: on a review_mode document, `onChangeSource`
+  // above is expected to be a no-op-until-reviewed staging function
+  // (App.tsx wires push_cell here instead of set_test_source) rather
+  // than immediately submitting -- this element needs the exact same
+  // proposal banner/Accept/Reject/Withdraw/conflict UI Cell.tsx's own
+  // primary-source path already has, since for many decks (every cell
+  // hide_code=True) this editor is the *only* reachable editable
+  // surface at all.
+  reviewMode?: boolean
+  ownUserId?: string | null
+  proposals?: Record<string, { displayName: string; source: string; createdAt: string }>
+  conflict?: string | null
+  onWithdrawProposal?: () => void
+  onAcceptProposal?: (proposerUserId: string) => void
+  onRejectProposal?: (proposerUserId: string) => void
 }
 
-export function TestsElementWidget({ elementId, source, result, onChangeSource }: TestsElementWidgetProps) {
+export function TestsElementWidget({
+  elementId,
+  source,
+  result,
+  onChangeSource,
+  reviewMode = false,
+  ownUserId = null,
+  proposals = {},
+  conflict = null,
+  onWithdrawProposal,
+  onAcceptProposal,
+  onRejectProposal,
+}: TestsElementWidgetProps) {
   // Printed output matters on every status, not just failure -- this box
   // is just as often a sample-input/sample-output demo (`print(f(3, 4))`,
   // no assertions at all) as it is an assert-only unittest-style check,
@@ -42,6 +69,54 @@ export function TestsElementWidget({ elementId, source, result, onChangeSource }
         <pre className={`cs-tests-message cs-tests-message-${result.status}`}>{result.message}</pre>
       )}
       {output && <pre className="cs-tests-output">{output}</pre>}
+      {reviewMode && conflict != null && (
+        <div className="cs-cell-proposal-conflict">
+          <p>
+            Someone else's change was accepted while your proposal was pending. The current test is now:
+          </p>
+          <pre className="cs-cell-proposal-diff">{conflict}</pre>
+          <p>Re-push your change against the new version, or withdraw it.</p>
+          {onWithdrawProposal && (
+            <button type="button" onClick={onWithdrawProposal}>
+              Withdraw my proposal
+            </button>
+          )}
+        </div>
+      )}
+      {reviewMode &&
+        Object.entries(proposals).map(([proposerUserId, proposal]) => {
+          const isOwnProposal = ownUserId != null && proposerUserId === ownUserId
+          return (
+            <div className="cs-cell-proposal" key={proposerUserId}>
+              <p className="cs-cell-proposal-header">
+                <strong>{proposal.displayName}</strong> proposed a change to this test:
+              </p>
+              <pre className="cs-cell-proposal-diff">{proposal.source}</pre>
+              <div className="cs-cell-proposal-actions">
+                {isOwnProposal ? (
+                  onWithdrawProposal && (
+                    <button type="button" onClick={onWithdrawProposal}>
+                      Withdraw
+                    </button>
+                  )
+                ) : (
+                  <>
+                    {onAcceptProposal && (
+                      <button type="button" onClick={() => onAcceptProposal(proposerUserId)}>
+                        Accept
+                      </button>
+                    )}
+                    {onRejectProposal && (
+                      <button type="button" onClick={() => onRejectProposal(proposerUserId)}>
+                        Reject
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          )
+        })}
     </div>
   )
 }

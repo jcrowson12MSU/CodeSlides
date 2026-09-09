@@ -278,17 +278,21 @@ export interface SetElementConfig {
 // TODO.md #65: on a review_mode document, stage `source` as this
 // connection's proposed new content for `cell_id` -- does not re-run or
 // broadcast the way EditCell does, only stages a proposal for review.
+// `element_id`, when set, targets a `tests` element's own source
+// instead of the cell's primary source (TODO.md #65 follow-up).
 export interface PushCell {
   type: 'push_cell'
   session_id: string
   cell_id: string
   source: string
+  element_id?: string
 }
 
 export interface WithdrawProposal {
   type: 'withdraw_proposal'
   session_id: string
   cell_id: string
+  element_id?: string
 }
 
 export interface AcceptProposal {
@@ -296,6 +300,7 @@ export interface AcceptProposal {
   session_id: string
   cell_id: string
   proposer_user_id: string
+  element_id?: string
 }
 
 export interface RejectProposal {
@@ -303,6 +308,7 @@ export interface RejectProposal {
   session_id: string
   cell_id: string
   proposer_user_id: string
+  element_id?: string
 }
 
 export type ClientMessage =
@@ -423,7 +429,8 @@ export interface SessionCreated {
 }
 
 // TODO.md #65: broadcast (peers-only) when a push_cell stages or
-// replaces a pending proposal.
+// replaces a pending proposal. `element_id` set means this proposal
+// targets a `tests` element's own source (TODO.md #65 follow-up).
 export interface CellProposed {
   type: 'cell_proposed'
   session_id: string
@@ -432,6 +439,7 @@ export interface CellProposed {
   proposer_display_name: string
   source: string
   created_at: string
+  element_id?: string
 }
 
 export interface ProposalWithdrawn {
@@ -439,6 +447,7 @@ export interface ProposalWithdrawn {
   session_id: string
   cell_id: string
   proposer_user_id: string
+  element_id?: string
 }
 
 export interface ProposalAccepted {
@@ -448,6 +457,7 @@ export interface ProposalAccepted {
   source: string
   accepted_from_user_id: string
   accepted_by_user_id: string
+  element_id?: string
 }
 
 export interface ProposalRejected {
@@ -455,6 +465,7 @@ export interface ProposalRejected {
   session_id: string
   cell_id: string
   rejected_by_user_id: string
+  element_id?: string
 }
 
 // TODO.md #65/PROPOSAL_review_workflow.md decision #3: sent only to a
@@ -465,6 +476,7 @@ export interface ProposalConflict {
   session_id: string
   cell_id: string
   source: string
+  element_id?: string
 }
 
 // TODO.md #46d-i: one connected peer's identity/presence, as bundled in

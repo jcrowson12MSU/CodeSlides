@@ -171,10 +171,14 @@ export interface CellProps {
   // safe rather than assuming that invariant holds.
   reviewMode?: boolean
   ownUserId?: string | null
-  onPushCell?: (source: string) => void
-  onWithdrawProposal?: () => void
-  onAcceptProposal?: (proposerUserId: string) => void
-  onRejectProposal?: (proposerUserId: string) => void
+  // TODO.md #65 follow-up: `elementId`, when passed, targets a `tests`
+  // element's own proposal instead of the cell's primary source -- the
+  // primary-source call sites simply omit it (App.tsx's per-cell
+  // wiring), so this is purely additive to the original #65 shape.
+  onPushCell?: (source: string, elementId?: string) => void
+  onWithdrawProposal?: (elementId?: string) => void
+  onAcceptProposal?: (proposerUserId: string, elementId?: string) => void
+  onRejectProposal?: (proposerUserId: string, elementId?: string) => void
   onRunCell: (source: string) => void
   onRunAll: (source: string) => void
   // TODO.md #46d-i: fired on this cell's primary editor gaining/losing
@@ -971,7 +975,22 @@ export function Cell({
           elementId={element.name}
           source={testSourceValues[element.name] ?? String(element.config.default ?? '')}
           result={isTestResult(content) ? content : null}
-          onChangeSource={(source) => onChangeTestSource(element.name, source)}
+          onChangeSource={
+            reviewMode && onPushCell
+              ? (source) => onPushCell(source, element.name)
+              : (source) => onChangeTestSource(element.name, source)
+          }
+          reviewMode={reviewMode}
+          ownUserId={ownUserId}
+          proposals={state?.elementProposals?.[element.name]}
+          conflict={state?.elementConflicts?.[element.name]}
+          onWithdrawProposal={onWithdrawProposal ? () => onWithdrawProposal(element.name) : undefined}
+          onAcceptProposal={
+            onAcceptProposal ? (proposerUserId) => onAcceptProposal(proposerUserId, element.name) : undefined
+          }
+          onRejectProposal={
+            onRejectProposal ? (proposerUserId) => onRejectProposal(proposerUserId, element.name) : undefined
+          }
         />
       )
     }
@@ -1239,7 +1258,7 @@ export function Cell({
           <pre className="cs-cell-proposal-diff">{state.conflict}</pre>
           <p>Re-push your change against the new version, or withdraw it.</p>
           {onWithdrawProposal && (
-            <button type="button" onClick={onWithdrawProposal}>
+            <button type="button" onClick={() => onWithdrawProposal()}>
               Withdraw my proposal
             </button>
           )}
@@ -1259,7 +1278,7 @@ export function Cell({
               <div className="cs-cell-proposal-actions">
                 {isOwnProposal ? (
                   onWithdrawProposal && (
-                    <button type="button" onClick={onWithdrawProposal}>
+                    <button type="button" onClick={() => onWithdrawProposal()}>
                       Withdraw
                     </button>
                   )

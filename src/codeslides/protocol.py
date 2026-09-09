@@ -80,24 +80,35 @@ class PushCell:
     (session.py) states. Rejected with an `ErrorMessage` if the document
     is not in review mode (use `EditCell` there instead) or if the
     sender hasn't sent `Join` yet (a proposal needs an identity to
-    attribute to, same requirement `SetPresence` already has)."""
+    attribute to, same requirement `SetPresence` already has).
+
+    `element_id`, when set, targets a `tests` element's own editable
+    source (`SetTestSource`'s domain, `ElementInstance.value`) instead of
+    the cell's primary source -- the follow-up closing the gap where a
+    deck with `hide_code=True` on every cell (its only editable surface
+    being a `tests` element) had no reachable review workflow at all.
+    `None` (the original, still-default meaning) targets the cell's
+    primary source, exactly as before this field existed."""
 
     type: ClassVar[str] = "push_cell"
     session_id: str
     cell_id: str
     source: str
+    element_id: str | None = None
 
 
 @dataclass
 class WithdrawProposal:
     """TODO.md #65: the proposer cancels their own pending proposal for
-    `cell_id`, before anyone accepts or rejects it. A no-op (not an
-    error) if the sender has no pending proposal for this cell -- e.g. a
-    double-click on a "Withdraw" button that already succeeded once."""
+    `cell_id` (or, if `element_id` is set, for that `tests` element's
+    proposal specifically), before anyone accepts or rejects it. A no-op
+    (not an error) if the sender has no matching pending proposal -- e.g.
+    a double-click on a "Withdraw" button that already succeeded once."""
 
     type: ClassVar[str] = "withdraw_proposal"
     session_id: str
     cell_id: str
+    element_id: str | None = None
 
 
 @dataclass
@@ -111,26 +122,33 @@ class AcceptProposal:
     proposal to accept, since more than one connection may have a
     pending proposal for the same cell at once (`PROPOSAL_review_workflow.md`
     decision #2: any single peer's accept is sufficient, but it must be
-    unambiguous *which* proposal was accepted)."""
+    unambiguous *which* proposal was accepted).
+
+    `element_id`, when set, accepts a `tests` element's pending proposal
+    (routed through `Kernel.on_tests_edited` instead of
+    `on_cell_edited`) rather than the cell's primary source."""
 
     type: ClassVar[str] = "accept_proposal"
     session_id: str
     cell_id: str
     proposer_user_id: str
+    element_id: str | None = None
 
 
 @dataclass
 class RejectProposal:
     """TODO.md #65: any editor-role peer explicitly dismisses
-    `proposer_user_id`'s pending proposal for `cell_id` without merging
-    it -- distinct from simply ignoring a proposal forever, so the
-    proposer gets an explicit signal (`ProposalRejected`) rather than
+    `proposer_user_id`'s pending proposal for `cell_id` (or, if
+    `element_id` is set, for that `tests` element specifically) without
+    merging it -- distinct from simply ignoring a proposal forever, so
+    the proposer gets an explicit signal (`ProposalRejected`) rather than
     silence."""
 
     type: ClassVar[str] = "reject_proposal"
     session_id: str
     cell_id: str
     proposer_user_id: str
+    element_id: str | None = None
 
 
 @dataclass
@@ -600,6 +618,9 @@ class CellProposed:
     proposer_display_name: str
     source: str
     created_at: str
+    # See PushCell.element_id's own docstring -- None means "the cell's
+    # primary source," matching this field's pre-existing default.
+    element_id: str | None = None
 
 
 @dataclass
@@ -612,6 +633,7 @@ class ProposalWithdrawn:
     session_id: str
     cell_id: str
     proposer_user_id: str
+    element_id: str | None = None
 
 
 @dataclass
@@ -630,30 +652,31 @@ class ProposalAccepted:
     source: str
     accepted_from_user_id: str
     accepted_by_user_id: str
+    element_id: str | None = None
 
 
 @dataclass
 class ProposalRejected:
-    """TODO.md #65: sent only to the proposer (`SenderOnly`) when
-    someone explicitly rejects their pending proposal via
-    `RejectProposal` -- a peer who isn't the proposer has no use for
-    this, they never see the proposal disappear as anything more than
-    "no longer pending" (mirrors `JoinAck`'s "only the connection this
-    concerns" precedent)."""
+    """TODO.md #65: sent to everyone (unwrapped -- the proposer being
+    rejected may or may not be the connection that sent the triggering
+    `RejectProposal`, so `Broadcast`/`SenderOnly` can't reliably reach
+    them; see `ws_handler.py`'s own note on this) when a pending proposal
+    via `RejectProposal` is dismissed."""
 
     type: ClassVar[str] = "proposal_rejected"
     session_id: str
     cell_id: str
     rejected_by_user_id: str
+    element_id: str | None = None
 
 
 @dataclass
 class ProposalConflict:
     """TODO.md #65/`PROPOSAL_review_workflow.md` decision #3: sent only
-    to the proposer (`SenderOnly`) when *someone else's* accepted
-    proposal changes `cell_id`'s accepted source out from under a still-
-    pending proposal this connection has open. Carries the cell's new
-    accepted `source` so the proposer's client can re-diff their own
+    to the proposer (via `ws_handler.ToUser`) when *someone else's*
+    accepted proposal changes `cell_id`'s accepted source out from under a
+    still-pending proposal this connection has open. Carries the cell's
+    new accepted `source` so the proposer's client can re-diff their own
     pending proposal against it and decide to re-push or withdraw, rather
     than silently losing the proposal or having it silently merged
     against a base it was never actually reviewed against."""
@@ -662,6 +685,7 @@ class ProposalConflict:
     session_id: str
     cell_id: str
     source: str
+    element_id: str | None = None
 
 
 @dataclass
