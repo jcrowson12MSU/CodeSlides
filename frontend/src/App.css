@@ -960,6 +960,44 @@ body.cs-resizing-vertical {
   padding-left: 1.25rem;
 }
 
+/* TODO.md #65-xii: each pending/proposed action is a collapsed-by-
+   default <details> -- collapsed since the raw summary text is
+   already enough for most changes, per the user's own explicit
+   request; expanding reveals ActionDiffPreview's real content. */
+.cs-cell-action-list {
+  list-style: none;
+  padding-left: 0;
+}
+
+.cs-cell-action-list summary {
+  cursor: pointer;
+  list-style: revert;
+  margin-left: 1.1rem;
+}
+
+.cs-cell-action-list details[open] summary {
+  margin-bottom: 0.35rem;
+}
+
+.cs-action-diff {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 0 0 0.35rem 1.1rem;
+  font-size: var(--cs-font-base);
+}
+
+.cs-action-diff .cm-editor {
+  max-height: 240px;
+  overflow: auto;
+}
+
+.cs-action-preview-oneliner {
+  margin: 0 0 0.35rem 1.1rem;
+  font-size: var(--cs-font-base);
+  color: #555;
+}
+
 .cs-cell-output {
   background: #f6f6f6;
   border-radius: 4px;

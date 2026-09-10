@@ -1287,6 +1287,10 @@ def test_websocket_push_cell_bundle_does_not_apply_until_accepted(tmp_path):
         assert proposed["type"] == "cell_bundle_proposed"
         assert proposed["cell_id"] == "cell_a"
         assert proposed["action_summaries"] == ["Rename to `renamed`"]
+        # TODO.md #65-xii: peers now see the actual proposed payload too
+        # (not just the summary string), so a reviewer's banner can
+        # render a real preview instead of only the one-line summary.
+        assert proposed["action_payloads"] == [rename_payload]
 
         # Nothing applied yet: deck unchanged on disk and in the Kernel.
         assert "def cell_a" in deck_path.read_text()
@@ -1677,6 +1681,10 @@ def test_websocket_push_cell_bundle_with_edit_cell_and_set_test_source_actions(t
         proposed = ws_b.receive_json()
         assert proposed["type"] == "cell_bundle_proposed"
         assert proposed["action_summaries"] == ["Edit code", "Edit test `check`", "Hide code"]
+        # TODO.md #65-xii: index-aligned with action_summaries, so Bob's
+        # reviewer banner can show a real source diff for the edit_cell/
+        # set_test_source actions.
+        assert proposed["action_payloads"] == [edit_payload, test_payload, hide_payload]
         alice_user_id = proposed["proposer_user_id"]
 
         ws_b.send_json(

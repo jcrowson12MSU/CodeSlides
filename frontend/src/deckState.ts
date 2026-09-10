@@ -1,6 +1,16 @@
 import { useMemo } from 'react'
 import type { ServerMessage } from './protocol'
 
+// TODO.md #65-xii: one staged/proposed action, shared shape between a
+// cell's own not-yet-pushed pendingActions (App.tsx) and an incoming
+// peer's structuralBundle (below) -- both are index-aligned
+// summary+payload pairs, so both banners can render the same
+// collapsible-preview UI (Cell.tsx's ActionDiffPreview) off one type.
+export interface BundleAction {
+  summary: string
+  payload: Record<string, unknown>
+}
+
 // Client-side mirror of a Session's cell instance state (ARCHITECTURE.md
 // section 1), reduced from the ordered ServerMessage stream a
 // useCodeSlidesSocket connection receives. Each cell tracks its own
@@ -51,7 +61,11 @@ export interface CellState {
   // and/or structural changes) pushed for this cell on a review_mode
   // document -- at most one bundle per cell at a time (a second push
   // replaces it outright). `null` when there's no pending bundle.
-  structuralBundle: { proposerUserId: string; displayName: string; actionSummaries: string[] } | null
+  // `actions` (added #65-xii) carries each action's real payload
+  // alongside its summary, so the reviewer's banner can render a
+  // preview (source diff / best-effort one-liner), not just the
+  // summary text.
+  structuralBundle: { proposerUserId: string; displayName: string; actions: BundleAction[] } | null
 }
 
 export type DeckState = Record<string, CellState>
@@ -113,7 +127,10 @@ export function reduceDeckState(messages: ServerMessage[]): DeckState {
           structuralBundle: {
             proposerUserId: message.proposer_user_id,
             displayName: message.proposer_display_name,
-            actionSummaries: message.action_summaries,
+            actions: message.action_summaries.map((summary, i) => ({
+              summary,
+              payload: message.action_payloads[i] ?? {},
+            })),
           },
         }
         break

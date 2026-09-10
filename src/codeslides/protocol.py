@@ -627,16 +627,20 @@ class CellAttributionChanged:
 
 @dataclass
 class CellBundleProposed:
-    """TODO.md #65-x: broadcast (peers-only, `Broadcast`-wrapped -- the
-    proposer already has this exact state client-side, having just
-    pushed it, same "sender already knows" reasoning `PresenceUpdate`
-    about a peer's own join already uses) when a `PushCellBundle` stages
-    or replaces a pending
-    structural bundle. `actions` carries only the `summary` strings (not
-    the full wire-format `payload`s -- a receiving peer's reviewer
-    banner only ever displays the summaries, it never needs to replay
-    anything itself; only the server's own `AcceptCellBundle` handling
-    ever decodes/replays a payload)."""
+    """TODO.md #65-x/#65-xii: broadcast (peers-only, `Broadcast`-wrapped
+    -- the proposer already has this exact state client-side, having
+    just pushed it, same "sender already knows" reasoning
+    `PresenceUpdate` about a peer's own join already uses) when a
+    `PushCellBundle` stages or replaces a pending structural bundle.
+
+    `action_payloads` was added in #65-xii, alongside `action_summaries`
+    -- a receiving peer's reviewer banner now renders a real preview
+    (a source diff for `edit_cell`/`set_test_source`, a best-effort
+    one-liner for cheap structural types) rather than the summary
+    string alone, so it needs the same wire-format payload dicts
+    `AcceptCellBundle`'s own replay already decodes. Index-aligned with
+    `action_summaries`: `action_payloads[i]` is the payload backing
+    `action_summaries[i]`."""
 
     type: ClassVar[str] = "cell_bundle_proposed"
     session_id: str
@@ -644,6 +648,7 @@ class CellBundleProposed:
     proposer_user_id: str
     proposer_display_name: str
     action_summaries: list[str]
+    action_payloads: list[dict[str, Any]]
     created_at: str
 
 

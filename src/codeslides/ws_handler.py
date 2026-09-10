@@ -891,6 +891,7 @@ def handle_message(
                     proposer_user_id=peer.user_id,
                     proposer_display_name=peer.display_name or "",
                     action_summaries=[a.summary for a in actions],
+                    action_payloads=[a.payload for a in actions],
                     created_at=created_at.isoformat(),
                 )
             )

@@ -4510,6 +4510,76 @@ reshape the plan below and are called out explicitly where they apply:
       only after clicking Push does the peer see "Alice proposed these
       changes to this cell: Edit test `<name>`" with Accept/Reject.
 
+  - [x] 65-xii. **Push/accept notifications show the actual proposed
+    content, both banners collapse per-action, and push/accept works
+    from Slides view too**, all per direct user request following
+    #65-xi's shipment.
+    - **Real preview, not just the summary string.** Protocol:
+      `CellBundleProposed` gained `action_payloads: list[dict]`
+      (`protocol.py`/`protocol.ts`), index-aligned with
+      `action_summaries` -- previously the server never sent a
+      receiving peer the actual payload at all (a deliberate #65-x
+      design decision, since the peer's banner "never needed to replay
+      anything"), only the pusher's own local `pendingActions` had it.
+      `ws_handler.py`'s `PushCellBundle` handler now includes
+      `[a.payload for a in actions]` alongside the existing summaries
+      -- zero new server-side storage, `StructuralAction.payload`
+      already held it. Frontend: `deckState.ts`'s `structuralBundle`
+      carries `actions: BundleAction[]` (summary+payload pairs, a new
+      shared type) instead of `actionSummaries: string[]` alone;
+      `App.tsx` stopped dropping `.payload` before handing
+      `pendingActions[cellId]` to `Cell.tsx` (previously mapped down to
+      `.summary` only right at the `<Cell>` call site).
+    - **`ActionDiffPreview.tsx`** (new): renders one action's actual
+      content. `edit_cell`/`set_test_source` get a real line-level diff
+      against the cell's/element's current known source, via
+      `@codemirror/merge`'s `unifiedMergeView` (new frontend
+      dependency -- CodeMirror was already vendored, so this was the
+      natural fit over a standalone diff library), read-only
+      (`mergeControls: false` -- its own per-chunk Accept/Reject
+      buttons would otherwise sit confusingly next to, and look
+      identical to, the surrounding banner's real bundle-level
+      buttons; caught visually during manual verification, not by any
+      automated check). The 11 structural types get a best-effort
+      one-liner where deriving it is cheap (rename → "→ `new_name`",
+      hide toggles → "→ On/Off", element config → changed key/values)
+      or nothing at all where it isn't (add/remove/reorder element,
+      etc. -- ARCHITECTURE.md §5b's "no live preview" tradeoff still
+      holds for these, now scoped to just this subset rather than
+      every structural action).
+    - **Collapsed by default, per the user's explicit choice.** Both
+      the pending-actions banner (Cell.tsx's own not-yet-pushed list)
+      and the proposal banner (a peer's incoming bundle) render each
+      action inside a native `<details>`/`<summary>` (no new dependency
+      needed for the collapse mechanic itself) -- the summary text
+      alone is visible by default, expanding reveals
+      `ActionDiffPreview`.
+    - **Slides view push/accept parity.** `SlideShow.tsx` was missing
+      the entire bundle-UI prop surface entirely until now --
+      `reviewMode`/`onStagePrimaryEdit`/`onStageTestEdit` already
+      forwarded through, letting a Slides-view user *stage* a change,
+      but neither the resulting Push/Discard banner nor an incoming
+      Accept/Reject banner ever rendered there (both banners live
+      inside `Cell.tsx`, which Slides view already renders one-at-a-
+      time, but `SlideShowProps` never had `pendingActions`/
+      `onPushPendingActions`/`onDiscardPendingActions`/`onAcceptBundle`/
+      `onRejectBundle`/`onWithdrawBundle` to forward). Added all six,
+      forwarded to `<Cell>` exactly as `App.tsx`'s Cells view already
+      does, and wired `App.tsx`'s own `<SlideShow>` call to pass the
+      same handlers it already gives Cells view.
+    - Tests: extended the two `cell_bundle_proposed`-asserting tests in
+      `test_server_ws.py` to also assert `action_payloads` round-trips
+      the real payload dicts. Full suite: 617 passed, no regressions.
+      `tsc -b` clean.
+    - Verified end-to-end with two real browser contexts (Playwright)
+      against `Lectures/Chapters/chapter4.py --review-mode`: both
+      banners render collapsed by default, expanding one shows a real
+      diff (old value struck through/highlighted, new value shown)
+      with no stray merge-view buttons; navigating both tabs into
+      Slides view and repeating the same edit-push-accept flow there
+      produces the identical collapsed-banner/diff/Push/Accept behavior
+      Cells view already had.
+
 - [ ] **66. Collapsible chat panel for shared documents** -- lower-right
   corner collapsed to a small affordance; expands to a full-height
   third column to the right of the cells and the existing element-tabs

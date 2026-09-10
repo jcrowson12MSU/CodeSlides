@@ -589,7 +589,11 @@ through this one bundle:
   surfacing only when someone tries to accept it later. Only a
   `CellBundleProposed` (`Broadcast`, peers-only, since the proposer
   already has this state) tells every other connection a bundle now
-  exists.
+  exists — carrying both `action_summaries` and, since `TODO.md`
+  #65-xii, an index-aligned `action_payloads` (the same wire-format
+  dicts `StructuralAction.payload` already stored), per the user's own
+  explicit request that a reviewer's banner show the actual proposed
+  content, not just its one-line summary.
 - **`AcceptCellBundle`** (any editor-role peer, not just the proposer —
   `PROPOSAL_review_workflow.md`'s decision that any single peer's accept
   is sufficient, matching "there's only one shared namespace to merge
@@ -630,17 +634,28 @@ through this one bundle:
   `SetTestSource` action, letting every peer (accepter included) learn
   the new test source the same way `CellSourceChanged` already covers a
   primary-source edit.
-- **No live client-side preview**, for structural actions specifically —
-  their server replies carry fields the client cannot cheaply reproduce
-  ahead of time (`instance`/`source`/`elements`/`layout`, all derived
-  server-side from `display_source`/the real parsed `Cell`). `App.tsx`
-  stages a plain list of the pending actions' own `summary` strings
-  (e.g. "Edit code", "Edit test `check`", "Hide code") near a Push
-  button (`.cs-cell-pending-actions`), rather than attempting to
-  re-render the cell as if each change were already live. A deliberate
-  simplicity/fidelity tradeoff: what you see is always exactly what you
-  asked for, never a simulated re-render that could drift from what
-  actually happens on accept.
+- **A real per-action preview, collapsed by default (`TODO.md`
+  #65-xii).** Both the pending-actions banner (a connection's own
+  not-yet-pushed list) and the proposal banner (an incoming bundle)
+  render each action inside a native `<details>`/`<summary>` — the
+  summary text alone by default, expanding it reveals
+  `ActionDiffPreview.tsx`: a real line-level diff (via `@codemirror/
+  merge`'s `unifiedMergeView`, read-only — `mergeControls: false`, so
+  its own per-chunk accept/reject controls don't sit confusingly next
+  to the banner's real bundle-level ones) for `EditCell`/
+  `SetTestSource` actions against the cell's/element's current known
+  source, and a best-effort one-liner (new name, on/off, changed
+  config keys) for the handful of structural types where deriving one
+  is cheap. **No live preview** still holds for the rest of the
+  structural actions specifically (add/remove/reorder element, etc.) —
+  their server replies carry fields the client cannot cheaply
+  reproduce ahead of time (`instance`/`source`/`elements`/`layout`, all
+  derived server-side from `display_source`/the real parsed `Cell`), so
+  those just show their summary text with nothing to expand, rather
+  than attempting to re-render the cell as if each change were already
+  live. A deliberate simplicity/fidelity tradeoff: what you see is
+  always exactly what you asked for, never a simulated re-render that
+  could drift from what actually happens on accept.
 
 **Scope boundaries** (all deliberate, per `PROPOSAL_review_workflow.md`'s
 resolved open questions): per-cell only, no batching multiple *cells*
@@ -657,6 +672,20 @@ A viewer-role connection can do none of this — every #65 message type is
 simply absent from `VIEWER_ALLOWED_MESSAGE_TYPES`'s allowlist, same
 "blocked by default until deliberately added" posture every other
 mutating message type already has.
+
+**Both views, not just Cells (`TODO.md` #65-xii).** `Cell.tsx` (the one
+component both `App.tsx`'s flat "Cells" view and `SlideShow.tsx`'s
+one-at-a-time Slides view render) owns both banners, but `SlideShow.tsx`
+itself didn't forward the six bundle-related props
+(`pendingActions`/`onPushPendingActions`/`onDiscardPendingActions`/
+`onAcceptBundle`/`onRejectBundle`/`onWithdrawBundle`) until #65-xii —
+before that, a Slides-view user could *stage* a change (`reviewMode`/
+`onStagePrimaryEdit`/`onStageTestEdit` already flowed through) but would
+never see the resulting Push/Discard banner, nor would a peer ever see
+an incoming Accept/Reject banner, while in Slides view. Fixed by adding
+the same six props to `SlideShowProps` and forwarding them to `<Cell>`
+exactly as Cells view already did — push/accept now works identically
+in both views.
 
 **History: this used to be two separate mechanisms, unified in
 `TODO.md` #65-xi after a real user bug report.** The original #65
