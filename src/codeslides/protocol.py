@@ -84,85 +84,76 @@ class EditCell:
 
 
 @dataclass
-class PushCellBundle:
-    """TODO.md #65/#65-x/#65-xi: on a `review_mode` document, stage an
-    ordered list of changes to `cell_id` -- an edit to its primary
-    source (an `EditCell`-shaped action), an edit to a `tests` element's
-    source (`SetTestSource`-shaped), and/or structural changes (rename,
-    hide toggles, add/remove element, reorder elements, element config,
-    add/remove primary editor, main/setup-cell flags). None of `session.
-    source_overrides`/the deck's `.py` file/the Kernel's loaded Deck is
-    touched until `AcceptCellBundle` replays them. Replaces this same
-    connection's own prior pending bundle for `cell_id`, if any --
-    everything pushable for one cell unifies into this single mechanism
-    (earlier revisions had a separate `PushCell`/`CellProposal` path
-    specifically for source text, which broadcast to peers immediately
-    on every push with no explicit button click; #65-xi removed it for
-    being inconsistent with -- and more surprising than -- the
-    structural side's own explicit-push requirement).
+class PushCellState:
+    """TODO.md #68: on a `review_mode` document, stage `cell_id`'s
+    *entire current state* as one snapshot -- its primary source, every
+    `tests`/`notes` element's own source (keyed by `element_id`),
+    `hide_code`/`hide_def`, and `new_cell_id` (its name after this push;
+    equal to `cell_id` when not being renamed). Replaces #65's ordered
+    `actions` list (`PushCellBundle`/`AcceptCellBundle`'s per-message
+    replay) entirely: a real classroom bug report showed a student
+    editing-and-running the same cell repeatedly before pushing built up
+    a long queue of redundant staged edits, each one separately replayed
+    (and separately re-executed) on Accept -- confusing and, at enough
+    volume, disruptive mid-class. There is no longer a queue to build up
+    at all: every local change (of any kind covered here) simply
+    overwrites this same snapshot in place, so a push always reflects
+    only the cell's current state, however many edits led to it, and
+    Accept applies that one snapshot directly rather than replaying a
+    variable-length history of individual messages.
 
-    Each entry of `actions` is a plain `{"payload": {...}, "summary":
-    str}` dict (matching this codebase's existing `list[dict[str, Any]]`
-    precedent for structured sub-records, e.g. `ElementAdded.elements`,
-    rather than a nested dataclass -- `decode_client_message`'s generic
-    `cls(**fields)` construction doesn't recursively reconstruct nested
-    dataclasses from JSON, so a nested-dataclass field would silently
-    decode as a plain dict anyway). `payload` is the exact wire-format
-    dict `protocol.encode()` would produce for the original client
-    message (`AddElement`, `RenameCell`, `SetHideCode`, etc.;
-    `payload["type"]` is that message's own type tag), so accepting a
-    bundle can `decode_client_message` and replay each one through the
-    ordinary dispatch -- no separate "apply this action" implementation
-    needed. `summary` is a short, human-readable description for the
-    reviewer's banner (e.g. "Rename to `foo`"), computed once by the
-    pushing client."""
+    No diff/preview is shown anywhere for this on either side (pushing
+    or reviewing) -- by explicit design choice: the pushing student
+    already sees their own current cell state on their own screen (no
+    need to re-show it as a diff before they push what they can already
+    see), and Accept is a deliberately simple "take their current
+    state" action, not a code-review flow. Replaces this same
+    connection's own prior pending push for `cell_id`, if any."""
 
-    type: ClassVar[str] = "push_cell_bundle"
+    type: ClassVar[str] = "push_cell_state"
     session_id: str
     cell_id: str
-    actions: list[dict[str, Any]]
+    new_cell_id: str
+    source: str
+    test_sources: dict[str, str]
+    notes_sources: dict[str, str]
+    hide_code: bool
+    hide_def: bool
 
 
 @dataclass
-class WithdrawCellBundle:
-    """TODO.md #65-x: the proposer cancels their own pending structural
-    bundle for `cell_id`, before anyone accepts or rejects it. A no-op
-    (not an error) if the sender has no pending bundle for this cell."""
+class WithdrawCellState:
+    """TODO.md #68: the proposer cancels their own pending push for
+    `cell_id`, before anyone accepts or rejects it. A no-op (not an
+    error) if the sender has no pending push for this cell."""
 
-    type: ClassVar[str] = "withdraw_cell_bundle"
+    type: ClassVar[str] = "withdraw_cell_state"
     session_id: str
     cell_id: str
 
 
 @dataclass
-class AcceptCellBundle:
-    """TODO.md #65-x: any editor-role peer accepts `proposer_user_id`'s
-    pending structural bundle for `cell_id` -- replays every staged
-    action, in order, through the ordinary `handle_message` dispatch
-    (exactly what a non-review-mode document already does for each of
-    these message types individually), then broadcasts `BundleAccepted`
-    plus whatever each replayed action's own reply normally is. Applied
-    atomically: if any action in the bundle fails, none of its later
-    actions are attempted and nothing already-applied within this same
-    accept is rolled back further than "stop replaying" (each action is
-    itself already atomic -- an immediate disk write -- so a mid-bundle
-    failure leaves the document in the state that resulted from
-    whichever earlier actions in the bundle already succeeded, not a
-    half-applied single action)."""
+class AcceptCellState:
+    """TODO.md #68: any editor-role peer accepts `proposer_user_id`'s
+    pending push for `cell_id` -- applies the whole snapshot directly
+    (source, test/notes sources, hide_code/hide_def, rename) and
+    re-runs the cell, then broadcasts `CellStateAccepted` plus the
+    resulting execution/content-changed messages, same shape a non-
+    review-mode document's own immediate edits already produce."""
 
-    type: ClassVar[str] = "accept_cell_bundle"
+    type: ClassVar[str] = "accept_cell_state"
     session_id: str
     cell_id: str
     proposer_user_id: str
 
 
 @dataclass
-class RejectCellBundle:
-    """TODO.md #65-x: any editor-role peer explicitly dismisses
-    `proposer_user_id`'s pending structural bundle for `cell_id` without
-    replaying any of it."""
+class RejectCellState:
+    """TODO.md #68: any editor-role peer explicitly dismisses
+    `proposer_user_id`'s pending push for `cell_id` without applying
+    it."""
 
-    type: ClassVar[str] = "reject_cell_bundle"
+    type: ClassVar[str] = "reject_cell_state"
     session_id: str
     cell_id: str
     proposer_user_id: str
@@ -685,70 +676,61 @@ class CellAttributionChanged:
 
 
 @dataclass
-class CellBundleProposed:
-    """TODO.md #65-x/#65-xii: broadcast (peers-only, `Broadcast`-wrapped
-    -- the proposer already has this exact state client-side, having
-    just pushed it, same "sender already knows" reasoning
-    `PresenceUpdate` about a peer's own join already uses) when a
-    `PushCellBundle` stages or replaces a pending structural bundle.
+class CellStatePushed:
+    """TODO.md #68: broadcast (peers-only, `Broadcast`-wrapped -- the
+    proposer already knows their own state, having just pushed it, same
+    "sender already knows" reasoning `PresenceUpdate` about a peer's own
+    join already uses) when a `PushCellState` stages or replaces a
+    pending push. Carries only the proposer's identity, not the pushed
+    state itself -- there is deliberately no diff/preview shown to a
+    reviewer (see `PushCellState`'s own docstring), so a peer's UI only
+    ever needs to know a push exists and who made it, not what's in it."""
 
-    `action_payloads` was added in #65-xii, alongside `action_summaries`
-    -- a receiving peer's reviewer banner now renders a real preview
-    (a source diff for `edit_cell`/`set_test_source`, a best-effort
-    one-liner for cheap structural types) rather than the summary
-    string alone, so it needs the same wire-format payload dicts
-    `AcceptCellBundle`'s own replay already decodes. Index-aligned with
-    `action_summaries`: `action_payloads[i]` is the payload backing
-    `action_summaries[i]`."""
-
-    type: ClassVar[str] = "cell_bundle_proposed"
+    type: ClassVar[str] = "cell_state_pushed"
     session_id: str
     cell_id: str
     proposer_user_id: str
     proposer_display_name: str
-    action_summaries: list[str]
-    action_payloads: list[dict[str, Any]]
     created_at: str
 
 
 @dataclass
-class BundleWithdrawn:
-    """TODO.md #65-x: broadcast (peers-only) when a proposer withdraws
-    their own pending structural bundle."""
+class CellStateWithdrawn:
+    """TODO.md #68: broadcast (peers-only) when a proposer withdraws
+    their own pending push."""
 
-    type: ClassVar[str] = "bundle_withdrawn"
+    type: ClassVar[str] = "cell_state_withdrawn"
     session_id: str
     cell_id: str
     proposer_user_id: str
 
 
 @dataclass
-class BundleAccepted:
-    """TODO.md #65-x: sent to everyone (unwrapped, sender-and-peers-alike
+class CellStateAccepted:
+    """TODO.md #68: sent to everyone (unwrapped, sender-and-peers-alike
     -- same default every pre-#46d message type already uses) when an
-    `AcceptCellBundle` finishes replaying a bundle's actions. Carries
-    only the outcome summary; the replayed actions' own individual
-    replies (`CellRenamed`, `ElementAdded`, etc., plus their usual
-    `cell_status`/`cell_output`) follow immediately after this in the
-    same reply list, exactly as if each had been sent individually on a
+    `AcceptCellState` applies a pushed snapshot. Carries only the
+    outcome; the resulting execution/content-changed messages
+    (`CellSourceChanged`, `TestSourceChanged`, `CellStatus`,
+    `CellOutput`, etc.) follow immediately after this in the same reply
+    list, exactly as if the change had been made directly on a
     non-review-mode document."""
 
-    type: ClassVar[str] = "bundle_accepted"
+    type: ClassVar[str] = "cell_state_accepted"
     session_id: str
     cell_id: str
     accepted_from_user_id: str
     accepted_by_user_id: str
-    action_summaries: list[str]
 
 
 @dataclass
-class BundleRejected:
-    """TODO.md #65-x: sent to everyone (unwrapped -- same reasoning
+class CellStateRejected:
+    """TODO.md #68: sent to everyone (unwrapped -- same reasoning
     `ProposalRejected` already documents: the proposer being rejected
     may not be who sent the rejection, so unwrapped delivery is the only
     shape guaranteed to reach them)."""
 
-    type: ClassVar[str] = "bundle_rejected"
+    type: ClassVar[str] = "cell_state_rejected"
     session_id: str
     cell_id: str
     rejected_by_user_id: str
@@ -1185,13 +1167,15 @@ class ChatMessageReceived:
     (`ws_handler.py`'s `SendChatMessage` handler).
 
     `is_system` marks an automatic status message the server posts on a
-    `PushCellBundle`/`AcceptCellBundle`/`RejectCellBundle` action (e.g.
-    "Alice pushed a change to `live_demo`") rather than a message a person
-    typed -- the frontend renders these distinctly (no color/avatar,
-    muted styling), per `PROPOSAL_review_workflow.md` section 3. A system
-    message has no real sender, so `user_id`/`display_name`/`color` are
-    empty strings rather than `None`, keeping the field types simple for
-    the frontend (no extra null-handling branch for a rare case)."""
+    `PushCellState`/`AcceptCellState`/`RejectCellState` action (TODO.md
+    #68 -- originally `PushCellBundle`/`AcceptCellBundle`/
+    `RejectCellBundle`) (e.g. "Alice pushed a change to `live_demo`")
+    rather than a message a person typed -- the frontend renders these
+    distinctly (no color/avatar, muted styling), per
+    `PROPOSAL_review_workflow.md` section 3. A system message has no
+    real sender, so `user_id`/`display_name`/`color` are empty strings
+    rather than `None`, keeping the field types simple for the frontend
+    (no extra null-handling branch for a rare case)."""
 
     type: ClassVar[str] = "chat_message_received"
     session_id: str
@@ -1221,10 +1205,10 @@ ClientMessage = (
     | SetPresence
     | SendChatMessage
     | EditCell
-    | PushCellBundle
-    | WithdrawCellBundle
-    | AcceptCellBundle
-    | RejectCellBundle
+    | PushCellState
+    | WithdrawCellState
+    | AcceptCellState
+    | RejectCellState
     | RunAll
     | SetElementValue
     | SetUiState
@@ -1260,10 +1244,10 @@ ServerMessage = (
     | TestSourceChanged
     | NotesSourceChanged
     | CellAttributionChanged
-    | CellBundleProposed
-    | BundleWithdrawn
-    | BundleAccepted
-    | BundleRejected
+    | CellStatePushed
+    | CellStateWithdrawn
+    | CellStateAccepted
+    | CellStateRejected
     | ElementOutput
     | GraphUpdated
     | SessionCloned
@@ -1300,10 +1284,10 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
         SetPresence,
         SendChatMessage,
         EditCell,
-        PushCellBundle,
-        WithdrawCellBundle,
-        AcceptCellBundle,
-        RejectCellBundle,
+        PushCellState,
+        WithdrawCellState,
+        AcceptCellState,
+        RejectCellState,
         RunAll,
         SetElementValue,
         SetUiState,

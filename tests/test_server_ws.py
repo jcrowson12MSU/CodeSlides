@@ -1146,11 +1146,12 @@ def test_websocket_session_created_reports_review_mode():
 
 
 def test_websocket_edit_cell_rejected_on_review_mode_document():
-    """TODO.md #65-iv/#65-xi: edit_cell -- today's always-live immediate-
-    broadcast path -- is rejected outright on a review_mode document
-    rather than silently reinterpreted as a push; the frontend is
-    expected to stage this edit locally and push it via push_cell_bundle
-    once it knows via session_created this document is in review mode."""
+    """TODO.md #65-iv/#65-xi/#68: edit_cell -- today's always-live
+    immediate-broadcast path -- is rejected outright on a review_mode
+    document rather than silently reinterpreted as a push; the frontend
+    is expected to keep this edit as a local draft and push it via
+    push_cell_state once it knows via session_created this document is
+    in review mode."""
     with TestClient(create_app(_build_deck(), review_mode=True)) as client:
         with client.websocket_connect("/ws?document=review-2") as ws:
             ws.receive_json()  # session_created
@@ -1172,10 +1173,10 @@ def test_websocket_edit_cell_rejected_on_review_mode_document():
 
 
 def test_websocket_non_review_mode_document_is_completely_unaffected_by_65():
-    """TODO.md #65: confirms a plain (review_mode=False, today's default)
-    shared document behaves exactly as before this feature existed --
-    edit_cell still runs/broadcasts immediately, and no CellInstance ever
-    gets a pending structural_bundle."""
+    """TODO.md #65/#68: confirms a plain (review_mode=False, today's
+    default) shared document behaves exactly as before this feature
+    existed -- edit_cell still runs/broadcasts immediately, and no
+    CellInstance ever gets a pending_state."""
     with TestClient(create_app(_build_deck())) as client:
         with (
             client.websocket_connect("/ws?document=plain-3") as ws_a,
@@ -1200,7 +1201,7 @@ def test_websocket_non_review_mode_document_is_completely_unaffected_by_65():
             session = client.app.state.registry.get("plain-3")
             assert session.review_mode is False
             assert "return 1" in session.source_overrides["live_demo"]
-            assert all(inst.structural_bundle is None for inst in session.instances.values())
+            assert all(inst.pending_state is None for inst in session.instances.values())
 
 
 # -- TODO.md #65-x: structural (non-source) changes through review too --
@@ -1213,10 +1214,10 @@ def _write_structural_deck(tmp_path):
 
 
 def test_websocket_rename_cell_rejected_on_review_mode_document(tmp_path):
-    """TODO.md #65-x: rename_cell -- one of the 15 structural message
-    types that write straight to disk immediately -- is rejected outright
-    on a review_mode document, same "use push_cell_bundle instead"
-    posture edit_cell/set_test_source already have."""
+    """TODO.md #65-x/#68: rename_cell -- part of the source+test+notes+
+    hide+rename push scope -- is rejected outright on a review_mode
+    document, same "use push_cell_state instead" posture edit_cell/
+    set_test_source already have."""
     from codeslides.loader import load_deck
 
     deck_path = _write_structural_deck(tmp_path)
@@ -1233,11 +1234,13 @@ def test_websocket_rename_cell_rejected_on_review_mode_document(tmp_path):
             assert "def cell_a" in deck_path.read_text()
 
 
-def test_websocket_push_cell_bundle_does_not_apply_until_accepted(tmp_path):
-    """TODO.md #65-x: push_cell_bundle only stages the bundle -- none of
-    its actions are replayed, no disk write happens, and the only wire
-    effect is cell_bundle_proposed to the *other* peer (Broadcast,
-    peers-only)."""
+def test_websocket_push_cell_state_does_not_apply_until_accepted(tmp_path):
+    """TODO.md #68: push_cell_state only stages the pushed snapshot --
+    none of it is applied, no disk write happens, and the only wire
+    effect is cell_state_pushed to the *other* peer (Broadcast,
+    peers-only) -- carrying just the proposer's identity, no preview of
+    the pushed content itself (deliberately, per the user's own "no
+    diff shown anywhere" design call)."""
     from codeslides.loader import load_deck
 
     deck_path = _write_structural_deck(tmp_path)
@@ -1252,35 +1255,38 @@ def test_websocket_push_cell_bundle_does_not_apply_until_accepted(tmp_path):
             ws_a.receive_json()  # join_ack
             ws_b.receive_json()  # presence_update
 
-            rename_payload = {"type": "rename_cell", "session_id": "struct-2", "cell_id": "cell_a", "new_name": "renamed"}
             ws_a.send_json(
                 {
-                    "type": "push_cell_bundle",
+                    "type": "push_cell_state",
                     "session_id": "struct-2",
                     "cell_id": "cell_a",
-                    "actions": [{"payload": rename_payload, "summary": "Rename to `renamed`"}],
+                    "new_cell_id": "renamed",
+                    "source": "def cell_a():\n    a = 2\n    return a\n",
+                    "test_sources": {},
+                    "notes_sources": {},
+                    "hide_code": True,
+                    "hide_def": False,
                 }
             )
             proposed = ws_b.receive_json()
-            assert proposed["type"] == "cell_bundle_proposed"
+            assert proposed["type"] == "cell_state_pushed"
             assert proposed["cell_id"] == "cell_a"
-            assert proposed["action_summaries"] == ["Rename to `renamed`"]
-            # TODO.md #65-xii: peers now see the actual proposed payload too
-            # (not just the summary string), so a reviewer's banner can
-            # render a real preview instead of only the one-line summary.
-            assert proposed["action_payloads"] == [rename_payload]
+            assert proposed["proposer_display_name"] == "Alice"
 
             # Nothing applied yet: deck unchanged on disk and in the Kernel.
             assert "def cell_a" in deck_path.read_text()
+            assert "a = 1" in deck_path.read_text()
             assert "cell_a" in client.app.state.registry.kernel.deck.cells
             assert "renamed" not in client.app.state.registry.kernel.deck.cells
+            assert client.app.state.registry.kernel.deck.cells["cell_a"].hide_code is False
 
 
-def test_websocket_accept_cell_bundle_replays_actions_in_order_and_attributes_to_proposer(tmp_path):
-    """TODO.md #65-x: accepting a bundle replays every staged action, in
-    order, through the ordinary handler dispatch (so hide_code=True
-    applied first survives a subsequent rename of the same cell), then
-    attributes the change to the *proposer*, not whoever clicked Accept."""
+def test_websocket_accept_cell_state_applies_source_hide_and_rename_and_attributes_to_proposer(tmp_path):
+    """TODO.md #68: accepting a pushed snapshot applies every field it
+    carries (source, hide_code, rename -- in that fixed order, source/
+    hide first under the cell's *current* name, rename last), then
+    attributes the change to the *proposer*, not whoever clicked
+    Accept."""
     from codeslides.loader import load_deck
 
     deck_path = _write_structural_deck(tmp_path)
@@ -1299,27 +1305,17 @@ def test_websocket_accept_cell_bundle_replays_actions_in_order_and_attributes_to
             bob_user_id = bob_join_ack["user_id"]
             ws_a.receive_json()  # presence_update about Bob
 
-            hide_payload = {
-                "type": "set_hide_code",
-                "session_id": "struct-3",
-                "cell_id": "cell_a",
-                "hide_code": True,
-            }
-            rename_payload = {
-                "type": "rename_cell",
-                "session_id": "struct-3",
-                "cell_id": "cell_a",
-                "new_name": "renamed",
-            }
             ws_a.send_json(
                 {
-                    "type": "push_cell_bundle",
+                    "type": "push_cell_state",
                     "session_id": "struct-3",
                     "cell_id": "cell_a",
-                    "actions": [
-                        {"payload": hide_payload, "summary": "Hide code"},
-                        {"payload": rename_payload, "summary": "Rename to `renamed`"},
-                    ],
+                    "new_cell_id": "renamed",
+                    "source": "def cell_a():\n    a = 2\n    return a\n",
+                    "test_sources": {},
+                    "notes_sources": {},
+                    "hide_code": True,
+                    "hide_def": False,
                 }
             )
             proposed = ws_b.receive_json()
@@ -1327,24 +1323,37 @@ def test_websocket_accept_cell_bundle_replays_actions_in_order_and_attributes_to
             ws_b.receive_json()  # TODO.md #66-iii: system chat message for the push
             ws_a.receive_json()  # same system chat message, echoed to the pusher too
 
-            # Bob (not the proposer) accepts Alice's bundle.
+            # Bob (not the proposer) accepts Alice's push.
             ws_b.send_json(
                 {
-                    "type": "accept_cell_bundle",
+                    "type": "accept_cell_state",
                     "session_id": "struct-3",
                     "cell_id": "cell_a",
                     "proposer_user_id": alice_user_id,
                 }
             )
-            # bundle_accepted, hide_code_set, cell_renamed,
-            # cell_attribution_changed, and (TODO.md #66-iii) a system chat
-            # message about the acceptance.
-            bob_replies = [ws_b.receive_json() for _ in range(5)]
-            accepted = next(m for m in bob_replies if m["type"] == "bundle_accepted")
+            # cell_state_accepted, cell_source_changed, cell_status,
+            # cell_output, hide_code_set, cell_renamed,
+            # cell_attribution_changed, and (TODO.md #66-iii) a system
+            # chat message about the acceptance.
+            def _read_until_chat_message(ws):
+                messages = []
+                for _ in range(12):
+                    msg = ws.receive_json()
+                    messages.append(msg)
+                    if msg["type"] == "chat_message_received":
+                        return messages
+                raise AssertionError(f"no chat_message_received among {messages}")
+
+            bob_replies = _read_until_chat_message(ws_b)
+            accepted = next(m for m in bob_replies if m["type"] == "cell_state_accepted")
             assert accepted["cell_id"] == "cell_a"
             assert accepted["accepted_from_user_id"] == alice_user_id
             assert accepted["accepted_by_user_id"] == bob_user_id
-            assert accepted["action_summaries"] == ["Hide code", "Rename to `renamed`"]
+
+            source_reply = next(m for m in bob_replies if m["type"] == "cell_source_changed")
+            assert source_reply["cell_id"] == "cell_a"
+            assert "a = 2" in source_reply["source"]
 
             hide_reply = next(m for m in bob_replies if m["type"] == "hide_code_set")
             assert hide_reply["cell_id"] == "cell_a"
@@ -1352,34 +1361,41 @@ def test_websocket_accept_cell_bundle_replays_actions_in_order_and_attributes_to
             renamed_reply = next(m for m in bob_replies if m["type"] == "cell_renamed")
             assert renamed_reply["old_cell_id"] == "cell_a"
             assert renamed_reply["cell_id"] == "renamed"
-            # hide_code applied first survived being carried through the
-            # rename that came after it in the same bundle.
+            # hide_code applied under the cell's original name survived
+            # being carried through the rename that came after it.
             assert renamed_reply["hide_code"] is True
 
             attribution = next(m for m in bob_replies if m["type"] == "cell_attribution_changed")
             assert attribution["cell_id"] == "renamed"
             assert attribution["last_edited_by"] == "Alice"  # the proposer, not Bob who accepted
 
-            alice_broadcast = [ws_a.receive_json() for _ in range(5)]
-            assert accepted in alice_broadcast
+            alice_replies = _read_until_chat_message(ws_a)
+            assert accepted in alice_replies
 
             session = client.app.state.registry.get("struct-3")
             assert "renamed" in client.app.state.registry.kernel.deck.cells
             assert "cell_a" not in client.app.state.registry.kernel.deck.cells
             assert client.app.state.registry.kernel.deck.cells["renamed"].hide_code is True
             # The rename moved the CellInstance itself to the new key -- no
-            # stray "cell_a" entry, and the new "renamed" entry's own bundle
-            # slot is correctly cleared (never populated in the first place,
-            # since the rename created a brand-new CellInstance).
+            # stray "cell_a" entry, and the new "renamed" entry's own
+            # pending_state slot is correctly cleared (never populated in
+            # the first place, since the rename created a brand-new
+            # CellInstance).
             assert "cell_a" not in session.instances
-            assert session.instances["renamed"].structural_bundle is None
+            assert session.instances["renamed"].pending_state is None
             assert "def renamed" in deck_path.read_text()
+            # EditCell's own semantics are unchanged by this feature: for
+            # an "editable" cell it's a per-Session source override, never
+            # a Deck-wide/on-disk edit (protocol.py's own EditCell
+            # docstring) -- confirmed here via session.source_overrides,
+            # not the .py file, which still reflects the *original* body.
+            assert "a = 2" in session.source_overrides["renamed"]
             assert session.review_mode is True  # restored after the replay
 
 
-def test_websocket_reject_cell_bundle(tmp_path):
-    """TODO.md #65-x: reject_cell_bundle clears a pending bundle without
-    ever replaying any of its actions."""
+def test_websocket_reject_cell_state(tmp_path):
+    """TODO.md #68: reject_cell_state clears a pending push without
+    ever applying it."""
     from codeslides.loader import load_deck
 
     deck_path = _write_structural_deck(tmp_path)
@@ -1394,18 +1410,17 @@ def test_websocket_reject_cell_bundle(tmp_path):
             ws_a.receive_json()
             ws_b.receive_json()
 
-            rename_payload = {
-                "type": "rename_cell",
-                "session_id": "struct-4",
-                "cell_id": "cell_a",
-                "new_name": "renamed",
-            }
             ws_a.send_json(
                 {
-                    "type": "push_cell_bundle",
+                    "type": "push_cell_state",
                     "session_id": "struct-4",
                     "cell_id": "cell_a",
-                    "actions": [{"payload": rename_payload, "summary": "Rename to `renamed`"}],
+                    "new_cell_id": "renamed",
+                    "source": "def cell_a():\n    a = 1\n    return a\n",
+                    "test_sources": {},
+                    "notes_sources": {},
+                    "hide_code": False,
+                    "hide_def": False,
                 }
             )
             proposed = ws_b.receive_json()
@@ -1415,7 +1430,7 @@ def test_websocket_reject_cell_bundle(tmp_path):
 
             ws_b.send_json(
                 {
-                    "type": "reject_cell_bundle",
+                    "type": "reject_cell_state",
                     "session_id": "struct-4",
                     "cell_id": "cell_a",
                     "proposer_user_id": alice_user_id,
@@ -1423,23 +1438,23 @@ def test_websocket_reject_cell_bundle(tmp_path):
             )
             rejected_to_bob = ws_b.receive_json()
             rejected_to_alice = ws_a.receive_json()
-            assert rejected_to_bob["type"] == rejected_to_alice["type"] == "bundle_rejected"
+            assert rejected_to_bob["type"] == rejected_to_alice["type"] == "cell_state_rejected"
             ws_b.receive_json()  # TODO.md #66-iii: system chat message for the rejection
             ws_a.receive_json()  # same system chat message, echoed to the rejecter too
 
             session = client.app.state.registry.get("struct-4")
-            assert session.instances["cell_a"].structural_bundle is None
+            assert session.instances["cell_a"].pending_state is None
             assert "cell_a" in client.app.state.registry.kernel.deck.cells
 
 
-def test_websocket_withdraw_cell_bundle(tmp_path):
-    """TODO.md #65-x: withdraw_cell_bundle clears the proposer's own
-    pending bundle without ever replaying any of its actions -- and
-    (TODO.md #66-iii) is deliberately excluded from the automatic
-    system-message hook (only push/accept/reject post one, per
-    PROPOSAL_review_workflow.md section 3).
+def test_websocket_withdraw_cell_state(tmp_path):
+    """TODO.md #68: withdraw_cell_state clears the proposer's own
+    pending push without ever applying it -- and (TODO.md #66-iii) is
+    deliberately excluded from the automatic system-message hook (only
+    push/accept/reject post one, per PROPOSAL_review_workflow.md
+    section 3).
 
-    `BundleWithdrawn` is `Broadcast`-wrapped (peers-only, per
+    `CellStateWithdrawn` is `Broadcast`-wrapped (peers-only, per
     `protocol.py`'s own docstring) -- the withdrawer already knows they
     withdrew, so it's never delivered back to their own connection. A
     second (peer) connection is required here to actually observe it,
@@ -1454,113 +1469,78 @@ def test_websocket_withdraw_cell_bundle(tmp_path):
         ):
             ws_a.receive_json()
             ws_b.receive_json()
-            # push_cell_bundle (and withdraw_cell_bundle) both require an
+            # push_cell_state (and withdraw_cell_state) both require an
             # identified connection -- Join first.
             ws_a.send_json({"type": "join", "session_id": "struct-4b", "display_name": "Alice"})
             ws_a.receive_json()  # join_ack
             ws_b.receive_json()  # presence_update about Alice joining
 
-            rename_payload = {
-                "type": "rename_cell",
-                "session_id": "struct-4b",
-                "cell_id": "cell_a",
-                "new_name": "renamed",
-            }
             ws_a.send_json(
                 {
-                    "type": "push_cell_bundle",
+                    "type": "push_cell_state",
                     "session_id": "struct-4b",
                     "cell_id": "cell_a",
-                    "actions": [{"payload": rename_payload, "summary": "Rename to `renamed`"}],
+                    "new_cell_id": "renamed",
+                    "source": "def cell_a():\n    a = 1\n    return a\n",
+                    "test_sources": {},
+                    "notes_sources": {},
+                    "hide_code": False,
+                    "hide_def": False,
                 }
             )
             ws_a.receive_json()  # system chat message for the push, echoed to the pusher
-            ws_b.receive_json()  # cell_bundle_proposed
+            ws_b.receive_json()  # cell_state_pushed
             ws_b.receive_json()  # same system chat message, delivered to the peer too
 
-            ws_a.send_json({"type": "withdraw_cell_bundle", "session_id": "struct-4b", "cell_id": "cell_a"})
+            ws_a.send_json({"type": "withdraw_cell_state", "session_id": "struct-4b", "cell_id": "cell_a"})
             withdrawn = ws_b.receive_json()
-            assert withdrawn["type"] == "bundle_withdrawn"
+            assert withdrawn["type"] == "cell_state_withdrawn"
 
             session = client.app.state.registry.get("struct-4b")
-            assert session.instances["cell_a"].structural_bundle is None
+            assert session.instances["cell_a"].pending_state is None
             assert "cell_a" in client.app.state.registry.kernel.deck.cells
 
 
-def test_websocket_viewer_role_rejects_cell_bundle_messages(tmp_path):
-    """TODO.md #65-x: a viewer cannot push/accept/reject/withdraw a
-    structural bundle either -- same allowlist-shaped rejection every
-    other #65 message type already has."""
+def test_websocket_viewer_role_rejects_cell_state_messages(tmp_path):
+    """TODO.md #68: a viewer cannot push/accept/reject/withdraw a cell's
+    pushed state either -- same allowlist-shaped rejection every other
+    review-mode message type already has."""
     from codeslides.loader import load_deck
 
     deck_path = _write_structural_deck(tmp_path)
     with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True)) as client:
         with client.websocket_connect("/ws?document=struct-5&role=viewer") as ws:
             ws.receive_json()
-            rename_payload = {
-                "type": "rename_cell",
-                "session_id": "struct-5",
-                "cell_id": "cell_a",
-                "new_name": "renamed",
-            }
             for payload in (
                 {
-                    "type": "push_cell_bundle",
+                    "type": "push_cell_state",
                     "session_id": "struct-5",
                     "cell_id": "cell_a",
-                    "actions": [{"payload": rename_payload, "summary": "Rename"}],
+                    "new_cell_id": "renamed",
+                    "source": "def cell_a():\n    a = 1\n    return a\n",
+                    "test_sources": {},
+                    "notes_sources": {},
+                    "hide_code": False,
+                    "hide_def": False,
                 },
                 {
-                    "type": "accept_cell_bundle",
+                    "type": "accept_cell_state",
                     "session_id": "struct-5",
                     "cell_id": "cell_a",
                     "proposer_user_id": "whoever",
                 },
                 {
-                    "type": "reject_cell_bundle",
+                    "type": "reject_cell_state",
                     "session_id": "struct-5",
                     "cell_id": "cell_a",
                     "proposer_user_id": "whoever",
                 },
-                {"type": "withdraw_cell_bundle", "session_id": "struct-5", "cell_id": "cell_a"},
+                {"type": "withdraw_cell_state", "session_id": "struct-5", "cell_id": "cell_a"},
             ):
                 ws.send_json(payload)
                 error = ws.receive_json()
                 assert error["type"] == "error"
                 assert "viewer" in error["message"]
-
-
-def test_websocket_push_cell_bundle_rejects_action_targeting_different_cell(tmp_path):
-    """TODO.md #65-x: a bundle action naming a cell_id different from the
-    bundle's own cell_id is rejected up front, at push time -- not
-    silently staged only to fail partway through replay at accept time."""
-    from codeslides.loader import load_deck
-
-    deck_path = _write_structural_deck(tmp_path)
-    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True)) as client:
-        with client.websocket_connect("/ws?document=struct-6") as ws:
-            ws.receive_json()
-            ws.send_json({"type": "join", "session_id": "struct-6", "display_name": "Alice"})
-            ws.receive_json()
-            mismatched_payload = {
-                "type": "rename_cell",
-                "session_id": "struct-6",
-                "cell_id": "some_other_cell",
-                "new_name": "renamed",
-            }
-            ws.send_json(
-                {
-                    "type": "push_cell_bundle",
-                    "session_id": "struct-6",
-                    "cell_id": "cell_a",
-                    "actions": [{"payload": mismatched_payload, "summary": "Rename"}],
-                }
-            )
-            error = ws.receive_json()
-            assert error["type"] == "error"
-            assert "different cell" in error["message"]
-            session = client.app.state.registry.get("struct-6")
-            assert session.instances["cell_a"].structural_bundle is None
 
 
 def test_websocket_non_review_mode_document_unaffected_by_structural_bundles(tmp_path):
@@ -1581,7 +1561,7 @@ def test_websocket_non_review_mode_document_unaffected_by_structural_bundles(tmp
             assert renamed["cell_id"] == "renamed"
             session = client.app.state.registry.get("struct-7")
             assert session.review_mode is False
-            assert session.instances["renamed"].structural_bundle is None
+            assert session.instances["renamed"].pending_state is None
 
 
 # -- TODO.md #65-xi: unify primary/test source edits into the one push
@@ -1597,12 +1577,13 @@ def test_websocket_non_review_mode_document_unaffected_by_structural_bundles(tmp
 
 
 def test_websocket_edit_cell_no_longer_broadcasts_immediately_in_review_mode():
-    """TODO.md #65-xi: confirms the exact bug report -- editing a cell's
-    code in review mode must NOT produce anything at all for another
-    peer until an explicit push_cell_bundle happens. edit_cell itself is
-    still rejected outright (TODO.md #65-iv's existing behavior,
-    unchanged); this test's point is that there is no other message type
-    a client could send that reaches a peer immediately either."""
+    """TODO.md #65-xi/#68: confirms the exact bug report -- editing a
+    cell's code in review mode must NOT produce anything at all for
+    another peer until an explicit push_cell_state happens. edit_cell
+    itself is still rejected outright (TODO.md #65-iv's existing
+    behavior, unchanged); this test's point is that there is no other
+    message type a client could send that reaches a peer immediately
+    either."""
     with TestClient(create_app(_build_deck(), review_mode=True)) as client:
         with (
             client.websocket_connect("/ws?document=unify-1") as ws_a,
@@ -1643,13 +1624,11 @@ def test_websocket_edit_cell_no_longer_broadcasts_immediately_in_review_mode():
                 ws_b.receive_json()  # run_all's own broadcast, not from edit_cell
 
 
-def test_websocket_push_cell_bundle_with_edit_cell_and_set_test_source_actions(tmp_path):
-    """TODO.md #65-xi: a single bundle can mix an edit_cell action, a
-    set_test_source action, and a structural action together -- the
-    whole point of unifying them into one mechanism. Confirms
-    test_source_changed is broadcast for the test-source action (the new
-    message this unification needed, since set_test_source's own reply
-    never echoes the source itself)."""
+def test_websocket_push_cell_state_with_source_test_and_hide_fields(tmp_path):
+    """TODO.md #68: a single pushed snapshot can carry a source change, a
+    tests-element source change, and hide_code together -- confirms
+    test_source_changed is broadcast for the test-source field (since
+    set_test_source's own reply never echoes the source itself)."""
     deck_path = tmp_path / "deck.py"
     deck_path.write_text(
         "from codeslides import App, ui\n\n"
@@ -1672,61 +1651,51 @@ def test_websocket_push_cell_bundle_with_edit_cell_and_set_test_source_actions(t
             ws_a.receive_json()
             ws_b.receive_json()
 
-            edit_payload = {
-                "type": "edit_cell",
-                "session_id": "unify-2",
-                "cell_id": "cell_a",
-                "source": "def cell_a():\n    a = 42\n    return a\n",
-            }
-            test_payload = {
-                "type": "set_test_source",
-                "session_id": "unify-2",
-                "cell_id": "cell_a",
-                "element_id": "check",
-                "source": "print(cell_a())",
-            }
-            hide_payload = {
-                "type": "set_hide_code",
-                "session_id": "unify-2",
-                "cell_id": "cell_a",
-                "hide_code": True,
-            }
             ws_a.send_json(
                 {
-                    "type": "push_cell_bundle",
+                    "type": "push_cell_state",
                     "session_id": "unify-2",
                     "cell_id": "cell_a",
-                    "actions": [
-                        {"payload": edit_payload, "summary": "Edit code"},
-                        {"payload": test_payload, "summary": "Edit test `check`"},
-                        {"payload": hide_payload, "summary": "Hide code"},
-                    ],
+                    "new_cell_id": "cell_a",
+                    "source": "def cell_a():\n    a = 42\n    return a\n",
+                    "test_sources": {"check": "print(cell_a())"},
+                    "notes_sources": {},
+                    "hide_code": True,
+                    "hide_def": False,
                 }
             )
             proposed = ws_b.receive_json()
-            assert proposed["type"] == "cell_bundle_proposed"
-            assert proposed["action_summaries"] == ["Edit code", "Edit test `check`", "Hide code"]
-            # TODO.md #65-xii: index-aligned with action_summaries, so Bob's
-            # reviewer banner can show a real source diff for the edit_cell/
-            # set_test_source actions.
-            assert proposed["action_payloads"] == [edit_payload, test_payload, hide_payload]
+            assert proposed["type"] == "cell_state_pushed"
             alice_user_id = proposed["proposer_user_id"]
+            ws_b.receive_json()  # system chat message for the push
+            ws_a.receive_json()  # same, echoed to the pusher too
 
             ws_b.send_json(
                 {
-                    "type": "accept_cell_bundle",
+                    "type": "accept_cell_state",
                     "session_id": "unify-2",
                     "cell_id": "cell_a",
                     "proposer_user_id": alice_user_id,
                 }
             )
-            # bundle_accepted, cell_source_changed, 2x element_output,
-            # test_source_changed, hide_code_set, cell_output,
-            # cell_attribution_changed, and (TODO.md #66-iii) a system
-            # chat message about the acceptance.
-            replies = [ws_b.receive_json() for _ in range(9)]
+            # cell_state_accepted, cell_source_changed, cell_status,
+            # cell_output, element_output (edit_cell's own auto-test
+            # replay), test_source_changed, element_output (set_test_
+            # source's own re-run), hide_code_set, cell_attribution_
+            # changed, and (TODO.md #66-iii) a system chat message about
+            # the acceptance.
+            def _read_until_chat_message(ws):
+                messages = []
+                for _ in range(15):
+                    msg = ws.receive_json()
+                    messages.append(msg)
+                    if msg["type"] == "chat_message_received":
+                        return messages
+                raise AssertionError(f"no chat_message_received among {messages}")
+
+            replies = _read_until_chat_message(ws_b)
             types = [m["type"] for m in replies]
-            assert "bundle_accepted" in types
+            assert "cell_state_accepted" in types
             assert "cell_source_changed" in types
             assert "test_source_changed" in types
             assert "hide_code_set" in types
@@ -1740,23 +1709,24 @@ def test_websocket_push_cell_bundle_with_edit_cell_and_set_test_source_actions(t
             # auto-called with no arguments) per _run_cells's "define, don't
             # call" rule for tested cells -- its own cell_output carries no
             # value, but the test's own call into cell_a() (replayed after
-            # the edit_cell action, against the freshly-redefined function)
+            # the source change, against the freshly-redefined function)
             # proves the new source ("a = 42") actually took effect.
             cell_output = next(m for m in replies if m["type"] == "cell_output")
             assert cell_output["output"]["value"] is None
 
-            # Two element_output messages fire: one right after edit_cell's
-            # own define-and-auto-test replay (still against the *old* test
-            # source, "print(1)"), and a second after set_test_source
-            # replays its own re-run with the new source -- the latter is
-            # the one that proves the new cell body ("a = 42") took effect.
+            # Two element_output messages fire: one right after the source
+            # change's own define-and-auto-test replay (still against the
+            # *old* test source, "print(1)"), and a second after the test-
+            # source field's own re-run with the new source -- the latter
+            # is the one that proves the new cell body ("a = 42") took
+            # effect.
             test_results = [m for m in replies if m["type"] == "element_output"]
             assert len(test_results) == 2
             assert test_results[-1]["content"]["status"] == "pass"
             assert test_results[-1]["content"]["stdout"].strip() == "42"
 
             session = client.app.state.registry.get("unify-2")
-            assert session.instances["cell_a"].structural_bundle is None
+            assert session.instances["cell_a"].pending_state is None
             assert "def cell_a" in deck_path.read_text()
             assert client.app.state.registry.kernel.deck.cells["cell_a"].hide_code is True
 
@@ -1817,15 +1787,14 @@ def test_websocket_set_notes_source_rejected_on_review_mode_document():
                 ws_b.receive_json()  # run_all's own broadcast, not from the rejected edit
 
 
-def test_websocket_push_cell_bundle_with_set_notes_source_action(tmp_path):
-    """TODO.md #65-xiii: a notes edit can be staged and pushed through
-    the same per-cell bundle mechanism as everything else, and
-    notes_source_changed is broadcast on accept with the correct
-    element_id/source (the new message this fix needed, since
+def test_websocket_push_cell_state_with_notes_source(tmp_path):
+    """TODO.md #65-xiii/#68: a notes edit is part of a pushed snapshot
+    like everything else, and notes_source_changed is broadcast on
+    accept with the correct element_id/source (needed since
     set_notes_source's own reply is `[]`, same gap TestSourceChanged
-    fixed for set_test_source in #65-xi)."""
+    fixes for set_test_source)."""
     deck_path = tmp_path / "deck.py"
-    deck_path.write_text(
+    original_source = (
         "from codeslides import App, ui\n\n"
         "app = App()\n\n"
         '@app.cell(elements=[ui.notes("story")])\n'
@@ -1834,6 +1803,7 @@ def test_websocket_push_cell_bundle_with_set_notes_source_action(tmp_path):
         "    a = 1\n"
         "    return a\n"
     )
+    deck_path.write_text(original_source)
     from codeslides.loader import load_deck
 
     with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True)) as client:
@@ -1847,40 +1817,46 @@ def test_websocket_push_cell_bundle_with_set_notes_source_action(tmp_path):
             ws_a.receive_json()
             ws_b.receive_json()
 
-            notes_payload = {
-                "type": "set_notes_source",
-                "session_id": "notes-2",
-                "cell_id": "cell_a",
-                "element_id": "story",
-                "source": "Edited notes.",
-            }
             ws_a.send_json(
                 {
-                    "type": "push_cell_bundle",
+                    "type": "push_cell_state",
                     "session_id": "notes-2",
                     "cell_id": "cell_a",
-                    "actions": [{"payload": notes_payload, "summary": "Edit notes `story`"}],
+                    "new_cell_id": "cell_a",
+                    "source": "def cell_a():\n    a = 1\n    return a\n",
+                    "test_sources": {},
+                    "notes_sources": {"story": "Edited notes."},
+                    "hide_code": False,
+                    "hide_def": False,
                 }
             )
             proposed = ws_b.receive_json()
-            assert proposed["type"] == "cell_bundle_proposed"
-            assert proposed["action_summaries"] == ["Edit notes `story`"]
-            assert proposed["action_payloads"] == [notes_payload]
+            assert proposed["type"] == "cell_state_pushed"
             alice_user_id = proposed["proposer_user_id"]
+            ws_b.receive_json()  # system chat message for the push
+            ws_a.receive_json()  # same, echoed to the pusher too
 
             ws_b.send_json(
                 {
-                    "type": "accept_cell_bundle",
+                    "type": "accept_cell_state",
                     "session_id": "notes-2",
                     "cell_id": "cell_a",
                     "proposer_user_id": alice_user_id,
                 }
             )
-            # bundle_accepted, notes_source_changed, and (TODO.md
-            # #66-iii) a system chat message about the acceptance.
-            replies = [ws_b.receive_json() for _ in range(3)]
+
+            def _read_until_chat_message(ws):
+                messages = []
+                for _ in range(12):
+                    msg = ws.receive_json()
+                    messages.append(msg)
+                    if msg["type"] == "chat_message_received":
+                        return messages
+                raise AssertionError(f"no chat_message_received among {messages}")
+
+            replies = _read_until_chat_message(ws_b)
             types = [m["type"] for m in replies]
-            assert "bundle_accepted" in types
+            assert "cell_state_accepted" in types
             assert "notes_source_changed" in types
             assert "chat_message_received" in types
 
@@ -1973,11 +1949,11 @@ def test_websocket_solo_connection_chat_message_requires_join():
             assert session.chat_messages == []
 
 
-def test_websocket_push_accept_reject_cell_bundle_post_system_chat_messages(tmp_path):
-    """TODO.md #66-iii/PROPOSAL_review_workflow.md section 3: pushing,
-    accepting, and rejecting a cell bundle each post an automatic,
-    visually-distinct (is_system=True) system message into the
-    document's chat stream, delivered to sender and peers alike just
+def test_websocket_push_accept_reject_cell_state_post_system_chat_messages(tmp_path):
+    """TODO.md #66-iii/#68/PROPOSAL_review_workflow.md section 3: pushing,
+    accepting, and rejecting a cell's pushed state each post an
+    automatic, visually-distinct (is_system=True) system message into
+    the document's chat stream, delivered to sender and peers alike just
     like a person-typed chat message."""
     from codeslides.loader import load_deck
 
@@ -1998,17 +1974,21 @@ def test_websocket_push_accept_reject_cell_bundle_post_system_chat_messages(tmp_
             ws_b.receive_json()
             ws_a.receive_json()  # presence_update about Bob joining
 
-            rename_payload = {"type": "rename_cell", "session_id": "chat-3", "cell_id": "cell_a", "new_name": "renamed"}
             ws_a.send_json(
                 {
-                    "type": "push_cell_bundle",
+                    "type": "push_cell_state",
                     "session_id": "chat-3",
                     "cell_id": "cell_a",
-                    "actions": [{"payload": rename_payload, "summary": "Rename to `renamed`"}],
+                    "new_cell_id": "renamed",
+                    "source": "def cell_a():\n    a = 1\n    return a\n",
+                    "test_sources": {},
+                    "notes_sources": {},
+                    "hide_code": False,
+                    "hide_def": False,
                 }
             )
-            # The pusher (Alice) is the sender of push_cell_bundle --
-            # cell_bundle_proposed is Broadcast (peers only), but the system
+            # The pusher (Alice) is the sender of push_cell_state --
+            # cell_state_pushed is Broadcast (peers only), but the system
             # chat message is unwrapped (sender + peers), so Alice receives
             # only the chat message, while Bob receives both.
             push_reply_a = ws_a.receive_json()
@@ -2019,7 +1999,7 @@ def test_websocket_push_accept_reject_cell_bundle_post_system_chat_messages(tmp_
             assert "cell_a" in push_reply_a["text"]
 
             proposed = ws_b.receive_json()
-            assert proposed["type"] == "cell_bundle_proposed"
+            assert proposed["type"] == "cell_state_pushed"
             push_reply_b = ws_b.receive_json()
             assert push_reply_b["type"] == "chat_message_received"
             assert push_reply_b == push_reply_a
@@ -2027,20 +2007,20 @@ def test_websocket_push_accept_reject_cell_bundle_post_system_chat_messages(tmp_
 
             ws_b.send_json(
                 {
-                    "type": "accept_cell_bundle",
+                    "type": "accept_cell_state",
                     "session_id": "chat-3",
                     "cell_id": "cell_a",
                     "proposer_user_id": alice_user_id,
                 }
             )
-            # bundle_accepted, cell_renamed (from the replay), and possibly
-            # cell_attribution_changed, followed by the system chat message
-            # last -- keep reading until the chat message shows up rather
-            # than hardcoding an exact reply count tied to this bundle's
-            # specific actions.
+            # cell_state_accepted, cell_source_changed, cell_status,
+            # cell_output, cell_renamed, and possibly
+            # cell_attribution_changed, followed by the system chat
+            # message last -- keep reading until the chat message shows
+            # up rather than hardcoding an exact reply count.
             def _read_until_chat_message(ws):
                 messages = []
-                for _ in range(10):
+                for _ in range(12):
                     msg = ws.receive_json()
                     messages.append(msg)
                     if msg["type"] == "chat_message_received":
@@ -2058,37 +2038,36 @@ def test_websocket_push_accept_reject_cell_bundle_post_system_chat_messages(tmp_
             accept_system_a = accept_replies_a[-1]
             assert accept_system_a == accept_system_b
 
-            # Now push a second bundle on the renamed cell and reject it, to
+            # Now push a second state on the renamed cell and reject it, to
             # cover the reject side of this same system-message hook.
-            second_payload = {
-                "type": "rename_cell",
-                "session_id": "chat-3",
-                "cell_id": "renamed",
-                "new_name": "renamed_again",
-            }
             ws_a.send_json(
                 {
-                    "type": "push_cell_bundle",
+                    "type": "push_cell_state",
                     "session_id": "chat-3",
                     "cell_id": "renamed",
-                    "actions": [{"payload": second_payload, "summary": "Rename to `renamed_again`"}],
+                    "new_cell_id": "renamed_again",
+                    "source": "def cell_a():\n    a = 1\n    return a\n",
+                    "test_sources": {},
+                    "notes_sources": {},
+                    "hide_code": False,
+                    "hide_def": False,
                 }
             )
             ws_a.receive_json()  # system chat message for the second push (to self)
             second_proposed = ws_b.receive_json()
-            assert second_proposed["type"] == "cell_bundle_proposed"
+            assert second_proposed["type"] == "cell_state_pushed"
             ws_b.receive_json()  # system chat message for the second push
 
             ws_b.send_json(
                 {
-                    "type": "reject_cell_bundle",
+                    "type": "reject_cell_state",
                     "session_id": "chat-3",
                     "cell_id": "renamed",
                     "proposer_user_id": alice_user_id,
                 }
             )
             reject_reply_b = ws_b.receive_json()
-            assert reject_reply_b["type"] == "bundle_rejected"
+            assert reject_reply_b["type"] == "cell_state_rejected"
             reject_system_b = ws_b.receive_json()
             assert reject_system_b["type"] == "chat_message_received"
             assert reject_system_b["is_system"] is True
@@ -2097,7 +2076,7 @@ def test_websocket_push_accept_reject_cell_bundle_post_system_chat_messages(tmp_
             assert "Alice" in reject_system_b["text"]
 
             reject_reply_a = ws_a.receive_json()
-            assert reject_reply_a["type"] == "bundle_rejected"
+            assert reject_reply_a["type"] == "cell_state_rejected"
             reject_system_a = ws_a.receive_json()
             assert reject_system_a == reject_system_b
 
@@ -2105,4 +2084,4 @@ def test_websocket_push_accept_reject_cell_bundle_post_system_chat_messages(tmp_
             system_messages = [m for m in session.chat_messages if m.is_system]
             assert len(system_messages) == 4
             assert all(m.user_id == "" and m.display_name == "" for m in system_messages)
-            assert session.instances["renamed"].structural_bundle is None
+            assert session.instances["renamed"].pending_state is None

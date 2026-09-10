@@ -296,38 +296,42 @@ export interface SetElementConfig {
   config: Record<string, unknown>
 }
 
-// TODO.md #65/#65-x/#65-xi/#65-xiii: stage an ordered list of changes to
-// `cell_id` -- an edit to its primary source (EditCell-shaped), an edit
-// to a tests element's source (SetTestSource-shaped), an edit to a
-// notes element's source (SetNotesSource-shaped), and/or structural
-// changes (rename, hide toggles, add/remove element, reorder elements,
-// element config, add/remove primary editor, main/setup-cell flags).
-// None of it is applied until accept_cell_bundle replays it. Each
-// action's `payload` is the exact client-message object App.tsx would
-// otherwise have sent immediately, plus a short human-readable
-// `summary` for the reviewer's banner.
-export interface PushCellBundle {
-  type: 'push_cell_bundle'
+// TODO.md #68: stage `cell_id`'s *entire current state* as one
+// snapshot -- primary source, every tests/notes element's own source
+// (keyed by element_id), hide_code/hide_def, and new_cell_id (its name
+// after this push; equal to cell_id when not being renamed). Replaces
+// #65's ordered actions-list PushCellBundle entirely: repeated edits
+// before pushing no longer build up a queue of redundant staged
+// actions each separately replayed on accept -- pushing again always
+// just replaces this same snapshot in place. No diff/preview is shown
+// anywhere for this (by design -- see TODO.md #68's own note).
+export interface PushCellState {
+  type: 'push_cell_state'
   session_id: string
   cell_id: string
-  actions: Array<{ payload: Record<string, unknown>; summary: string }>
+  new_cell_id: string
+  source: string
+  test_sources: Record<string, string>
+  notes_sources: Record<string, string>
+  hide_code: boolean
+  hide_def: boolean
 }
 
-export interface WithdrawCellBundle {
-  type: 'withdraw_cell_bundle'
+export interface WithdrawCellState {
+  type: 'withdraw_cell_state'
   session_id: string
   cell_id: string
 }
 
-export interface AcceptCellBundle {
-  type: 'accept_cell_bundle'
+export interface AcceptCellState {
+  type: 'accept_cell_state'
   session_id: string
   cell_id: string
   proposer_user_id: string
 }
 
-export interface RejectCellBundle {
-  type: 'reject_cell_bundle'
+export interface RejectCellState {
+  type: 'reject_cell_state'
   session_id: string
   cell_id: string
   proposer_user_id: string
@@ -338,10 +342,10 @@ export type ClientMessage =
   | SetPresence
   | SendChatMessage
   | EditCell
-  | PushCellBundle
-  | WithdrawCellBundle
-  | AcceptCellBundle
-  | RejectCellBundle
+  | PushCellState
+  | WithdrawCellState
+  | AcceptCellState
+  | RejectCellState
   | RunAll
   | SetElementValue
   | SetUiState
@@ -474,41 +478,37 @@ export interface SessionCreated {
   review_mode: boolean
 }
 
-// TODO.md #65-x/#65-xii: broadcast (peers-only) when a push_cell_bundle
-// stages or replaces a pending structural bundle. `action_payloads` is
-// index-aligned with `action_summaries` -- the reviewer banner uses it
-// to render a real preview (a source diff for edit_cell/set_test_source,
-// a best-effort one-liner for cheap structural types) instead of the
-// summary text alone.
-export interface CellBundleProposed {
-  type: 'cell_bundle_proposed'
+// TODO.md #68: broadcast (peers-only) when a push_cell_state stages or
+// replaces a pending push. Carries only the proposer's identity, not
+// the pushed state itself -- there is deliberately no diff/preview
+// shown to a reviewer (see PushCellState's own comment), so a peer's UI
+// only ever needs to know a push exists and who made it.
+export interface CellStatePushed {
+  type: 'cell_state_pushed'
   session_id: string
   cell_id: string
   proposer_user_id: string
   proposer_display_name: string
-  action_summaries: string[]
-  action_payloads: Record<string, unknown>[]
   created_at: string
 }
 
-export interface BundleWithdrawn {
-  type: 'bundle_withdrawn'
+export interface CellStateWithdrawn {
+  type: 'cell_state_withdrawn'
   session_id: string
   cell_id: string
   proposer_user_id: string
 }
 
-export interface BundleAccepted {
-  type: 'bundle_accepted'
+export interface CellStateAccepted {
+  type: 'cell_state_accepted'
   session_id: string
   cell_id: string
   accepted_from_user_id: string
   accepted_by_user_id: string
-  action_summaries: string[]
 }
 
-export interface BundleRejected {
-  type: 'bundle_rejected'
+export interface CellStateRejected {
+  type: 'cell_state_rejected'
   session_id: string
   cell_id: string
   rejected_by_user_id: string
@@ -772,10 +772,10 @@ export type ServerMessage =
   | TestSourceChanged
   | NotesSourceChanged
   | CellAttributionChanged
-  | CellBundleProposed
-  | BundleWithdrawn
-  | BundleAccepted
-  | BundleRejected
+  | CellStatePushed
+  | CellStateWithdrawn
+  | CellStateAccepted
+  | CellStateRejected
   | ElementOutput
   | GraphUpdated
   | SessionCloned

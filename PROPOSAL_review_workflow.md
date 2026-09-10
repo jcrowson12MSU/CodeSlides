@@ -152,39 +152,30 @@ cell, similar to today's presence cursor bar) and can:
 
 ### 1.4 Protocol sketch
 
-> **Superseded by what actually shipped** (`TODO.md` #65-xi). The
-> message names originally sketched below (`PushCell`, `CellProposed`,
+> **Superseded twice by what actually shipped.** The message names
+> originally sketched below (`PushCell`, `CellProposed`,
 > `WithdrawProposal`, `AcceptProposal`, `ProposalAccepted`,
 > `RejectProposal`, `ProposalRejected`, `ProposalConflict`) were removed
-> entirely during implementation, in favor of a single bundle-based
-> mechanism that unifies structural edits, primary-source edits, and
-> test-source edits under one per-cell push, rather than a separate
-> single-cell-source proposal path. The message types actually in
-> `protocol.py` today are:
->
-> - `PushCellBundle { cell_id, actions }` (client -> server): stage or
->   replace the sender's pending bundle for that cell. `actions` is a
->   list of `{payload, summary}` entries — each payload is any other
->   client message targeting that cell (`EditCell`, `SetTestSource`,
->   `RenameCell`, `AddElement`, etc.), replayed at accept time.
-> - `CellBundleProposed` (broadcast, peers-only): tells every other
->   connection a bundle now exists/was updated for that cell.
-> - `WithdrawCellBundle { cell_id }` (client -> server) /
->   `BundleWithdrawn` (broadcast): proposer cancels their own pending
->   bundle.
-> - `AcceptCellBundle { cell_id, proposer_user_id }` (client -> server):
->   replays every staged action through the normal `handle_message`
->   path (with `review_mode` temporarily off), then returns
->   `BundleAccepted` plus whatever each replayed action's own handler
->   returns (e.g. `CellSourceChanged`, `TestSourceChanged`,
->   `NotesSourceChanged`).
-> - `RejectCellBundle { cell_id, proposer_user_id }` (client -> server) /
->   `BundleRejected` (broadcast): explicit dismissal, distinct from just
->   ignoring a bundle.
+> entirely during `TODO.md` #65-xi, replaced by a bundle-based mechanism
+> (`PushCellBundle`/`WithdrawCellBundle`/`AcceptCellBundle`/
+> `RejectCellBundle`, an ordered `actions` list replayed at accept time)
+> that unified structural edits, primary-source edits, and test-source
+> edits under one per-cell push. That bundle mechanism was itself then
+> replaced entirely by `TODO.md` #68, after a real classroom bug report:
+> repeated Shift+Enter edits before pushing built up a long queue of
+> redundant staged actions, each separately replayed (and separately
+> re-executed) on accept. #68's model has no ordered list at all — a
+> push always carries the cell's *entire current state* as one snapshot,
+> and pushing again simply replaces it in place. The message types
+> actually in `protocol.py` today are `PushCellState`/
+> `WithdrawCellState`/`AcceptCellState`/`RejectCellState` and their
+> `CellStatePushed`/`CellStateWithdrawn`/`CellStateAccepted`/
+> `CellStateRejected` replies — see `ARCHITECTURE.md` section 5b for the
+> full current model and history, and `protocol.py`/`ws_handler.py`
+> directly for the real shape.
 >
 > Treat this subsection's original names as vocabulary for the *ideas*
-> (push, accept, reject), not as an accurate protocol reference — read
-> `protocol.py` and `ws_handler.py` directly for the real shape.
+> (push, accept, reject) only, not as an accurate protocol reference.
 
 Also gated behind decision #5's document-level flag: a document created
 in review mode reports it in `SessionCreated`/on join (a `review_mode:
@@ -268,7 +259,9 @@ execution/reactivity model. Concretely:
 
 ## 3. Interaction between the two features — decided
 
-**Decision: yes**, a `PushCellBundle`/`AcceptCellBundle`/`RejectCellBundle`
+**Decision: yes**, a `PushCellState`/`AcceptCellState`/`RejectCellState`
+(originally `PushCellBundle`/`AcceptCellBundle`/`RejectCellBundle`,
+superseded by `TODO.md` #68 — see section 1.4's note above)
 posts an automatic system message into that document's chat stream (e.g.
 "Alice pushed a change to `live_demo`", "Bob accepted Alice's change to
 `live_demo`") — rendered visually distinct from a person's own message

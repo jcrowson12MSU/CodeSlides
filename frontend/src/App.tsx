@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { useChatState } from './chatState'
-import { useDeckState, type BundleAction } from './deckState'
+import { useDeckState } from './deckState'
 import { usePresenceState } from './presenceState'
 import type { CellLayout, ServerMessage } from './protocol'
 import { useCodeSlidesSocket } from './useCodeSlidesSocket'
@@ -170,28 +170,34 @@ function App() {
   // panel only shows the error that's actually about it. Cleared on the
   // next edit-panel action for that cell.
   const [editErrors, setEditErrors] = useState<Record<string, string>>({})
-  // TODO.md #65-x: on a review_mode document, one of the 11 structural
-  // message types (rename, hide toggles, add/remove element, reorder
-  // elements, element config, add/remove primary editor, main/setup
-  // flags) is staged here instead of sent immediately -- each entry is
-  // exactly the `{payload, summary}` shape `push_cell_bundle` expects,
-  // so pushing is just `send({type: 'push_cell_bundle', ..., actions:
-  // pendingActions[cellId]})` with no further transformation. Cleared
-  // on push (server round-trip decides success/failure from there,
-  // same as every other message this app sends) or on withdraw.
-  //
-  // Not a live preview of the cell's actual post-change UI (that would
-  // require replicating server-computed fields -- Cell.tsx's
-  // `instance`/`source`/`elements`/`layout` are all derived server-side
-  // from `display_source`/the Cell's real parsed state, not available
-  // client-side before the round-trip). #65-xii does render a real
-  // preview of the *content itself* though (a source diff for
-  // edit_cell/set_test_source, a best-effort one-liner for cheap
-  // structural types) inside a collapsed-by-default <details> per
-  // action, per the user's own explicit request -- see Cell.tsx's
-  // ActionDiffPreview usage, which is exactly why `.payload` (not just
-  // `.summary`) needs to reach Cell.tsx now.
-  const [pendingActions, setPendingActions] = useState<Record<string, BundleAction[]>>({})
+  // TODO.md #68: on a review_mode document, which cells have any
+  // un-pushed local change (a code/test/notes edit, or a hide-code/
+  // hide-def/rename toggle) -- just a dirty flag, not a queue of
+  // individual staged edits. Pushing always sends the cell's current
+  // full state (read live from `notesOverrides`/`testSourceOverrides`/
+  // `primarySourceDrafts`/the deck's own current hide/name fields at
+  // push time, composed in `handlePushCellState` below), so there is
+  // nothing to accumulate here beyond "this cell changed since the
+  // last push/accept" -- replaces #65's `pendingActions` queue
+  // entirely. Real classroom bug report: repeated Shift+Enter edits
+  // before pushing used to append a new staged action every time,
+  // replayed (and separately re-executed) one by one on Accept; there
+  // is no longer anything to accumulate, so that can't recur.
+  const [dirtyCells, setDirtyCells] = useState<Set<string>>(new Set())
+  // TODO.md #68: the review_mode analogue of `notesOverrides`/
+  // `testSourceOverrides` above, for a cell's primary source -- EditCell
+  // is rejected outright on a review_mode document (same as before),
+  // so nothing else remembers the last Shift+Enter'd primary source for
+  // a cell client-side; needed so `handlePushCellState` has something
+  // to read back when the user clicks Push.
+  const [primarySourceDrafts, setPrimarySourceDrafts] = useState<Record<string, string>>({})
+  // TODO.md #68: same shape, for a pending rename -- unlike hide_code/
+  // hide_def (whose current-vs-pending value is read straight off
+  // `deck.cells[cellId]` in handlePushCellState, since nothing else
+  // ever changes it locally under review_mode), a rename's target name
+  // has nowhere else to live: `deck.cells` is keyed by the cell's
+  // *current* (pre-rename) name until the push is actually accepted.
+  const [renameDrafts, setRenameDrafts] = useState<Record<string, string>>({})
   // Feedback for a rejected add_slide (e.g. no cells selected, or the
   // deck wasn't started from a file) -- same "clear on next attempt"
   // shape as editErrors, just not keyed by cell since a slide isn't one.
@@ -723,15 +729,16 @@ function App() {
       })
     }
 
-    // TODO.md #65-xi: test_source_changed must update testSourceOverrides
-    // (the local echo TestsElementWidget's editor actually renders from),
-    // the same state set_test_source's own handleChangeTestSource already
-    // keeps in sync for the non-review-mode path -- without this, every
-    // connection's test editor (including the accepter's own) would keep
-    // showing pre-accept text forever after an AcceptCellBundle replays a
-    // SetTestSource action, having no other path that ever refreshes it
-    // (SetTestSource's own reply is only ever the resulting
-    // ElementOutput result, never an echo of the source itself).
+    // TODO.md #65-xi/#68: test_source_changed must update
+    // testSourceOverrides (the local echo TestsElementWidget's editor
+    // actually renders from), the same state set_test_source's own
+    // handleChangeTestSource already keeps in sync for the non-review-
+    // mode path -- without this, every connection's test editor
+    // (including the accepter's own) would keep showing pre-accept text
+    // forever after an AcceptCellState applies a pushed test-source
+    // field, having no other path that ever refreshes it (SetTestSource's
+    // own reply is only ever the resulting ElementOutput result, never
+    // an echo of the source itself).
     const acceptedTestSources = newMessages.filter(
       (m): m is Extract<ServerMessage, { type: 'test_source_changed' }> => m.type === 'test_source_changed',
     )
@@ -745,11 +752,11 @@ function App() {
       })
     }
 
-    // TODO.md #65-xiii: same reasoning as acceptedTestSources above, for
-    // a notes element -- SetNotesSource's own handler returns [], so
+    // TODO.md #65-xiii/#68: same reasoning as acceptedTestSources above,
+    // for a notes element -- SetNotesSource's own handler returns [], so
     // notes_source_changed is the only way any connection (including
     // the accepter's own) learns the newly-accepted markdown text after
-    // an AcceptCellBundle replay.
+    // an AcceptCellState application.
     const acceptedNotesSources = newMessages.filter(
       (m): m is Extract<ServerMessage, { type: 'notes_source_changed' }> => m.type === 'notes_source_changed',
     )
@@ -778,31 +785,32 @@ function App() {
     send({ type: 'edit_cell', session_id: sessionId, cell_id: cellId, source })
   }
 
-  // TODO.md #65/#65-xi: the review_mode analogue of handleRunCell above
-  // -- used instead of edit_cell whenever this document is in review
-  // mode (Cell.tsx picks between the two based on the reviewMode prop it
-  // is given). Stages into the same per-cell pendingActions list the 11
-  // structural handlers already use (via `stageOrSend`, defined below --
-  // function declarations hoist, so this forward reference is fine)
-  // rather than sending anything immediately, unified into one push
-  // mechanism as of #65-xi.
+  // TODO.md #65/#68: the review_mode analogue of handleRunCell above --
+  // used instead of edit_cell whenever this document is in review mode
+  // (Cell.tsx picks between the two based on the reviewMode prop it is
+  // given). Remembers the source locally (`primarySourceDrafts`, read
+  // back by handlePushCellState below) and marks the cell dirty --
+  // EditCell itself is never sent while review_mode is on.
   function handleStagePrimaryEdit(cellId: string, source: string) {
     if (!sessionId) return
-    stageOrSend(cellId, { type: 'edit_cell', session_id: sessionId, cell_id: cellId, source }, 'Edit code')
+    setPrimarySourceDrafts((prev) => ({ ...prev, [cellId]: source }))
+    setDirtyCells((prev) => (prev.has(cellId) ? prev : new Set(prev).add(cellId)))
   }
 
-  // TODO.md #65-xi: same as handleStagePrimaryEdit, for a `tests`
+  // TODO.md #65-xi/#68: same as handleStagePrimaryEdit, for a `tests`
   // element's own source -- many decks (anything with hide_code=True on
   // every cell) have no reachable primary editor at all, only a tests
-  // element's editable source, so this needed its own staging path
-  // (`set_test_source`'s own shape, not `edit_cell`'s).
+  // element's editable source. Updates `testSourceOverrides` locally
+  // (same local-echo role `handleChangeTestSource` plays in every other
+  // mode) and marks the cell dirty, but never sends `set_test_source`
+  // itself while review_mode is on.
   function handleStageTestEdit(cellId: string, elementId: string, source: string) {
     if (!sessionId) return
-    stageOrSend(
-      cellId,
-      { type: 'set_test_source', session_id: sessionId, cell_id: cellId, element_id: elementId, source },
-      `Edit test \`${elementId}\``,
-    )
+    setTestSourceOverrides((prev) => ({
+      ...prev,
+      [cellId]: { ...prev[cellId], [elementId]: source },
+    }))
+    setDirtyCells((prev) => (prev.has(cellId) ? prev : new Set(prev).add(cellId)))
   }
 
   function handleRunAll() {
@@ -1009,40 +1017,60 @@ function App() {
     })
   }
 
-  // TODO.md #65-x: the single interception point every one of the 11
-  // structural handlers below routes through -- on a review_mode
-  // document, stage `message` (with its own summary) into
-  // pendingActions[cellId] instead of sending it; otherwise send it
-  // immediately exactly as before this feature existed. `message` is
-  // always a plain client-message object shaped for `send`, reused
-  // as-is for the staged payload -- `push_cell_bundle`'s own `actions`
-  // field expects exactly this `{payload, summary}` shape.
-  function stageOrSend(cellId: string, message: Record<string, unknown>, summary: string) {
+  // TODO.md #68: the single interception point every one of the
+  // review-mode-gated structural handlers below routes through -- on a
+  // review_mode document, mark `cellId` dirty instead of sending
+  // `message` immediately; otherwise send it right away exactly as
+  // before this feature existed. Unlike #65's stageOrSend, `message`
+  // itself is never kept -- rename/hide toggles are read fresh from
+  // `deck.cells[cellId]`'s own current fields at push time (below),
+  // same as every other pushed field.
+  function stageOrSend(cellId: string, message: Record<string, unknown>) {
     if (!sessionId) return
     if (reviewMode) {
-      setPendingActions((prev) => ({
-        ...prev,
-        [cellId]: [...(prev[cellId] ?? []), { payload: message, summary }],
-      }))
+      setDirtyCells((prev) => (prev.has(cellId) ? prev : new Set(prev).add(cellId)))
       return
     }
     send(message as unknown as Parameters<typeof send>[0])
   }
 
-  function handlePushPendingActions(cellId: string) {
+  // TODO.md #68: composes cellId's entire current state from wherever
+  // each field actually lives client-side -- `primarySourceDrafts`/
+  // `notesOverrides`/`testSourceOverrides` for source-like fields (the
+  // same local-echo state every mode already relies on), `deck.cells`
+  // for hide_code/hide_def/the cell's current name (structural fields
+  // this document's own deck metadata already reflects, since a rename/
+  // hide toggle's own handler -- handleRenameCell/handleSetHideCode/
+  // handleSetHideDef below -- only ever marks the cell dirty, it never
+  // separately tracks a "pending" rename/hide value of its own) -- and
+  // sends it as one push_cell_state message. There is deliberately no
+  // separate draft-tracking for hide_code/hide_def/rename: `deck.cells`
+  // already IS the student's own current view of those fields (nothing
+  // else could have changed them locally, since review_mode rejects
+  // those messages outright), so reading them straight from there at
+  // push time is correct, not just convenient.
+  function handlePushCellState(cellId: string) {
     if (!sessionId) return
-    const actions = pendingActions[cellId]
-    if (!actions || actions.length === 0) return
-    send({ type: 'push_cell_bundle', session_id: sessionId, cell_id: cellId, actions })
-    setPendingActions((prev) => {
-      const next = { ...prev }
-      delete next[cellId]
+    const meta = deck?.cells[cellId]
+    if (!meta) return
+    send({
+      type: 'push_cell_state',
+      session_id: sessionId,
+      cell_id: cellId,
+      new_cell_id: renameDrafts[cellId] ?? cellId,
+      source: primarySourceDrafts[cellId] ?? meta.source,
+      test_sources: testSourceOverrides[cellId] ?? {},
+      notes_sources: notesOverrides[cellId] ?? {},
+      hide_code: meta.hide_code ?? false,
+      hide_def: meta.hide_def ?? false,
+    })
+    setDirtyCells((prev) => {
+      if (!prev.has(cellId)) return prev
+      const next = new Set(prev)
+      next.delete(cellId)
       return next
     })
-  }
-
-  function handleDiscardPendingActions(cellId: string) {
-    setPendingActions((prev) => {
+    setRenameDrafts((prev) => {
       if (!(cellId in prev)) return prev
       const next = { ...prev }
       delete next[cellId]
@@ -1050,88 +1078,100 @@ function App() {
     })
   }
 
-  function handleWithdrawBundle(cellId: string) {
-    if (!sessionId) return
-    send({ type: 'withdraw_cell_bundle', session_id: sessionId, cell_id: cellId })
+  function handleDiscardPendingChanges(cellId: string) {
+    setDirtyCells((prev) => {
+      if (!prev.has(cellId)) return prev
+      const next = new Set(prev)
+      next.delete(cellId)
+      return next
+    })
+    setRenameDrafts((prev) => {
+      if (!(cellId in prev)) return prev
+      const next = { ...prev }
+      delete next[cellId]
+      return next
+    })
   }
 
-  function handleAcceptBundle(cellId: string, proposerUserId: string) {
+  function handleWithdrawPush(cellId: string) {
     if (!sessionId) return
-    send({ type: 'accept_cell_bundle', session_id: sessionId, cell_id: cellId, proposer_user_id: proposerUserId })
+    send({ type: 'withdraw_cell_state', session_id: sessionId, cell_id: cellId })
   }
 
-  function handleRejectBundle(cellId: string, proposerUserId: string) {
+  function handleAcceptPush(cellId: string, proposerUserId: string) {
     if (!sessionId) return
-    send({ type: 'reject_cell_bundle', session_id: sessionId, cell_id: cellId, proposer_user_id: proposerUserId })
+    send({ type: 'accept_cell_state', session_id: sessionId, cell_id: cellId, proposer_user_id: proposerUserId })
   }
 
+  function handleRejectPush(cellId: string, proposerUserId: string) {
+    if (!sessionId) return
+    send({ type: 'reject_cell_state', session_id: sessionId, cell_id: cellId, proposer_user_id: proposerUserId })
+  }
+
+  // TODO.md #68: rename is part of the source+test+notes+hide+rename
+  // push scope, so it stages (marks dirty + remembers the target name
+  // in renameDrafts) rather than sending rename_cell immediately on a
+  // review_mode document.
   function handleRenameCell(cellId: string, newName: string) {
     if (!sessionId) return
     clearEditError(cellId)
-    stageOrSend(
-      cellId,
-      { type: 'rename_cell', session_id: sessionId, cell_id: cellId, new_name: newName },
-      `Rename to \`${newName}\``,
-    )
+    if (reviewMode) {
+      setRenameDrafts((prev) => ({ ...prev, [cellId]: newName }))
+      setDirtyCells((prev) => (prev.has(cellId) ? prev : new Set(prev).add(cellId)))
+      return
+    }
+    send({ type: 'rename_cell', session_id: sessionId, cell_id: cellId, new_name: newName })
   }
 
+  // TODO.md #68: main/setup-cell flags stayed out of the push scope
+  // (see PushCellState's own comment) -- always sent immediately,
+  // review_mode or not.
   function handleSetMainCell(cellId: string) {
     if (!sessionId) return
     clearEditError(cellId)
-    stageOrSend(cellId, { type: 'set_main_cell', session_id: sessionId, cell_id: cellId }, 'Set as main cell')
+    send({ type: 'set_main_cell', session_id: sessionId, cell_id: cellId })
   }
 
   function handleSetSetupCell(cellId: string) {
     if (!sessionId) return
     clearEditError(cellId)
-    stageOrSend(cellId, { type: 'set_setup_cell', session_id: sessionId, cell_id: cellId }, 'Set as setup cell')
+    send({ type: 'set_setup_cell', session_id: sessionId, cell_id: cellId })
   }
 
+  // TODO.md #68: hide_code/hide_def ARE part of the push scope --
+  // stage (mark dirty) rather than send immediately on a review_mode
+  // document. No separate draft state needed: handlePushCellState
+  // reads the *toggled-to* value straight back off `deck.cells`, since
+  // nothing else changes hide_code/hide_def locally under review_mode
+  // -- but that only works if the toggle's own UI reflects `hideCode`/
+  // `hideDef` optimistically while dirty. Cell.tsx does this already
+  // (its checkbox is controlled by the same prop either way); the
+  // actual value only round-trips through the server once accepted.
   function handleSetHideCode(cellId: string, hideCode: boolean) {
     if (!sessionId) return
     clearEditError(cellId)
-    stageOrSend(
-      cellId,
-      { type: 'set_hide_code', session_id: sessionId, cell_id: cellId, hide_code: hideCode },
-      hideCode ? 'Hide code' : 'Show code',
-    )
+    stageOrSend(cellId, { type: 'set_hide_code', session_id: sessionId, cell_id: cellId, hide_code: hideCode })
   }
 
   function handleSetHideDef(cellId: string, hideDef: boolean) {
     if (!sessionId) return
     clearEditError(cellId)
-    stageOrSend(
-      cellId,
-      { type: 'set_hide_def', session_id: sessionId, cell_id: cellId, hide_def: hideDef },
-      hideDef ? 'Hide function definition line' : 'Show function definition line',
-    )
+    stageOrSend(cellId, { type: 'set_hide_def', session_id: sessionId, cell_id: cellId, hide_def: hideDef })
   }
 
+  // TODO.md #68: element add/remove/reorder/config and primary-editor
+  // add/remove all stayed out of the push scope (see PushCellState's
+  // own comment) -- always sent immediately, review_mode or not.
   function handleAddElement(cellId: string, name: string, kind: string, config: Record<string, unknown>) {
     if (!sessionId) return
     clearEditError(cellId)
-    stageOrSend(
-      cellId,
-      {
-        type: 'add_element',
-        session_id: sessionId,
-        cell_id: cellId,
-        element_name: name,
-        kind,
-        config,
-      },
-      `Add ${kind} \`${name}\``,
-    )
+    send({ type: 'add_element', session_id: sessionId, cell_id: cellId, element_name: name, kind, config })
   }
 
   function handleRemoveElement(cellId: string, elementName: string) {
     if (!sessionId) return
     clearEditError(cellId)
-    stageOrSend(
-      cellId,
-      { type: 'remove_element', session_id: sessionId, cell_id: cellId, element_name: elementName },
-      `Remove element \`${elementName}\``,
-    )
+    send({ type: 'remove_element', session_id: sessionId, cell_id: cellId, element_name: elementName })
   }
 
   // CELL_QUADRANT_LAYOUT_TODO.md item 2b: the primary code editor is
@@ -1146,41 +1186,25 @@ function App() {
   function handleRemovePrimaryEditor(cellId: string) {
     if (!sessionId) return
     clearEditError(cellId)
-    stageOrSend(
-      cellId,
-      { type: 'remove_primary_editor', session_id: sessionId, cell_id: cellId },
-      'Remove primary code editor',
-    )
+    send({ type: 'remove_primary_editor', session_id: sessionId, cell_id: cellId })
   }
 
   function handleAddPrimaryEditor(cellId: string) {
     if (!sessionId) return
     clearEditError(cellId)
-    stageOrSend(
-      cellId,
-      { type: 'add_primary_editor', session_id: sessionId, cell_id: cellId },
-      'Add primary code editor',
-    )
+    send({ type: 'add_primary_editor', session_id: sessionId, cell_id: cellId })
   }
 
   function handleReorderElements(cellId: string, elementOrder: string[]) {
     if (!sessionId) return
     clearEditError(cellId)
-    stageOrSend(
-      cellId,
-      { type: 'reorder_elements', session_id: sessionId, cell_id: cellId, element_order: elementOrder },
-      'Reorder elements',
-    )
+    send({ type: 'reorder_elements', session_id: sessionId, cell_id: cellId, element_order: elementOrder })
   }
 
   function handleSetElementConfig(cellId: string, elementId: string, config: Record<string, unknown>) {
     if (!sessionId) return
     clearEditError(cellId)
-    stageOrSend(
-      cellId,
-      { type: 'set_element_config', session_id: sessionId, cell_id: cellId, element_id: elementId, config },
-      `Change \`${elementId}\` settings`,
-    )
+    send({ type: 'set_element_config', session_id: sessionId, cell_id: cellId, element_id: elementId, config })
   }
 
   function handleChangeNotesSource(cellId: string, elementId: string, source: string) {
@@ -1198,37 +1222,21 @@ function App() {
     })
   }
 
-  // TODO.md #65-xiii: notes-source used to bypass review mode entirely
-  // (it rode on set_ui_state, shared with the genuinely-exempt
+  // TODO.md #65-xiii/#68: notes-source used to bypass review mode
+  // entirely (it rode on set_ui_state, shared with the genuinely-exempt
   // collapse/minimize flags, which never had a review_mode gate), a
-  // real gap confirmed by direct user report. Deliberately NOT routed
-  // through stageOrSend (unlike handleStageTestEdit/
-  // handleStagePrimaryEdit): NotesEditor fires onChangeSource on every
-  // keystroke (Obsidian-style live preview, viewerElements.tsx's own
-  // docstring), not just on an explicit Shift+Enter -- stageOrSend's
-  // "append a new pending action" model would flood pendingActions with
-  // one entry per character typed. Instead this upserts a single
-  // per-element pending entry in place, so typing a whole paragraph
-  // still stages as exactly one "Edit notes `<name>`" action.
+  // real gap confirmed by direct user report. Fires on every keystroke
+  // (Obsidian-style live preview, viewerElements.tsx's own docstring),
+  // not just on an explicit Shift+Enter -- harmless now that pushing
+  // just reads the latest `notesOverrides` value at push time rather
+  // than accumulating one queued action per keystroke the way #65 did.
   function handleStageNotesEdit(cellId: string, elementId: string, source: string) {
     if (!sessionId) return
     setNotesOverrides((prev) => ({
       ...prev,
       [cellId]: { ...prev[cellId], [elementId]: source },
     }))
-    const payload = { type: 'set_notes_source', session_id: sessionId, cell_id: cellId, element_id: elementId, source }
-    const summary = `Edit notes \`${elementId}\``
-    setPendingActions((prev) => {
-      const existing = prev[cellId] ?? []
-      const index = existing.findIndex(
-        (a) => a.payload.type === 'set_notes_source' && a.payload.element_id === elementId,
-      )
-      const next =
-        index === -1
-          ? [...existing, { payload, summary }]
-          : existing.map((a, i) => (i === index ? { payload, summary } : a))
-      return { ...prev, [cellId]: next }
-    })
+    setDirtyCells((prev) => (prev.has(cellId) ? prev : new Set(prev).add(cellId)))
   }
 
   function handleChangeTestSource(cellId: string, elementId: string, source: string) {
@@ -1531,12 +1539,12 @@ function App() {
               onStagePrimaryEdit={(source) => handleStagePrimaryEdit(cellId, source)}
               onStageTestEdit={(elementId, source) => handleStageTestEdit(cellId, elementId, source)}
               onStageNotesEdit={(elementId, source) => handleStageNotesEdit(cellId, elementId, source)}
-              pendingActions={pendingActions[cellId]}
-              onPushPendingActions={() => handlePushPendingActions(cellId)}
-              onDiscardPendingActions={() => handleDiscardPendingActions(cellId)}
-              onAcceptBundle={(proposerUserId) => handleAcceptBundle(cellId, proposerUserId)}
-              onRejectBundle={(proposerUserId) => handleRejectBundle(cellId, proposerUserId)}
-              onWithdrawBundle={() => handleWithdrawBundle(cellId)}
+              isDirty={dirtyCells.has(cellId)}
+              onPushCellState={() => handlePushCellState(cellId)}
+              onDiscardPendingChanges={() => handleDiscardPendingChanges(cellId)}
+              onAcceptPush={(proposerUserId) => handleAcceptPush(cellId, proposerUserId)}
+              onRejectPush={(proposerUserId) => handleRejectPush(cellId, proposerUserId)}
+              onWithdrawPush={() => handleWithdrawPush(cellId)}
               onDeleteCell={isViewer ? undefined : () => handleDeleteCell(cellId)}
               onMoveCellUp={isViewer ? undefined : () => handleReorderCells(cellId, -1)}
               onMoveCellDown={isViewer ? undefined : () => handleReorderCells(cellId, 1)}
@@ -1595,12 +1603,12 @@ function App() {
           onStagePrimaryEdit={handleStagePrimaryEdit}
           onStageTestEdit={handleStageTestEdit}
           onStageNotesEdit={handleStageNotesEdit}
-          pendingActions={pendingActions}
-          onPushPendingActions={handlePushPendingActions}
-          onDiscardPendingActions={handleDiscardPendingActions}
-          onAcceptBundle={handleAcceptBundle}
-          onRejectBundle={handleRejectBundle}
-          onWithdrawBundle={handleWithdrawBundle}
+          dirtyCells={dirtyCells}
+          onPushCellState={handlePushCellState}
+          onDiscardPendingChanges={handleDiscardPendingChanges}
+          onAcceptPush={handleAcceptPush}
+          onRejectPush={handleRejectPush}
+          onWithdrawPush={handleWithdrawPush}
         />
       )}
       {documentId && (

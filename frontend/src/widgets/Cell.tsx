@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import type { BundleAction, CellState } from '../deckState'
-import { ActionDiffPreview } from './ActionDiffPreview'
+import type { CellState } from '../deckState'
 import { CODE_TAB_ID, INPUTS_TAB_ID, type CellLayout, type Quadrant } from '../protocol'
 import { CellOutputView } from './CellOutputView'
 import { hasCellOutput } from './cellOutput'
@@ -193,21 +192,25 @@ export interface CellProps {
   // handleStageNotesEdit) accounts for this by upserting a single
   // pending action per element rather than appending one per call.
   onStageNotesEdit?: (elementId: string, source: string) => void
-  // TODO.md #65-x/#65-xi/#65-xii: this cell's locally-staged
-  // (not-yet-pushed) changes -- primary/test source edits and
-  // structural changes (rename, hide toggles, add/remove element,
-  // reorder elements, element config, add/remove primary editor,
-  // main/setup flags) -- shown as a collapsible per-action list (each
-  // expandable to a real preview, `ActionDiffPreview`) near a "Push"
-  // button, and this cell's own currently-pending *bundle* (someone's
-  // already-pushed set of such changes awaiting Accept/Reject), reduced
-  // from `cell_bundle_proposed`/etc. into `state.structuralBundle`.
-  pendingActions?: BundleAction[]
-  onPushPendingActions?: () => void
-  onDiscardPendingActions?: () => void
-  onAcceptBundle?: (proposerUserId: string) => void
-  onRejectBundle?: (proposerUserId: string) => void
-  onWithdrawBundle?: () => void
+  // TODO.md #68: whether this cell has any un-pushed local change --
+  // just a dirty flag, no list of individual staged edits and no diff
+  // preview (deliberately removed: replaces #65's pendingActions/
+  // ActionDiffPreview entirely, per the user's own explicit "push
+  // whatever the current state is, don't show a diff on either side"
+  // design call after a real classroom bug report about repeated
+  // Shift+Enter edits building up a queue of redundant staged
+  // actions). `onPushCellState` sends the cell's whole current state in
+  // one message; `onDiscardPendingChanges` clears the dirty flag
+  // without pushing. This cell's own currently-pending *push* (someone
+  // else's already-pushed state awaiting Accept/Reject), reduced from
+  // `cell_state_pushed`/etc. into `state.pendingPush`, carries only the
+  // proposer's identity -- no preview here either.
+  isDirty?: boolean
+  onPushCellState?: () => void
+  onDiscardPendingChanges?: () => void
+  onAcceptPush?: (proposerUserId: string) => void
+  onRejectPush?: (proposerUserId: string) => void
+  onWithdrawPush?: () => void
   onRunCell: (source: string) => void
   onRunAll: (source: string) => void
   // TODO.md #46d-i: fired on this cell's primary editor gaining/losing
@@ -448,12 +451,12 @@ export function Cell({
   onStagePrimaryEdit,
   onStageTestEdit,
   onStageNotesEdit,
-  pendingActions,
-  onPushPendingActions,
-  onDiscardPendingActions,
-  onAcceptBundle,
-  onRejectBundle,
-  onWithdrawBundle,
+  isDirty = false,
+  onPushCellState,
+  onDiscardPendingChanges,
+  onAcceptPush,
+  onRejectPush,
+  onWithdrawPush,
   onRunCell,
   onRunAll,
   onFocusChange,
@@ -488,28 +491,7 @@ export function Cell({
   // passes for `hideCode` -- there's genuinely nothing to reveal for a
   // cell the author declared has no code editor.
   const hideCode = hideCodeProp || (meta.hide_code ?? false)
-  // TODO.md #65-xiii: ActionDiffPreview's diff base for a set_notes_source
-  // action -- `state.elementContent` holds every element's current
-  // content regardless of kind (viewer output, notes markdown, tests
-  // pass/fail), so this narrows to just the string-valued (i.e. notes)
-  // entries a diff can actually be built against.
-  const currentNotesSources: Record<string, string> = {}
-  if (state?.elementContent) {
-    for (const [name, content] of Object.entries(state.elementContent)) {
-      if (typeof content === 'string') currentNotesSources[name] = content
-    }
-  }
   const [editing, setEditing] = useState(false)
-  // TODO.md #65-xiv: per the user's explicit request, the pending-
-  // actions/proposal banners are collapsed by default (not just their
-  // individual per-action <details> -- #65-xii's collapsed-by-default
-  // preview granularity), controlled by a header button (next to Edit)
-  // that shows the count and an expand/collapse arrow. Collapsed means
-  // the whole banner body (summary list, diff previews, and the real
-  // Push/Discard or Accept/Reject/Withdraw buttons) renders nothing at
-  // all -- only the header button itself is visible.
-  const [pendingExpanded, setPendingExpanded] = useState(false)
-  const [proposalExpanded, setProposalExpanded] = useState(false)
   // The code/elements split is per-cell, kept as local component state
   // (not lifted to App.tsx) -- it's pure display layout with no server
   // round-trip and no effect on execution/output, so it doesn't need the
@@ -1184,50 +1166,70 @@ export function Cell({
   const leftColumnEmpty = tabsByQuadrant['top-left'].length === 0 && tabsByQuadrant['bottom-left'].length === 0
   const rightColumnEmpty = tabsByQuadrant['top-right'].length === 0 && tabsByQuadrant['bottom-right'].length === 0
 
-  // TODO.md #65-xiv: Push/Accept notification toggles, per the user's
-  // explicit request to move them next to Edit -- computed once so they
+  // TODO.md #68: Push/Accept/Reject/Withdraw buttons, per the user's own
+  // explicit "no diff/preview, just a push button that sends whatever
+  // the cell's current state is" design call -- computed once so they
   // can render both inside the normal header (Cells view) and in their
   // own always-visible row when `hideHeader` is set (SlideShow.tsx's
   // Slides view, which hides the rest of the header row -- cell name,
   // Edit, reorder, delete -- but must not also hide these, or Slides
-  // view silently loses the ability to push/accept at all, a real
-  // regression this fix specifically avoids). Hidden entirely (both
-  // buttons independently) when there's nothing pending/proposed.
+  // view silently loses the ability to push/accept at all, same
+  // regression #65-xiv originally avoided). Hidden entirely (both
+  // groups independently) when there's nothing dirty/pending. Unlike
+  // #65's collapsed-by-default toggle-to-a-list-of-actions, there is no
+  // list to expand into any more -- clicking Push/Accept/Reject/
+  // Withdraw directly performs the action.
   const notificationButtons = (
     <>
-      {reviewMode && pendingActions && pendingActions.length > 0 && (
-        <button
-          type="button"
-          className="cs-header-notification-toggle"
-          onClick={() => setPendingExpanded((prev) => !prev)}
-          aria-expanded={pendingExpanded}
-          aria-label={pendingExpanded ? 'Collapse pending changes to push' : 'Expand pending changes to push'}
-        >
-          Push ({pendingActions.length}) {pendingExpanded ? '▾' : '▸'}
-        </button>
+      {reviewMode && isDirty && (
+        <span className="cs-header-notification-group">
+          {onPushCellState && (
+            <button type="button" className="cs-header-notification-toggle" onClick={onPushCellState}>
+              Push
+            </button>
+          )}
+          {onDiscardPendingChanges && (
+            <button type="button" onClick={onDiscardPendingChanges}>
+              Discard
+            </button>
+          )}
+        </span>
       )}
       {reviewMode &&
-        state?.structuralBundle &&
+        state?.pendingPush &&
         (() => {
-          const bundle = state.structuralBundle
-          const isOwnBundle = ownUserId != null && bundle.proposerUserId === ownUserId
+          const pendingPush = state.pendingPush
+          const isOwnPush = ownUserId != null && pendingPush.proposerUserId === ownUserId
           return (
-            <button
-              type="button"
-              className={
-                isOwnBundle
-                  ? 'cs-header-notification-toggle'
-                  : 'cs-header-notification-toggle cs-header-notification-toggle-proposal'
-              }
-              onClick={() => setProposalExpanded((prev) => !prev)}
-              aria-expanded={proposalExpanded}
-              aria-label={
-                proposalExpanded ? 'Collapse proposed changes to review' : 'Expand proposed changes to review'
-              }
-            >
-              {isOwnBundle ? `Pending (${bundle.actions.length})` : `Review (${bundle.actions.length})`}{' '}
-              {proposalExpanded ? '▾' : '▸'}
-            </button>
+            <span className="cs-header-notification-group">
+              {isOwnPush ? (
+                onWithdrawPush && (
+                  <button
+                    type="button"
+                    className="cs-header-notification-toggle"
+                    onClick={onWithdrawPush}
+                  >
+                    Withdraw
+                  </button>
+                )
+              ) : (
+                <>
+                  <span className="cs-header-notification-toggle cs-header-notification-toggle-proposal">
+                    {pendingPush.displayName || 'Someone'} pushed a change
+                  </span>
+                  {onAcceptPush && (
+                    <button type="button" onClick={() => onAcceptPush(pendingPush.proposerUserId)}>
+                      Accept
+                    </button>
+                  )}
+                  {onRejectPush && (
+                    <button type="button" onClick={() => onRejectPush(pendingPush.proposerUserId)}>
+                      Reject
+                    </button>
+                  )}
+                </>
+              )}
+            </span>
           )
         })()}
     </>
@@ -1344,120 +1346,6 @@ export function Cell({
         hasCellOutput(state?.kind ?? null, state?.data, state?.value) && (
           <CellOutputView kind={state?.kind ?? null} data={state?.data} value={state?.value} />
         )}
-
-      {/* TODO.md #65-xi: the separate per-edit text-proposal banner (a
-          push_cell that broadcast to peers immediately on Shift+Enter,
-          with its own accept/reject/conflict UI) was removed here --
-          primary/test source edits now stage into pendingActions below
-          and push through the same single per-cell bundle mechanism as
-          structural changes, per direct user report that two different
-          push behaviors in the same app was confusing. */}
-
-      {/* TODO.md #65-x/#65-xii/#65-xiv: this connection's own locally-
-          staged structural changes (rename, hide toggles, add/remove
-          element, etc.) -- each rendered as a collapsed-by-default
-          <details> the user can expand to see a real preview
-          (ActionDiffPreview). The whole banner itself is now gated on
-          `pendingExpanded` (the header's "Push (N) ▸/▾" toggle next to
-          Edit, per the user's explicit request) -- collapsed means
-          nothing here renders at all, only that header button is
-          visible. */}
-      {reviewMode && pendingActions && pendingActions.length > 0 && pendingExpanded && (
-        <div className="cs-cell-pending-actions">
-          <p className="cs-cell-proposal-header">Changes not yet pushed:</p>
-          <ul className="cs-cell-action-list">
-            {pendingActions.map((action, i) => (
-              <li key={i}>
-                <details>
-                  <summary>{action.summary}</summary>
-                  <ActionDiffPreview
-                    payload={action.payload}
-                    currentSource={meta.source}
-                    currentTestSources={testSourceValues}
-                    currentNotesSources={currentNotesSources}
-                  />
-                </details>
-              </li>
-            ))}
-          </ul>
-          <div className="cs-cell-proposal-actions">
-            {onPushPendingActions && (
-              <button type="button" onClick={onPushPendingActions}>
-                Push
-              </button>
-            )}
-            {onDiscardPendingActions && (
-              <button type="button" onClick={onDiscardPendingActions}>
-                Discard
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* TODO.md #65-x/#65-xii/#65-xiv: a pending structural bundle
-          someone (possibly this connection) has pushed for this cell,
-          awaiting Accept/Reject -- at most one at a time, unlike the
-          per-proposer `proposals` dict above. Same collapsed-by-default
-          per-action preview as the pending-actions banner above; the
-          bundle's `actions` payloads reach here via #65-xii's new
-          `action_payloads` wire field (previously peers only ever saw
-          `action_summaries`). Gated on `proposalExpanded` (the header's
-          "Review (N) ▸/▾" / "Pending (N) ▸/▾" toggle next to Edit) --
-          collapsed means nothing here renders at all, only that header
-          button is visible. */}
-      {reviewMode &&
-        !collapsed &&
-        state?.structuralBundle &&
-        proposalExpanded &&
-        (() => {
-          const bundle = state.structuralBundle
-          const isOwnBundle = ownUserId != null && bundle.proposerUserId === ownUserId
-          return (
-            <div className="cs-cell-proposal">
-              <p className="cs-cell-proposal-header">
-                <strong>{bundle.displayName}</strong> proposed these changes to this cell:
-              </p>
-              <ul className="cs-cell-action-list">
-                {bundle.actions.map((action, i) => (
-                  <li key={i}>
-                    <details>
-                      <summary>{action.summary}</summary>
-                      <ActionDiffPreview
-                        payload={action.payload}
-                        currentSource={meta.source}
-                        currentTestSources={testSourceValues}
-                        currentNotesSources={currentNotesSources}
-                      />
-                    </details>
-                  </li>
-                ))}
-              </ul>
-              <div className="cs-cell-proposal-actions">
-                {isOwnBundle
-                  ? onWithdrawBundle && (
-                      <button type="button" onClick={onWithdrawBundle}>
-                        Withdraw
-                      </button>
-                    )
-                  : (
-                      <>
-                        {onAcceptBundle && (
-                          <button type="button" onClick={() => onAcceptBundle(bundle.proposerUserId)}>
-                            Accept
-                          </button>
-                        )}
-                        {onRejectBundle && (
-                          <button type="button" onClick={() => onRejectBundle(bundle.proposerUserId)}>
-                            Reject
-                          </button>
-                        )}
-                      </>
-                    )}
-              </div>
-            </div>
-          )
-        })()}
 
       {!hideHeader && !collapsed && editing && (
         <EditCellPanel

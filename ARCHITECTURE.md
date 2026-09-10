@@ -569,156 +569,144 @@ own "fixed for the connection's lifetime" precedent). The client learns
 whether its document is in review mode once, via `SessionCreated.
 review_mode`, sent at connect time.
 
-**The model (unified in `TODO.md` #65-xi — see below for how it got
+**The model (rewritten in `TODO.md` #68 — see below for how it got
 here).** A `review_mode` document adds one thing on top of §5a's
-existing shared namespace: each cell's `CellInstance.structural_bundle`
-(`session.py`) holds at most one pending `StructuralBundle` — a
-proposer identity, a human-readable per-action summary list, and an
-ordered list of `StructuralAction`s, each storing the exact wire-format
-dict `protocol.encode()` would produce for the original client message.
-*Every* mutation a cell can receive while in review mode — its primary
+existing shared namespace: each cell's `CellInstance.pending_state`
+(`session.py`) holds at most one pending `PendingCellState` — a
+proposer identity plus a full snapshot of that cell's state at push
+time: its primary source, every `tests`/`notes` element's own source
+(keyed by `element_id`), `hide_code`/`hide_def`, and `new_cell_id` (its
+name after the push; equal to the current name when not being renamed).
+Five message types can mutate a cell while in review mode — its primary
 source (`EditCell`), any `tests` element's source (`SetTestSource`), any
-`notes` element's source (`SetNotesSource`, `TODO.md` #65-xiii), and
-all 11 structural message types (rename, hide toggles, add/remove
-element, reorder, config, add/remove primary editor, main/setup-cell
-flags) — is rejected outright if sent directly, and instead flows
-through this one bundle:
+`notes` element's source (`SetNotesSource`), and `rename_cell`/
+`set_hide_code`/`set_hide_def` — all rejected outright if sent directly,
+flowing instead through this one push:
 
-- **`PushCellBundle`** validates every action up front — each must
-  decode successfully and name the bundle's own `cell_id` — before
-  staging any of it (replacing whatever bundle was already pending for
-  this cell, if any — one bundle per cell, not one per proposer), so a
-  malformed action fails the whole push immediately rather than
-  surfacing only when someone tries to accept it later. Only a
-  `CellBundleProposed` (`Broadcast`, peers-only, since the proposer
-  already has this state) tells every other connection a bundle now
-  exists — carrying both `action_summaries` and, since `TODO.md`
-  #65-xii, an index-aligned `action_payloads` (the same wire-format
-  dicts `StructuralAction.payload` already stored), per the user's own
-  explicit request that a reviewer's banner show the actual proposed
-  content, not just its one-line summary.
-- **`AcceptCellBundle`** (any editor-role peer, not just the proposer —
+- **`PushCellState`** stages the whole snapshot at once (replacing
+  whatever was already pending for this cell, if any — one pending push
+  per cell, not one per proposer). Only a `CellStatePushed` (`Broadcast`,
+  peers-only, since the proposer already has this state) tells every
+  other connection a push now exists — carrying just the proposer's
+  identity, no preview of the pushed content itself: there is
+  deliberately **no diff/preview shown anywhere**, on either the pushing
+  or the reviewing side (see "History" below for why).
+- **`AcceptCellState`** (any editor-role peer, not just the proposer —
   `PROPOSAL_review_workflow.md`'s decision that any single peer's accept
   is sufficient, matching "there's only one shared namespace to merge
-  into anyway") replays every staged action, in order, through the
-  *exact same* `handle_message` dispatch (`decode_client_message` +
-  registry lookup) a non-review-mode document already uses for each
-  type individually — no parallel "apply this action" implementation to
-  keep in sync, for any of the three categories mixed into one bundle.
-  Since replaying calls the very handlers this feature gates against
+  into anyway") applies the snapshot as a fixed sequence of synthesized
+  messages, replayed through the *exact same* `handle_message` dispatch
+  a non-review-mode document already uses for each type individually —
+  no parallel "apply this state" implementation to keep in sync. Order:
+  source (`EditCell`, always sent, even if unchanged) → each
+  `tests`/`notes` element's source (`SetTestSource`/`SetNotesSource`,
+  only for elements the snapshot actually named) → `hide_code`/
+  `hide_def` (only if either actually differs from the cell's current
+  value) → rename (`RenameCell`, only if `new_cell_id` differs from the
+  pushed-from id), all under the cell's *current* (pre-rename) name,
+  with rename applied last so nothing earlier has to know about it.
+  Since applying calls the very handlers this feature gates against
   `review_mode`, `Session.review_mode` is temporarily flipped to `False`
-  for the duration of the replay (restored immediately after, success
-  or failure) — otherwise the server's own replay would trip the gate
-  it just added. Each action's own reply (`CellSourceChanged`,
-  `TestSourceChanged`, `CellRenamed`, `HideCodeSet`, etc., plus their
-  usual `cell_status`/`cell_output`/`element_output`) is appended after
-  `BundleAccepted` in the same reply list, so a client sees exactly what
-  it would have seen had each action been sent individually.
-  Attribution (`CellAttributionChanged`, §5a/`TODO.md` #46g) credits the
-  *proposer* — whoever actually wrote the content — not whoever clicked
-  Accept.
-- **`RejectCellBundle`**/**`WithdrawCellBundle`** clear the pending
-  bundle (any editor may reject someone else's; only the proposer may
-  withdraw their own) without replaying any of its actions.
-- **A `RenameCell` action inside a bundle changes the cell's own
-  identity mid-replay** — `session.instances`/`kernel.deck.cells` move
-  to the new key, so anything computed *after* a rename in the same
-  bundle (a later action's own target, the final attribution) must use
-  the *new* id, not the bundle's original one. Attribution reads the
-  final cell id off the *last* replayed action's own reply
-  (`attributed_cell_id`, scanning from the end), the same trap — and the
-  same fix — `TODO.md` #46g-iii already documents for a single rename.
+  for the duration (restored immediately after, success or failure) —
+  otherwise the server's own application would trip the gate it just
+  added. Each step's own reply (`CellSourceChanged`, `TestSourceChanged`,
+  `CellRenamed`, `HideCodeSet`, etc., plus their usual `cell_status`/
+  `cell_output`/`element_output`) is appended after `CellStateAccepted`
+  in the same reply list, so a client sees exactly what it would have
+  seen had each field been sent individually. Attribution
+  (`CellAttributionChanged`, §5a/`TODO.md` #46g) credits the *proposer*
+  — whoever actually wrote the content — not whoever clicked Accept.
+- **`RejectCellState`**/**`WithdrawCellState`** clear the pending push
+  (any editor may reject someone else's; only the proposer may withdraw
+  their own) without applying any of it.
+- **A rename inside the applied sequence changes the cell's own
+  identity mid-application** — `session.instances`/`kernel.deck.cells`
+  move to the new key, so the final attribution must use the *new* id,
+  not the push's original one. Attribution reads the final cell id off
+  the *last* reply carrying one (`attributed_cell_id`, scanning from the
+  end), the same trap — and the same fix — `TODO.md` #46g-iii already
+  documents for a single rename.
 - **`TestSourceChanged`/`NotesSourceChanged`**: `SetTestSource`'s own
   reply is only ever the resulting `ElementOutput` (pass/fail/print),
-  and `SetNotesSource`'s own reply is `[]` entirely (`TODO.md`
-  #65-xiii) — unlike `EditCell`, neither echoes the new *source* text
-  itself back, since a non-review-mode document's single sender already
-  has it locally. A bundle-accept has no such sender on the receiving
-  end, so `AcceptCellBundle`'s replay loop emits the matching message
-  itself whenever it replays a `SetTestSource`/`SetNotesSource` action,
-  letting every peer (accepter included) learn the new content the same
-  way `CellSourceChanged` already covers a primary-source edit.
-- **A real per-action preview, and the whole banner itself collapsed
-  by default behind a header toggle next to Edit (`TODO.md` #65-xii,
-  #65-xiv).** Both the pending-actions banner (a connection's own
-  not-yet-pushed list) and the proposal banner (an incoming bundle) are
-  entirely absent from the DOM until their own header toggle — "Push
-  (N) ▸/▾" or "Pending/Review (N) ▸/▾", rendered only when there's
-  something to push/review, next to the cell's Edit button (or, in
-  Slides view's `hideHeader` layout, their own small standalone row) —
-  is clicked to expand it. Once expanded, each action inside renders in
-  a native `<details>`/`<summary>` — the summary text alone by default,
-  expanding it reveals
-  `ActionDiffPreview.tsx`: a real line-level diff (via `@codemirror/
-  merge`'s `unifiedMergeView`, read-only — `mergeControls: false`, so
-  its own per-chunk accept/reject controls don't sit confusingly next
-  to the banner's real bundle-level ones) for `EditCell`/
-  `SetTestSource` actions against the cell's/element's current known
-  source, and a best-effort one-liner (new name, on/off, changed
-  config keys) for the handful of structural types where deriving one
-  is cheap. **No live preview** still holds for the rest of the
-  structural actions specifically (add/remove/reorder element, etc.) —
-  their server replies carry fields the client cannot cheaply
-  reproduce ahead of time (`instance`/`source`/`elements`/`layout`, all
-  derived server-side from `display_source`/the real parsed `Cell`), so
-  those just show their summary text with nothing to expand, rather
-  than attempting to re-render the cell as if each change were already
-  live. A deliberate simplicity/fidelity tradeoff: what you see is
-  always exactly what you asked for, never a simulated re-render that
-  could drift from what actually happens on accept.
+  and `SetNotesSource`'s own reply is `[]` entirely — unlike `EditCell`,
+  neither echoes the new *source* text itself back, since a non-review-
+  mode document's single sender already has it locally. An accepted push
+  has no such sender on the receiving end, so `AcceptCellState`'s own
+  handler emits the matching message itself whenever it applies a test/
+  notes source, letting every peer (accepter included) learn the new
+  content the same way `CellSourceChanged` already covers the primary
+  source.
+- **Push/Accept/Reject/Withdraw are plain buttons directly in the cell
+  header next to Edit**, rendered only when there's something dirty
+  (locally staged, not yet pushed) or pending (someone's push awaiting
+  this connection's Accept/Reject) — no expandable list, no diff
+  preview, clicking a button performs the action immediately.
 
 **Scope boundaries** (all deliberate, per `PROPOSAL_review_workflow.md`'s
-resolved open questions): per-cell only, no batching multiple *cells*
-into one push (a single cell's several changes — source, test, notes,
-and structural alike — bundle together fine, as above); text-diff-only
-review for v1, no preview execution of a pending bundle; a cell's
-primary source, its `tests`/`notes` elements' sources, and all 11
-structural message types go through review — element values
-(`SetElementValue`) remain the one significant carve-out, governed
-entirely by the separate,
-still-undecided `TODO.md` #63, along with deck/slide-scoped operations
-with no single cell to attach a bundle to (`AddCell`, `RemoveCell`,
-`ReorderCells`, `AddSlide`, `RemoveSlide`, `SetSlideOrder`, `SaveDeck`).
-A viewer-role connection can do none of this — every #65 message type is
-simply absent from `VIEWER_ALLOWED_MESSAGE_TYPES`'s allowlist, same
-"blocked by default until deliberately added" posture every other
+resolved open questions and the user's own explicit #68 scoping call):
+per-cell only, no batching multiple *cells* into one push; a cell's
+primary source, its `tests`/`notes` elements' sources, `hide_code`,
+`hide_def`, and rename go through review. Everything else that #65
+originally routed through review — element add/remove/reorder/config,
+add/remove primary editor, and main/setup-cell flags — is back to
+applying immediately even on a `review_mode` document (same as
+`AddCell`/`RemoveCell`/`ReorderCells`/`AddSlide`/`RemoveSlide`/
+`SetSlideOrder`/`SaveDeck`, which were never in review scope at all):
+rare, deck-structural changes an instructor makes while setting up a
+deck, not something that recurs mid-class the way repeated code edits
+do — the actual source of the #68 bug report. Element values
+(`SetElementValue`) remain the one carve-out predating #65 entirely,
+governed by the separate, still-undecided `TODO.md` #63. A viewer-role
+connection can do none of the push/accept/reject/withdraw messages —
+they're simply absent from `VIEWER_ALLOWED_MESSAGE_TYPES`'s allowlist,
+same "blocked by default until deliberately added" posture every other
 mutating message type already has.
 
-**Both views, not just Cells (`TODO.md` #65-xii).** `Cell.tsx` (the one
-component both `App.tsx`'s flat "Cells" view and `SlideShow.tsx`'s
-one-at-a-time Slides view render) owns both banners, but `SlideShow.tsx`
-itself didn't forward the six bundle-related props
-(`pendingActions`/`onPushPendingActions`/`onDiscardPendingActions`/
-`onAcceptBundle`/`onRejectBundle`/`onWithdrawBundle`) until #65-xii —
-before that, a Slides-view user could *stage* a change (`reviewMode`/
-`onStagePrimaryEdit`/`onStageTestEdit` already flowed through) but would
-never see the resulting Push/Discard banner, nor would a peer ever see
-an incoming Accept/Reject banner, while in Slides view. Fixed by adding
-the same six props to `SlideShowProps` and forwarding them to `<Cell>`
-exactly as Cells view already did — push/accept now works identically
-in both views.
+**Both views, not just Cells.** `Cell.tsx` (the one component both
+`App.tsx`'s flat "Cells" view and `SlideShow.tsx`'s one-at-a-time Slides
+view render) owns the Push/Accept/Reject/Withdraw buttons; `SlideShow.tsx`
+forwards `dirtyCells`/`onPushCellState`/`onDiscardPendingChanges`/
+`onAcceptPush`/`onRejectPush`/`onWithdrawPush` to `<Cell>` exactly as
+Cells view does, so push/accept works identically in both views.
 
-**History: this used to be two separate mechanisms, unified in
-`TODO.md` #65-xi after a real user bug report.** The original #65
-shipment gave `EditCell`/`SetTestSource` their own per-proposer
-`CellProposal` model (`PushCell`/`WithdrawProposal`/`AcceptProposal`/
-`RejectProposal`, `CellInstance.proposals`/`test_proposals`, keyed by
-proposer `user_id` with explicit stale-sibling `ProposalConflict`
-handling via `ws_handler.ToUser`), while #65-x's 11 structural message
-types — added later, since they write straight to the deck file and
-reload the Kernel immediately rather than having an existing
-`source_overrides`-style staging slot — got the single-bundle-per-cell
-model described above instead. The two mechanisms coexisting meant a
-document could have live source edits broadcasting immediately
-(`EditCell`'s original always-on-Shift+Enter behavior) right alongside
-structural edits requiring an explicit push, which is exactly the bug a
-user hit: running a `tests` element's code showed an instant
-Accept/Reject prompt on a peer's tab, with no Push button ever
-appearing on the editing tab. Fixed by folding `EditCell`/
-`SetTestSource` into the *same* bundle mechanism structural changes
-already used (deleting the old proposal mechanism entirely, not
-deprecating it) — one push model per cell, regardless of what kind of
-change it contains.
+**History.** This mechanism has been rewritten twice.
+
+*#65-xi* originally unified two separate mechanisms: `EditCell`/
+`SetTestSource` had their own per-proposer `CellProposal` model
+(`PushCell`/`WithdrawProposal`/`AcceptProposal`/`RejectProposal`), while
+11 structural message types (added by #65-x, since they write straight
+to the deck file and reload the Kernel immediately) had a
+single-bundle-per-cell model. The two coexisting meant a document could
+have live source edits broadcasting immediately right alongside
+structural edits requiring an explicit push — a user hit this directly:
+running a `tests` element's code showed an instant Accept/Reject prompt
+on a peer's tab, with no Push button ever appearing on the editing tab.
+Fixed by folding `EditCell`/`SetTestSource` into the same
+`PushCellBundle`/`AcceptCellBundle`/`RejectCellBundle`/
+`WithdrawCellBundle` mechanism the 11 structural types already used — an
+ordered list of staged actions (`StructuralBundle.actions`, each an
+exact wire-format dict for a `decode_client_message` + `handle_message`
+replay), with a real per-action diff preview (`ActionDiffPreview.tsx`)
+behind a collapsed-by-default header toggle.
+
+*#68* replaced that ordered-action-list model entirely, after a second
+real user bug report: repeatedly editing and running (Shift+Enter) the
+same cell before pushing appended a new staged action every time
+(`stageOrSend` only ever appended, never replaced), so accepting the
+resulting bundle replayed — and separately re-executed — every one of
+those redundant intermediate edits, which at enough volume proved
+disruptive mid-class. There is no longer an ordered list to build up: a
+push always carries the cell's *entire current state* as one snapshot,
+which pushing again simply overwrites in place. This also simplified the
+scope (the four structural message types folded in by #65-x that aren't
+part of a cell's "editable content" — element add/remove/reorder/config,
+primary-editor add/remove, main/setup-cell flags — moved back out of
+review scope entirely, per the user's own explicit call) and removed the
+diff-preview UI (`ActionDiffPreview.tsx`, deleted) along with it, by the
+user's own explicit design decision: the pushing student already sees
+their own current cell state on their own screen, so there is nothing to
+usefully diff against on the pushing side, and Accept is meant to read
+as a simple "take their current state," not a code-review flow.
 
 ## 6. Output model
 

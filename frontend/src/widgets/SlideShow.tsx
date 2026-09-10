@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react'
-import type { BundleAction, CellState } from '../deckState'
+import type { CellState } from '../deckState'
 import type { CellLayout } from '../protocol'
 import { Cell, type CellMeta } from './Cell'
 import { CodeEditor } from './CodeEditor'
@@ -81,12 +81,12 @@ export interface SlideShowProps {
   onStagePrimaryEdit?: (cellId: string, source: string) => void
   onStageTestEdit?: (cellId: string, elementId: string, source: string) => void
   onStageNotesEdit?: (cellId: string, elementId: string, source: string) => void
-  pendingActions?: Record<string, BundleAction[]>
-  onPushPendingActions?: (cellId: string) => void
-  onDiscardPendingActions?: (cellId: string) => void
-  onAcceptBundle?: (cellId: string, proposerUserId: string) => void
-  onRejectBundle?: (cellId: string, proposerUserId: string) => void
-  onWithdrawBundle?: (cellId: string) => void
+  dirtyCells?: Set<string>
+  onPushCellState?: (cellId: string) => void
+  onDiscardPendingChanges?: (cellId: string) => void
+  onAcceptPush?: (cellId: string, proposerUserId: string) => void
+  onRejectPush?: (cellId: string, proposerUserId: string) => void
+  onWithdrawPush?: (cellId: string) => void
 }
 
 // Slideshow/presentation mode (TODO.md #10, ARCHITECTURE.md's "one tool,
@@ -139,12 +139,12 @@ export function SlideShow({
   onStagePrimaryEdit,
   onStageTestEdit,
   onStageNotesEdit,
-  pendingActions,
-  onPushPendingActions,
-  onDiscardPendingActions,
-  onAcceptBundle,
-  onRejectBundle,
-  onWithdrawBundle,
+  dirtyCells,
+  onPushCellState,
+  onDiscardPendingChanges,
+  onAcceptPush,
+  onRejectPush,
+  onWithdrawPush,
 }: SlideShowProps) {
   const slideRef = useRef<HTMLDivElement | null>(null)
 
@@ -333,18 +333,18 @@ export function SlideShow({
                   ? (elementId, source) => onStageNotesEdit(cellId, elementId, source)
                   : undefined
               }
-              pendingActions={pendingActions?.[cellId]}
-              onPushPendingActions={onPushPendingActions ? () => onPushPendingActions(cellId) : undefined}
-              onDiscardPendingActions={
-                onDiscardPendingActions ? () => onDiscardPendingActions(cellId) : undefined
+              isDirty={dirtyCells?.has(cellId) ?? false}
+              onPushCellState={onPushCellState ? () => onPushCellState(cellId) : undefined}
+              onDiscardPendingChanges={
+                onDiscardPendingChanges ? () => onDiscardPendingChanges(cellId) : undefined
               }
-              onAcceptBundle={
-                onAcceptBundle ? (proposerUserId) => onAcceptBundle(cellId, proposerUserId) : undefined
+              onAcceptPush={
+                onAcceptPush ? (proposerUserId) => onAcceptPush(cellId, proposerUserId) : undefined
               }
-              onRejectBundle={
-                onRejectBundle ? (proposerUserId) => onRejectBundle(cellId, proposerUserId) : undefined
+              onRejectPush={
+                onRejectPush ? (proposerUserId) => onRejectPush(cellId, proposerUserId) : undefined
               }
-              onWithdrawBundle={onWithdrawBundle ? () => onWithdrawBundle(cellId) : undefined}
+              onWithdrawPush={onWithdrawPush ? () => onWithdrawPush(cellId) : undefined}
               onRunCell={(source) => onRunCell(cellId, source)}
               onRunAll={onRunAll}
               onSetElementValue={(elementId, value) => onSetElementValue(cellId, elementId, value)}

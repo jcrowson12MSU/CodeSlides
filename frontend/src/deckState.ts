@@ -1,16 +1,6 @@
 import { useMemo } from 'react'
 import type { ServerMessage } from './protocol'
 
-// TODO.md #65-xii: one staged/proposed action, shared shape between a
-// cell's own not-yet-pushed pendingActions (App.tsx) and an incoming
-// peer's structuralBundle (below) -- both are index-aligned
-// summary+payload pairs, so both banners can render the same
-// collapsible-preview UI (Cell.tsx's ActionDiffPreview) off one type.
-export interface BundleAction {
-  summary: string
-  payload: Record<string, unknown>
-}
-
 // Client-side mirror of a Session's cell instance state (ARCHITECTURE.md
 // section 1), reduced from the ordered ServerMessage stream a
 // useCodeSlidesSocket connection receives. Each cell tracks its own
@@ -56,16 +46,14 @@ export interface CellState {
   // this is only ever displayed, never computed with.
   lastEditedBy: string | null
   lastEditedAt: string | null
-  // TODO.md #65/#65-x/#65-xi: a pending bundle of staged changes (an
-  // edit to the primary source, an edit to a tests element's source,
-  // and/or structural changes) pushed for this cell on a review_mode
-  // document -- at most one bundle per cell at a time (a second push
-  // replaces it outright). `null` when there's no pending bundle.
-  // `actions` (added #65-xii) carries each action's real payload
-  // alongside its summary, so the reviewer's banner can render a
-  // preview (source diff / best-effort one-liner), not just the
-  // summary text.
-  structuralBundle: { proposerUserId: string; displayName: string; actions: BundleAction[] } | null
+  // TODO.md #68: a pending push -- the cell's entire current state as
+  // pushed by `proposerUserId` -- on a review_mode document, at most
+  // one per cell at a time (a second push replaces it outright). `null`
+  // when there's no pending push. No preview/diff payload here at all
+  // (by design -- TODO.md #68), just who pushed it, so the reviewer's
+  // UI can show "cell X has an incoming push from Y" with Accept/Reject
+  // buttons and nothing more.
+  pendingPush: { proposerUserId: string; displayName: string } | null
 }
 
 export type DeckState = Record<string, CellState>
@@ -79,7 +67,7 @@ const EMPTY_CELL: CellState = {
   elementContent: {},
   lastEditedBy: null,
   lastEditedAt: null,
-  structuralBundle: null,
+  pendingPush: null,
 }
 
 export function reduceDeckState(messages: ServerMessage[]): DeckState {
@@ -121,25 +109,21 @@ export function reduceDeckState(messages: ServerMessage[]): DeckState {
         }
         break
       }
-      case 'cell_bundle_proposed':
+      case 'cell_state_pushed':
         state[message.cell_id] = {
           ...cellFor(message.cell_id),
-          structuralBundle: {
+          pendingPush: {
             proposerUserId: message.proposer_user_id,
             displayName: message.proposer_display_name,
-            actions: message.action_summaries.map((summary, i) => ({
-              summary,
-              payload: message.action_payloads[i] ?? {},
-            })),
           },
         }
         break
-      case 'bundle_withdrawn':
-      case 'bundle_rejected':
-      case 'bundle_accepted':
-        // TODO.md #65-x: only one bundle is ever pending per cell, so
-        // any of these three simply clears it.
-        state[message.cell_id] = { ...cellFor(message.cell_id), structuralBundle: null }
+      case 'cell_state_withdrawn':
+      case 'cell_state_rejected':
+      case 'cell_state_accepted':
+        // TODO.md #68: only one push is ever pending per cell, so any
+        // of these three simply clears it.
+        state[message.cell_id] = { ...cellFor(message.cell_id), pendingPush: null }
         break
       default:
         break
