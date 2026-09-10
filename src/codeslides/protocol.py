@@ -57,6 +57,21 @@ class SetPresence:
 
 
 @dataclass
+class SendChatMessage:
+    """TODO.md #66-i: post a message to this document's chat panel.
+    Requires an identified connection (`Join` first) -- there's no
+    meaningful sender to attribute a chat message to otherwise. Allowed
+    for a `viewer`-role connection too (`ws_handler.VIEWER_ALLOWED_MESSAGE_TYPES`):
+    chat isn't a document mutation, and excluding a read-only visitor
+    from the conversation about what they're viewing would be an odd,
+    unrequested restriction (`PROPOSAL_review_workflow.md` section 2.1)."""
+
+    type: ClassVar[str] = "send_chat_message"
+    session_id: str
+    text: str
+
+
+@dataclass
 class EditCell:
     """Author/instructor changed a cell's source. Scoped to `session_id`
     only -- for `instance="editable"` cells this becomes a per-Session
@@ -1160,6 +1175,36 @@ class PresenceLeft:
 
 
 @dataclass
+class ChatMessageReceived:
+    """TODO.md #66-i: a new chat message for this document's chat panel
+    -- delivered to sender *and* every peer alike (unlike most messages
+    here, the sender needs their own message echoed back with a
+    server-assigned `message_id`/`sent_at` to render it in their own
+    scrollback consistently with everyone else's), so this is returned
+    unwrapped (plain list entry), not `Broadcast`- or `SenderOnly`-wrapped
+    (`ws_handler.py`'s `SendChatMessage` handler).
+
+    `is_system` marks an automatic status message the server posts on a
+    `PushCellBundle`/`AcceptCellBundle`/`RejectCellBundle` action (e.g.
+    "Alice pushed a change to `live_demo`") rather than a message a person
+    typed -- the frontend renders these distinctly (no color/avatar,
+    muted styling), per `PROPOSAL_review_workflow.md` section 3. A system
+    message has no real sender, so `user_id`/`display_name`/`color` are
+    empty strings rather than `None`, keeping the field types simple for
+    the frontend (no extra null-handling branch for a rare case)."""
+
+    type: ClassVar[str] = "chat_message_received"
+    session_id: str
+    message_id: str
+    user_id: str
+    display_name: str
+    color: str
+    text: str
+    sent_at: str
+    is_system: bool = False
+
+
+@dataclass
 class ErrorMessage:
     """A client message could not be handled (unknown session/cell id,
     malformed payload, etc.) -- distinct from a cell's own execution error
@@ -1174,6 +1219,7 @@ class ErrorMessage:
 ClientMessage = (
     Join
     | SetPresence
+    | SendChatMessage
     | EditCell
     | PushCellBundle
     | WithdrawCellBundle
@@ -1225,6 +1271,7 @@ ServerMessage = (
     | JoinAck
     | PresenceUpdate
     | PresenceLeft
+    | ChatMessageReceived
     | DeckSaved
     | CellAdded
     | SlideAdded
@@ -1251,6 +1298,7 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
     for cls in (
         Join,
         SetPresence,
+        SendChatMessage,
         EditCell,
         PushCellBundle,
         WithdrawCellBundle,

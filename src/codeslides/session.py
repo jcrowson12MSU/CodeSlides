@@ -111,6 +111,27 @@ class StructuralBundle:
 
 
 @dataclass
+class ChatMessage:
+    """TODO.md #66-ii: one message in a document's chat panel, stored in
+    `Session.chat_messages` in the same append-only order it was posted.
+    `is_system` marks an automatic status message the server posts on a
+    `PushCellBundle`/`AcceptCellBundle`/`RejectCellBundle` action rather
+    than one a person typed (`PROPOSAL_review_workflow.md` section 3);
+    such a message has no real sender, so `user_id`/`display_name`/
+    `color` are empty strings rather than `None` -- same reasoning
+    `protocol.ChatMessageReceived`'s own docstring gives for keeping
+    field types simple on the wire."""
+
+    message_id: str
+    user_id: str
+    display_name: str
+    color: str
+    text: str
+    sent_at: datetime
+    is_system: bool = False
+
+
+@dataclass
 class CellInstance:
     """A Cell's live state within one Session."""
 
@@ -226,6 +247,13 @@ class Session:
     # never a partial patch), so applying it is always a plain
     # overwrite, never a merge.
     cell_layout_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # TODO.md #66/PROPOSAL_review_workflow.md section 2.2: one
+    # document-wide chat stream, in-memory only, same lifetime as
+    # everything else a Session holds (cleared when the grace period
+    # expires or the server restarts -- ARCHITECTURE.md section 9's
+    # "Sessions are in-memory"). Append-only for v1: entries are only
+    # ever appended, never edited or removed.
+    chat_messages: list[ChatMessage] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         for name, cell in self.deck.cells.items():
@@ -311,6 +339,14 @@ class Session:
         new.cell_layout_overrides = {
             name: dict(layout) for name, layout in self.cell_layout_overrides.items()
         }
+        # TODO.md #66: deliberately *not* copied. A clone gets a fresh
+        # session_id (ARCHITECTURE.md section 5: "new Session from the
+        # same Deck," never a view onto the source Session), and chat is
+        # scoped per-document/session (PROPOSAL_review_workflow.md
+        # section 2.2's "one chat stream per shared document") -- a
+        # cloned session is a new, empty document as far as its own chat
+        # history goes, same as it starting with no peers connected yet.
+        new.chat_messages = []
         new.instances = {
             name: CellInstance(
                 status=inst.status,
