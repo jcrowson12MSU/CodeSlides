@@ -1,6 +1,6 @@
 import { markdown } from '@codemirror/lang-markdown'
 import { syntaxTree } from '@codemirror/language'
-import { Compartment, EditorState, StateEffect, StateField, type Extension } from '@codemirror/state'
+import { Annotation, Compartment, EditorState, StateEffect, StateField, type Extension } from '@codemirror/state'
 import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view'
 import type { SyntaxNode } from '@lezer/common'
 import { Subscript, Superscript, Table, TaskList } from '@lezer/markdown'
@@ -671,6 +671,22 @@ const notesDecorationsField = StateField.define<DecorationSet>({
 
 const editableCompartment = new Compartment()
 
+// TODO.md #65-xv: tags a transaction as an external `source`-prop sync
+// (this component writing an incoming/reverted value into the doc),
+// distinct from the user actually typing. Needed because
+// EditorView.updateListener's `docChanged` is true for ANY change to
+// the document, dispatched from anywhere -- including this component's
+// own sync effect below -- not just real keystrokes. Without this,
+// accepting a bundle containing a notes edit re-delivers that same
+// text back to every peer (including the accepter) via
+// notes_source_changed (App.tsx), which flows into this `source` prop;
+// the resulting programmatic dispatch would otherwise fire
+// onChangeSource with the exact text that was just accepted, which in
+// review mode re-stages it as a brand-new pending push -- confirmed as
+// the exact bug a user reported ("the other tab treated the markdown
+// update as another change to push").
+const externalSync = Annotation.define<boolean>()
+
 export function NotesEditor({ source, onChangeSource, locked }: NotesEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -695,7 +711,12 @@ export function NotesEditor({ source, onChangeSource, locked }: NotesEditorProps
       EditorView.focusChangeEffect.of((_state, focusing) => setFocus.of(focusing)),
       EditorView.lineWrapping,
       EditorView.updateListener.of((update) => {
-        if (update.docChanged) onChangeSourceRef.current(update.state.doc.toString())
+        if (!update.docChanged) return
+        // Skip the sync effect's own programmatic writes (see
+        // `externalSync`'s docstring) -- only a transaction that
+        // ISN'T tagged this way represents the user actually typing.
+        const isExternalSync = update.transactions.some((tr) => tr.annotation(externalSync))
+        if (!isExternalSync) onChangeSourceRef.current(update.state.doc.toString())
       }),
       EditorView.theme({
         // Prose, not code: no monospace default (inline code spans get
@@ -729,7 +750,10 @@ export function NotesEditor({ source, onChangeSource, locked }: NotesEditorProps
     if (!view) return
     const current = view.state.doc.toString()
     if (current !== source) {
-      view.dispatch({ changes: { from: 0, to: current.length, insert: source } })
+      view.dispatch({
+        changes: { from: 0, to: current.length, insert: source },
+        annotations: externalSync.of(true),
+      })
     }
   }, [source])
 
