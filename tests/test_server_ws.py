@@ -1729,3 +1729,132 @@ def test_websocket_push_cell_bundle_with_edit_cell_and_set_test_source_actions(t
         assert session.instances["cell_a"].structural_bundle is None
         assert "def cell_a" in deck_path.read_text()
         assert client.app.state.registry.kernel.deck.cells["cell_a"].hide_code is True
+
+
+# -- TODO.md #65-xiii: a real user bug report -- notes/markdown edits
+# bypassed review mode entirely (they used to ride on set_ui_state,
+# shared with the genuinely-exempt collapse/minimize flags, which never
+# had a review_mode gate at all) --
+
+
+def _build_deck_with_notes():
+    app = App()
+
+    @app.cell(elements=[ui.notes("story")])
+    def cell_a():
+        """Original notes."""
+        a = 1
+        return a
+
+    return app.deck
+
+
+def test_websocket_set_notes_source_rejected_on_review_mode_document():
+    """TODO.md #65-xiii: confirms the exact bug report -- a notes edit on
+    a review_mode document must be rejected outright, exactly like
+    edit_cell/set_test_source already are, instead of applying and
+    broadcasting immediately."""
+    client = TestClient(create_app(_build_deck_with_notes(), review_mode=True))
+    with (
+        client.websocket_connect("/ws?document=notes-1") as ws_a,
+        client.websocket_connect("/ws?document=notes-1") as ws_b,
+    ):
+        ws_a.receive_json()
+        ws_b.receive_json()
+        ws_a.send_json({"type": "join", "session_id": "notes-1", "display_name": "Alice"})
+        ws_a.receive_json()
+        ws_b.receive_json()
+
+        ws_a.send_json(
+            {
+                "type": "set_notes_source",
+                "session_id": "notes-1",
+                "cell_id": "cell_a",
+                "element_id": "story",
+                "source": "Edited notes.",
+            }
+        )
+        error = ws_a.receive_json()
+        assert error["type"] == "error"
+        assert "review mode" in error["message"]
+
+        # B must receive nothing at all from the rejected edit.
+        ws_b.send_json({"type": "set_presence", "session_id": "notes-1", "cell_id": None})
+        ws_a.send_json({"type": "run_all", "session_id": "notes-1"})
+        for _ in range(3):
+            ws_a.receive_json()
+        for _ in range(3):
+            ws_b.receive_json()  # run_all's own broadcast, not from the rejected edit
+
+
+def test_websocket_push_cell_bundle_with_set_notes_source_action(tmp_path):
+    """TODO.md #65-xiii: a notes edit can be staged and pushed through
+    the same per-cell bundle mechanism as everything else, and
+    notes_source_changed is broadcast on accept with the correct
+    element_id/source (the new message this fix needed, since
+    set_notes_source's own reply is `[]`, same gap TestSourceChanged
+    fixed for set_test_source in #65-xi)."""
+    deck_path = tmp_path / "deck.py"
+    deck_path.write_text(
+        "from codeslides import App, ui\n\n"
+        "app = App()\n\n"
+        '@app.cell(elements=[ui.notes("story")])\n'
+        "def cell_a():\n"
+        '    """Original notes."""\n'
+        "    a = 1\n"
+        "    return a\n"
+    )
+    from codeslides.loader import load_deck
+
+    client = TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True))
+    with (
+        client.websocket_connect("/ws?document=notes-2") as ws_a,
+        client.websocket_connect("/ws?document=notes-2") as ws_b,
+    ):
+        ws_a.receive_json()
+        ws_b.receive_json()
+        ws_a.send_json({"type": "join", "session_id": "notes-2", "display_name": "Alice"})
+        ws_a.receive_json()
+        ws_b.receive_json()
+
+        notes_payload = {
+            "type": "set_notes_source",
+            "session_id": "notes-2",
+            "cell_id": "cell_a",
+            "element_id": "story",
+            "source": "Edited notes.",
+        }
+        ws_a.send_json(
+            {
+                "type": "push_cell_bundle",
+                "session_id": "notes-2",
+                "cell_id": "cell_a",
+                "actions": [{"payload": notes_payload, "summary": "Edit notes `story`"}],
+            }
+        )
+        proposed = ws_b.receive_json()
+        assert proposed["type"] == "cell_bundle_proposed"
+        assert proposed["action_summaries"] == ["Edit notes `story`"]
+        assert proposed["action_payloads"] == [notes_payload]
+        alice_user_id = proposed["proposer_user_id"]
+
+        ws_b.send_json(
+            {
+                "type": "accept_cell_bundle",
+                "session_id": "notes-2",
+                "cell_id": "cell_a",
+                "proposer_user_id": alice_user_id,
+            }
+        )
+        replies = [ws_b.receive_json() for _ in range(2)]
+        types = [m["type"] for m in replies]
+        assert "bundle_accepted" in types
+        assert "notes_source_changed" in types
+
+        notes_source_changed = next(m for m in replies if m["type"] == "notes_source_changed")
+        assert notes_source_changed["element_id"] == "story"
+        assert notes_source_changed["source"] == "Edited notes."
+
+        session = client.app.state.registry.get("notes-2")
+        assert session.instances["cell_a"].elements["story"].content == "Edited notes."
+        assert session.instances["cell_a"].structural_bundle is None

@@ -184,6 +184,15 @@ export interface CellProps {
   // TODO.md #65-xi: same as onStagePrimaryEdit, for a `tests` element's
   // own source.
   onStageTestEdit?: (elementId: string, source: string) => void
+  // TODO.md #65-xiii: same as onStageTestEdit, for a `notes` element's
+  // own source -- a real gap fixed after a direct user report that
+  // notes edits weren't gated by review mode at all (they used to ride
+  // on set_ui_state, shared with the genuinely-exempt collapse/minimize
+  // flags). Called on every keystroke (NotesEditor's own always-live
+  // editing model), not just on a Shift+Enter -- the caller (App.tsx's
+  // handleStageNotesEdit) accounts for this by upserting a single
+  // pending action per element rather than appending one per call.
+  onStageNotesEdit?: (elementId: string, source: string) => void
   // TODO.md #65-x/#65-xi/#65-xii: this cell's locally-staged
   // (not-yet-pushed) changes -- primary/test source edits and
   // structural changes (rename, hide toggles, add/remove element,
@@ -438,6 +447,7 @@ export function Cell({
   ownUserId = null,
   onStagePrimaryEdit,
   onStageTestEdit,
+  onStageNotesEdit,
   pendingActions,
   onPushPendingActions,
   onDiscardPendingActions,
@@ -478,6 +488,17 @@ export function Cell({
   // passes for `hideCode` -- there's genuinely nothing to reveal for a
   // cell the author declared has no code editor.
   const hideCode = hideCodeProp || (meta.hide_code ?? false)
+  // TODO.md #65-xiii: ActionDiffPreview's diff base for a set_notes_source
+  // action -- `state.elementContent` holds every element's current
+  // content regardless of kind (viewer output, notes markdown, tests
+  // pass/fail), so this narrows to just the string-valued (i.e. notes)
+  // entries a diff can actually be built against.
+  const currentNotesSources: Record<string, string> = {}
+  if (state?.elementContent) {
+    for (const [name, content] of Object.entries(state.elementContent)) {
+      if (typeof content === 'string') currentNotesSources[name] = content
+    }
+  }
   const [editing, setEditing] = useState(false)
   // The code/elements split is per-cell, kept as local component state
   // (not lifted to App.tsx) -- it's pure display layout with no server
@@ -989,7 +1010,7 @@ export function Cell({
         <ViewerElementWidget
           element={element}
           content={state?.elementContent[element.name]}
-          onChangeNotesSource={onChangeNotesSource}
+          onChangeNotesSource={reviewMode && onStageNotesEdit ? onStageNotesEdit : onChangeNotesSource}
         />
       )
     }
@@ -1285,6 +1306,7 @@ export function Cell({
                     payload={action.payload}
                     currentSource={meta.source}
                     currentTestSources={testSourceValues}
+                    currentNotesSources={currentNotesSources}
                   />
                 </details>
               </li>
@@ -1333,6 +1355,7 @@ export function Cell({
                         payload={action.payload}
                         currentSource={meta.source}
                         currentTestSources={testSourceValues}
+                        currentNotesSources={currentNotesSources}
                       />
                     </details>
                   </li>

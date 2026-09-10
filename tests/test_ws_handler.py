@@ -44,6 +44,7 @@ from codeslides.protocol import (
     SetHideCode,
     SetHideDef,
     SetMainCell,
+    SetNotesSource,
     SetSlideOrder,
     SetTestSource,
     SetUiState,
@@ -169,7 +170,11 @@ def test_run_all_surfaces_notes_docstring_without_any_write():
     assert element_outputs[0].content == "# Title\nBody"
 
 
-def test_set_ui_state_notes_source_updates_content_without_rerun():
+def test_set_notes_source_updates_content_without_rerun():
+    """TODO.md #65-xiii: notes-source was pulled out of set_ui_state into
+    its own message type so it can be gated by review_mode like every
+    other real content edit -- but the underlying non-review-mode
+    behavior (update content, no re-run) is unchanged."""
     app = App()
 
     @app.cell(elements=[ui.notes("n")])
@@ -185,7 +190,7 @@ def test_set_ui_state_notes_source_updates_content_without_rerun():
 
     messages = handle_message(
         registry,
-        SetUiState(session_id=session.session_id, cell_id="cell_with_notes", element_id="n", notes_source="edited"),
+        SetNotesSource(session_id=session.session_id, cell_id="cell_with_notes", element_id="n", source="edited"),
     )
 
     assert messages == []

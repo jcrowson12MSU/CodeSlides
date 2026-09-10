@@ -4580,6 +4580,69 @@ reshape the plan below and are called out explicitly where they apply:
       produces the identical collapsed-banner/diff/Push/Accept behavior
       Cells view already had.
 
+  - [x] 65-xiii. **Fix: notes/markdown edits bypassed review mode
+    entirely, a real user bug report** ("Changes made to markdown were
+    not pushed to the other tab"). Root cause: a `notes` element's
+    source used to ride on `SetUiState` (`notes_source` field), shared
+    with cell-collapse/element-minimize -- flags that genuinely *are*
+    exempt from review mode (pure ephemeral UI state, never document
+    content). `SetUiState`'s handler never had a `review_mode` gate at
+    all, since collapse/minimize never needed one; folding notes-source
+    into the same message meant it silently inherited that same
+    ungated posture, even though (unlike collapse/minimize) it's real
+    content persisted into `session.source_overrides`, the same slot a
+    code edit uses. #65-x's own scope explicitly named "markdown
+    editors" as in-scope for the push mechanism, but the implementation
+    never actually wired it up on either end -- confirmed via a
+    dedicated investigation (not assumed from the bug report alone)
+    before starting any fix.
+    - Split `notes_source` out of `SetUiState` into its own
+      `SetNotesSource` message (`protocol.py`/`protocol.ts`), gated by
+      `session.review_mode` exactly like `EditCell`/`SetTestSource`
+      already are (`ws_handler.py`) -- `SetUiState` itself now only
+      ever carries `collapsed`/`minimized`, both still deliberately
+      ungated. Added to `ATTRIBUTABLE_MESSAGE_TYPES` too, since (unlike
+      collapse/minimize) it's a genuine content edit.
+    - Added `NotesSourceChanged` (mirroring #65-xi's `TestSourceChanged`
+      exactly): `SetNotesSource`'s own handler returns `[]` (no
+      execution result to report), so `AcceptCellBundle`'s replay loop
+      emits this itself whenever it replays a `SetNotesSource` action --
+      otherwise no connection, including the accepter's own, would ever
+      learn the newly-accepted markdown text.
+    - Frontend: `App.tsx`'s `handleStageNotesEdit` is deliberately
+      **not** routed through the existing `stageOrSend` helper
+      (`handleStagePrimaryEdit`/`handleStageTestEdit`'s shared
+      "append one pending action" mechanism) -- `NotesEditor` fires
+      `onChangeSource` on every keystroke (Obsidian-style always-live
+      editing, unlike code/test editors' Shift+Enter-gated model), so
+      appending would flood `pendingActions` with one entry per
+      character typed. Instead it upserts a single per-element pending
+      entry in place, so typing a whole paragraph still stages as
+      exactly one "Edit notes `<name>`" action. `Cell.tsx` gained
+      `onStageNotesEdit` (same `reviewMode`-gated ternary pattern
+      `onStageTestEdit`/`onRunCell` already use) and `SlideShow.tsx`
+      forwards it too, for the same Slides-view parity #65-xii already
+      established for the other two banners.
+    - `ActionDiffPreview.tsx` (#65-xii) extended to render a real diff
+      for `set_notes_source` actions too, using `@codemirror/lang-
+      markdown` instead of `lang-python` for syntax highlighting (a new
+      `language` prop on the internal `SourceDiff`, defaulting to
+      python for the two existing callers).
+    - Tests: 2 new backend tests -- `set_notes_source` rejected outright
+      on a review_mode document (the exact reported bug), and a bundle
+      with a `set_notes_source` action replaying correctly with
+      `notes_source_changed` broadcasting the right `element_id`/
+      source. Full suite: 619 passed, no regressions. `tsc -b` clean.
+    - Verified end-to-end with two real browser contexts (Playwright)
+      against `Lectures/Chapters/chapter4.py --review-mode`: typing
+      several keystrokes into Alice's (unlocked) notes editor produces
+      exactly one collapsed "Edit notes `notes`" pending action (not
+      one per keystroke) with zero effect on Bob's tab; expanding shows
+      a real diff of the new text; only after Alice clicks Push does
+      Bob see the same "Alice proposed these changes" banner every
+      other action type already gets, and accepting updates Bob's
+      notes viewer with the new content.
+
 - [ ] **66. Collapsible chat panel for shared documents** -- lower-right
   corner collapsed to a small affordance; expands to a full-height
   third column to the right of the cells and the existing element-tabs
