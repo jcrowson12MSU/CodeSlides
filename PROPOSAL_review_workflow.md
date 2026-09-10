@@ -152,35 +152,39 @@ cell, similar to today's presence cursor bar) and can:
 
 ### 1.4 Protocol sketch
 
-New message types (`protocol.py`), reflecting the decisions above
-(per-cell, text-diff-only review, any-editor-can-accept):
-
-- `PushCell { cell_id, source }` (client -> server): stage a proposal,
-  replacing the sender's own prior pending proposal for that cell, if any.
-- `CellProposed` (broadcast, peers-only via `Broadcast`, same audience
-  pattern as `PresenceUpdate`): `{ cell_id, proposer_user_id,
-  proposer_display_name, source, created_at }` — tells every other
-  connection a proposal now exists/was updated.
-- `WithdrawProposal { cell_id }` (client -> server): proposer cancels
-  their own pending proposal.
-- `AcceptProposal { cell_id, proposer_user_id }` (client -> server): only
-  sent by whoever is reviewing; disambiguated by `proposer_user_id` in
-  case more than one proposal can coexist for the same cell (open
-  question 1.3.2 above bears directly on whether this field is even
-  needed, or there's only ever at most one live proposal per cell).
-- `ProposalAccepted` (broadcast to everyone, unwrapped, same as today's
-  `cell_source_changed`): the cell's new accepted source + re-run
-  results, exactly like today's post-edit broadcast, plus which proposal
-  (and whose) was just merged.
-- `RejectProposal { cell_id, proposer_user_id }` (client -> server):
-  explicit dismissal, distinct from just ignoring a proposal — clears it
-  from the pending list and notifies the proposer (`ProposalRejected`,
-  `SenderOnly` to the proposer) rather than leaving it lingering
-  indefinitely with no signal either way.
-- `ProposalConflict` (broadcast, `SenderOnly` to the proposer): sent
-  instead of clearing their proposal when the accepted source for that
-  cell changed since they proposed (decision #3 above) — carries the new
-  accepted source so their client can re-diff.
+> **Superseded by what actually shipped** (`TODO.md` #65-xi). The
+> message names originally sketched below (`PushCell`, `CellProposed`,
+> `WithdrawProposal`, `AcceptProposal`, `ProposalAccepted`,
+> `RejectProposal`, `ProposalRejected`, `ProposalConflict`) were removed
+> entirely during implementation, in favor of a single bundle-based
+> mechanism that unifies structural edits, primary-source edits, and
+> test-source edits under one per-cell push, rather than a separate
+> single-cell-source proposal path. The message types actually in
+> `protocol.py` today are:
+>
+> - `PushCellBundle { cell_id, actions }` (client -> server): stage or
+>   replace the sender's pending bundle for that cell. `actions` is a
+>   list of `{payload, summary}` entries — each payload is any other
+>   client message targeting that cell (`EditCell`, `SetTestSource`,
+>   `RenameCell`, `AddElement`, etc.), replayed at accept time.
+> - `CellBundleProposed` (broadcast, peers-only): tells every other
+>   connection a bundle now exists/was updated for that cell.
+> - `WithdrawCellBundle { cell_id }` (client -> server) /
+>   `BundleWithdrawn` (broadcast): proposer cancels their own pending
+>   bundle.
+> - `AcceptCellBundle { cell_id, proposer_user_id }` (client -> server):
+>   replays every staged action through the normal `handle_message`
+>   path (with `review_mode` temporarily off), then returns
+>   `BundleAccepted` plus whatever each replayed action's own handler
+>   returns (e.g. `CellSourceChanged`, `TestSourceChanged`,
+>   `NotesSourceChanged`).
+> - `RejectCellBundle { cell_id, proposer_user_id }` (client -> server) /
+>   `BundleRejected` (broadcast): explicit dismissal, distinct from just
+>   ignoring a bundle.
+>
+> Treat this subsection's original names as vocabulary for the *ideas*
+> (push, accept, reject), not as an accurate protocol reference — read
+> `protocol.py` and `ws_handler.py` directly for the real shape.
 
 Also gated behind decision #5's document-level flag: a document created
 in review mode reports it in `SessionCreated`/on join (a `review_mode:
@@ -264,8 +268,8 @@ execution/reactivity model. Concretely:
 
 ## 3. Interaction between the two features — decided
 
-**Decision: yes**, a `PushCell`/`AcceptProposal`/`RejectProposal` posts
-an automatic system message into that document's chat stream (e.g.
+**Decision: yes**, a `PushCellBundle`/`AcceptCellBundle`/`RejectCellBundle`
+posts an automatic system message into that document's chat stream (e.g.
 "Alice pushed a change to `live_demo`", "Bob accepted Alice's change to
 `live_demo`") — rendered visually distinct from a person's own message
 (e.g. no color/avatar, centered/muted styling), the same convention most

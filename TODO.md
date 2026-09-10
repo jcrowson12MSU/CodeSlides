@@ -4751,32 +4751,59 @@ reshape the plan below and are called out explicitly where they apply:
       header immediately reacquiring a "Push (1)" button for the notes
       element it never itself edited).
 
-- [ ] **66. Collapsible chat panel for shared documents** -- lower-right
+- [x] **66. Collapsible chat panel for shared documents** -- lower-right
   corner collapsed to a small affordance; expands to a full-height
-  third column to the right of the cells and the existing element-tabs
-  panel (`TODO.md` #56), collapsible back down. One chat stream per
-  document, in-memory only (not persisted across a server restart),
-  append-only, gated on a `documentId` being present (no panel on a
-  solo connection). Full design and rationale in
-  `PROPOSAL_review_workflow.md` (design decided; not yet implemented).
-  - [ ] 66-i. Protocol (`protocol.py`): `SendChatMessage` (client ->
+  column, collapsible back down. One chat stream per document,
+  in-memory only (not persisted across a server restart), append-only,
+  gated on a `documentId` being present (no panel on a solo
+  connection). Full design and rationale in
+  `PROPOSAL_review_workflow.md`.
+  - [x] 66-i. Protocol (`protocol.py`): `SendChatMessage` (client ->
     server), `ChatMessageReceived` (broadcast to sender + peers, unlike
     most messages the sender needs their own message echoed back with a
-    server-assigned id/timestamp). Add `SendChatMessage` to
+    server-assigned id/timestamp). Added `SendChatMessage` to
     `VIEWER_ALLOWED_MESSAGE_TYPES` -- a viewer can send chat.
-  - [ ] 66-ii. `Session`: an in-memory chat message list, same lifetime
-    as everything else the `Session` holds (cleared when the grace
-    period expires).
-  - [ ] 66-iii. `ws_handler.py`: handle `SendChatMessage`, broadcast
-    `ChatMessageReceived`; also emit a system-style `ChatMessageReceived`
-    automatically from the #65 push/accept/reject handlers (e.g. "Alice
-    pushed a change to `live_demo`"), rendered distinctly on the
-    frontend (no color/avatar, muted styling) from a person's own
-    message.
-  - [ ] 66-iv. Frontend: collapsed corner affordance (icon/button),
-    expand/collapse to a full-height right-side column, message list +
-    input, reusing `presenceState.ts`'s color/display-name per sender.
-    Gate rendering on `documentId` being present, same as `PeerList`.
-  - [ ] 66-v. Tests: message broadcast (sender receives their own
-    message back), viewer-role can send, no panel/messages for a solo
-    connection, and the automatic system messages from #65's actions.
+  - [x] 66-ii. `Session`: an in-memory `chat_messages: list[ChatMessage]`
+    field, same lifetime as everything else the `Session` holds
+    (cleared when the grace period expires); deliberately *not* copied
+    by `Session.clone()` -- a clone is a new document/session with its
+    own fresh (empty) chat history, per the "one stream per document"
+    scoping decision.
+  - [x] 66-iii. `ws_handler.py`: handles `SendChatMessage`, returns
+    `ChatMessageReceived` unwrapped (sender + peers); a new
+    `_system_chat_message` helper is also called from the
+    `PushCellBundle`/`AcceptCellBundle`/`RejectCellBundle` handlers
+    (the #65 bundle mechanism -- see #65-xi; it superseded the original
+    single-cell `PushCell`/`AcceptProposal`/`RejectProposal` sketch in
+    `PROPOSAL_review_workflow.md`), e.g. "Alice pushed a change to
+    `live_demo`" / "Bob accepted Alice's change to `live_demo`" /
+    "Bob rejected Alice's change to `live_demo`" -- `WithdrawCellBundle`
+    deliberately excluded (only push/accept/reject post one, per
+    `PROPOSAL_review_workflow.md` section 3). `is_system=True` messages
+    carry empty `user_id`/`display_name`/`color` (no real sender) and
+    are rendered distinctly on the frontend (no color/avatar, centered
+    muted italic styling) from a person's own message.
+  - [x] 66-iv. Frontend: `ChatPanel.tsx`, a collapsed corner affordance
+    (icon/button, with an unread-count badge) that expands to a
+    `position: fixed` full-height right-edge column -- an *overlay*
+    over the existing cells/slides content rather than a true reflowed
+    layout column (a lower-risk call made explicitly for this first
+    version; a real reflow column is a reasonable follow-up if this
+    proves too cramped in practice). The expanded/collapsed state is
+    lifted to `App.tsx` (not local to `ChatPanel`) so `.app` can add
+    matching right-padding (`.cs-chat-is-open`) while the panel is
+    open -- confirmed via a real Playwright browser session that
+    without this, the fixed-position overlay silently intercepts
+    clicks on any real content underneath it (e.g. a cell's own
+    "Push"/header controls), not just visually covering it. New
+    `chatState.ts` (modeled on `presenceState.ts`) reduces
+    `chat_message_received` messages into an ordered list; reuses each
+    sender's presence color/display-name convention. Gated on
+    `documentId` being present, same as `PeerList`.
+  - [x] 66-v. Tests (`tests/test_server_ws.py`): message broadcast
+    (sender receives their own message back), viewer-role can send, a
+    solo (unjoined) connection's `send_chat_message` is rejected with
+    an error, and the automatic system messages from #65's bundle
+    push/accept/reject actions (verified both via these tests and via
+    a real two-tab Playwright browser session driving an actual
+    edit -> Shift+Enter -> Push -> Accept flow end to end).

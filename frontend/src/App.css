@@ -2348,3 +2348,169 @@ body.cs-slides-locked {
   font-weight: 600;
   line-height: 1;
 }
+
+/* TODO.md #66-iv: the collapsed corner affordance, and the expanded
+   full-height chat column -- both `position: fixed` overlays so they
+   never affect the existing cells/slides layout's own flow, per the
+   "overlay, no reflow" call for this first version. Confirmed via a
+   real browser that an overlay with no compensating padding silently
+   intercepts clicks on any real content underneath it (a cell's own
+   header controls can sit that far right) -- `.cs-chat-is-open` (set on
+   `.app` while the panel is expanded) reserves the same width as
+   padding so real content never sits under the fixed panel. */
+.cs-chat-is-open {
+  padding-right: calc(2.5rem + min(320px, 100vw));
+}
+.cs-chat-affordance {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  z-index: 30;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  border: 1px solid #ccc;
+  background: #fff;
+  color: #333;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
+  cursor: pointer;
+}
+
+.cs-chat-unread-badge {
+  position: absolute;
+  top: -0.2rem;
+  right: -0.2rem;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: #e6194b;
+  color: white;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.1rem;
+  text-align: center;
+}
+
+.cs-chat-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  width: min(320px, 100vw);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-left: 1px solid #ccc;
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.1);
+}
+
+.cs-chat-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #eee;
+  flex: 0 0 auto;
+}
+
+.cs-chat-panel-title {
+  font-weight: 600;
+  font-size: var(--cs-font-base);
+}
+
+.cs-chat-collapse-toggle {
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0 !important;
+  border-radius: 50% !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cs-chat-message-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.cs-chat-empty {
+  color: #888;
+  font-size: var(--cs-font-sm);
+  margin: 0.5rem 0;
+}
+
+.cs-chat-system-message {
+  text-align: center;
+  color: #999;
+  font-size: var(--cs-font-tight);
+  font-style: italic;
+}
+
+.cs-chat-message {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.cs-chat-message-avatar {
+  flex: 0 0 auto;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  color: white;
+  font-size: 0.7rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.cs-chat-message-body {
+  min-width: 0;
+}
+
+.cs-chat-message-meta {
+  font-size: var(--cs-font-tight);
+  font-weight: 600;
+  color: #555;
+}
+
+.cs-chat-message-text {
+  font-size: var(--cs-font-base);
+  color: #222;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.cs-chat-input-row {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid #eee;
+  flex: 0 0 auto;
+}
+
+.cs-chat-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 0.3rem;
+  font-size: var(--cs-font-base);
+}
+
+.cs-chat-send-button {
+  flex: 0 0 auto;
+  padding: 0.4rem 0.8rem;
+  border-radius: 0.3rem;
+}

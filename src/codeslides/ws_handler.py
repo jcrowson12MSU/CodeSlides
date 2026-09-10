@@ -35,6 +35,7 @@ from codeslides.protocol import (
     CellSourceChanged,
     CellsReordered,
     CellStatus,
+    ChatMessageReceived,
     ClientMessage,
     CloneSession,
     DeckSaved,
@@ -67,6 +68,7 @@ from codeslides.protocol import (
     ReorderElements,
     RunAll,
     SaveDeck,
+    SendChatMessage,
     ServerMessage,
     SessionCloned,
     SetCellLayout,
@@ -97,7 +99,7 @@ from codeslides.serialization import (
     save_edits,
     write_export,
 )
-from codeslides.session import Session, StructuralAction, StructuralBundle
+from codeslides.session import ChatMessage, Session, StructuralAction, StructuralBundle
 
 # A connection is identified by a fresh id per websocket, distinct from
 # the (possibly shared) session_id its Session lives under -- this is
@@ -547,24 +549,28 @@ def _element_output_messages(session: Session, results: dict[str, ExecutionResul
 # doesn't know a connection's role in advance); SetPresence is needed so
 # a viewer's cursor/cell-focus still shows up to others, matching "watch
 # an instructor live-edit" -- a viewer should still be visible as a
-# person watching, just unable to change anything. Every other message
-# type mutates shared Session state (a code edit, a slider drag, slide
-# navigation, adding/removing a cell, saving, cloning -- CloneSession
-# included, since a clone is a brand-new Session with no role tracking
-# of its own, and letting a viewer make one would hand them an
-# unrestricted editable copy) and is rejected outright for a viewer, per
-# the "block everything except pure viewing" decision behind 46e-ii --
-# not evaluated case by case against "does this really count as
-# editing," since that judgment call is exactly what an allowlist is
-# meant to avoid needing. Enforced in server.py's websocket loop, before
-# handle_message is even called -- not here, because a viewer's role
-# lives on `registry.connections[<this connection's actual session_id>]
+# person watching, just unable to change anything. TODO.md #66: chat is
+# added here too -- it isn't a document mutation, and excluding a
+# read-only visitor from a conversation about what they're viewing would
+# be an odd, unrequested restriction (`PROPOSAL_review_workflow.md`
+# section 2.1). Every other message type mutates shared Session state (a
+# code edit, a slider drag, slide navigation, adding/removing a cell,
+# saving, cloning -- CloneSession included, since a clone is a
+# brand-new Session with no role tracking of its own, and letting a
+# viewer make one would hand them an unrestricted editable copy) and is
+# rejected outright for a viewer, per the "block everything except pure
+# viewing" decision behind 46e-ii -- not evaluated case by case against
+# "does this really count as editing," since that judgment call is
+# exactly what an allowlist is meant to avoid needing. Enforced in
+# server.py's websocket loop, before handle_message is even called --
+# not here, because a viewer's role lives on
+# `registry.connections[<this connection's actual session_id>]
 # [connection_id]`, and server.py already has that session_id in a local
 # variable, whereas handle_message would have to trust whatever
 # session_id (or, for CloneSession, source_session_id -- a different
 # field entirely) the message itself claims, which is exactly the kind
 # of client-supplied value a security check must not rely on.
-VIEWER_ALLOWED_MESSAGE_TYPES: tuple[type, ...] = (Join, SetPresence)
+VIEWER_ALLOWED_MESSAGE_TYPES: tuple[type, ...] = (Join, SetPresence, SendChatMessage)
 
 # TODO.md #46g-ii/#46g-iii: message types that count as "editing a cell"
 # for attribution purposes -- an explicit allowlist, same shape/rationale
@@ -633,6 +639,37 @@ def attributed_cell_id(replies: list[ServerMessage]) -> str | None:
         if cell_id is not None:
             return cell_id
     return None
+
+
+def _system_chat_message(session: Session, session_id: str, text: str) -> ChatMessageReceived:
+    """TODO.md #66-iii/PROPOSAL_review_workflow.md section 3: post an
+    automatic status message into `session`'s chat stream for a
+    push/accept/reject action -- rendered distinctly on the frontend
+    (no color/avatar, muted styling) via `is_system=True`, same
+    convention most code-review and chat tools use for bot/status
+    events. Appended to `session.chat_messages` exactly like a
+    person-typed `SendChatMessage` would be, so it appears in the same
+    ordered history for anyone catching up later."""
+    chat_message = ChatMessage(
+        message_id=uuid.uuid4().hex,
+        user_id="",
+        display_name="",
+        color="",
+        text=text,
+        sent_at=datetime.now(UTC),
+        is_system=True,
+    )
+    session.chat_messages.append(chat_message)
+    return ChatMessageReceived(
+        session_id=session_id,
+        message_id=chat_message.message_id,
+        user_id=chat_message.user_id,
+        display_name=chat_message.display_name,
+        color=chat_message.color,
+        text=chat_message.text,
+        sent_at=chat_message.sent_at.isoformat(),
+        is_system=True,
+    )
 
 
 def handle_message(
@@ -731,6 +768,47 @@ def handle_message(
                     cell_id=peer.cell_id,
                     cursor_pos=peer.cursor_pos,
                 )
+            )
+        ]
+
+    if isinstance(message, SendChatMessage):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        peer = registry.get_peer(message.session_id, connection_id) if connection_id else None
+        if peer is None or peer.user_id is None:
+            return [
+                ErrorMessage(
+                    message="send_chat_message requires an identified connection (join first)",
+                    session_id=message.session_id,
+                )
+            ]
+        text = message.text.strip()
+        if not text:
+            return []
+        chat_message = ChatMessage(
+            message_id=uuid.uuid4().hex,
+            user_id=peer.user_id,
+            display_name=peer.display_name or "",
+            color=peer.color,
+            text=text,
+            sent_at=datetime.now(UTC),
+        )
+        session.chat_messages.append(chat_message)
+        # TODO.md #66-i: unwrapped (not Broadcast-wrapped) -- the sender
+        # needs their own message echoed back with the server-assigned
+        # message_id/sent_at to render it in their own scrollback
+        # consistently with everyone else's, same as EditCell's
+        # CellSourceChanged reply going to sender+peers alike.
+        return [
+            ChatMessageReceived(
+                session_id=message.session_id,
+                message_id=chat_message.message_id,
+                user_id=chat_message.user_id,
+                display_name=chat_message.display_name,
+                color=chat_message.color,
+                text=chat_message.text,
+                sent_at=chat_message.sent_at.isoformat(),
             )
         ]
 
@@ -897,7 +975,12 @@ def handle_message(
                     action_payloads=[a.payload for a in actions],
                     created_at=created_at.isoformat(),
                 )
-            )
+            ),
+            _system_chat_message(
+                session,
+                message.session_id,
+                f"{peer.display_name or 'Someone'} pushed a change to `{message.cell_id}`",
+            ),
         ]
 
     if isinstance(message, WithdrawCellBundle):
@@ -1022,6 +1105,8 @@ def handle_message(
                     last_edited_at=final_instance.last_edited_at.isoformat(),
                 )
             )
+        accepted_by_name = (accepting_peer.display_name if accepting_peer else None) or "Someone"
+        pushed_by_name = bundle.display_name or "someone"
         return [
             BundleAccepted(
                 session_id=message.session_id,
@@ -1031,6 +1116,11 @@ def handle_message(
                 action_summaries=[a.summary for a in bundle.actions],
             ),
             *replies,
+            _system_chat_message(
+                session,
+                message.session_id,
+                f"{accepted_by_name} accepted {pushed_by_name}'s change to `{message.cell_id}`",
+            ),
         ]
 
     if isinstance(message, RejectCellBundle):
@@ -1050,13 +1140,22 @@ def handle_message(
                     cell_id=message.cell_id,
                 )
             ]
+        bundle = instance.structural_bundle
         instance.structural_bundle = None
+        rejecting_peer = registry.get_peer(message.session_id, connection_id) if connection_id else None
+        rejected_by_name = (rejecting_peer.display_name if rejecting_peer else None) or "Someone"
+        pushed_by_name = bundle.display_name or "someone"
         return [
             BundleRejected(
                 session_id=message.session_id,
                 cell_id=message.cell_id,
                 rejected_by_user_id=message.proposer_user_id,
-            )
+            ),
+            _system_chat_message(
+                session,
+                message.session_id,
+                f"{rejected_by_name} rejected {pushed_by_name}'s change to `{message.cell_id}`",
+            ),
         ]
 
     if isinstance(message, SetElementValue):

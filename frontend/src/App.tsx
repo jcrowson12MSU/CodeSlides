@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
+import { useChatState } from './chatState'
 import { useDeckState, type BundleAction } from './deckState'
 import { usePresenceState } from './presenceState'
 import type { CellLayout, ServerMessage } from './protocol'
 import { useCodeSlidesSocket } from './useCodeSlidesSocket'
 import { Cell, type CellMeta } from './widgets/Cell'
+import { ChatPanel } from './widgets/ChatPanel'
 import { setDeckCellOrder } from './widgets/deckSource'
 import { EditSlideDeckPanel } from './widgets/EditSlideDeckPanel'
 import { JoinScreen } from './widgets/JoinScreen'
@@ -237,6 +239,19 @@ function App() {
   )
   const cellState = useDeckState(messages)
   const presenceState = usePresenceState(messages)
+  const chatMessages = useChatState(messages)
+  const handleSendChatMessage = useCallback(
+    (text: string) => {
+      if (!sessionId) return
+      send({ type: 'send_chat_message', session_id: sessionId, text })
+    },
+    [sessionId, send],
+  )
+  // TODO.md #66-iv: lifted here (not local to ChatPanel) so the expanded
+  // panel's own right-padding on `.app` (below) can be applied -- see
+  // ChatPanel.tsx's own comment on why the panel's fixed-position overlay
+  // otherwise silently blocks clicks on real content underneath it.
+  const [chatExpanded, setChatExpanded] = useState(false)
   // TODO.md #46d-ii: this connection's own identity, once join_ack
   // arrives -- null until then (and forever, for a solo connection,
   // which never sends Join in the first place per displayNamePrompt's
@@ -1268,7 +1283,7 @@ function App() {
     <main
       className={`app ${slidesHeaderCollapsed ? 'cs-header-is-collapsed' : ''} ${
         slidesHeaderExpanded ? 'cs-slides-header-expanded' : ''
-      }`}
+      } ${documentId && chatExpanded ? 'cs-chat-is-open' : ''}`}
     >
       {slidesHeaderCollapsed && (
         <div className="cs-app-header cs-app-header-collapsed">
@@ -1586,6 +1601,15 @@ function App() {
           onAcceptBundle={handleAcceptBundle}
           onRejectBundle={handleRejectBundle}
           onWithdrawBundle={handleWithdrawBundle}
+        />
+      )}
+      {documentId && (
+        <ChatPanel
+          messages={chatMessages}
+          ownUserId={ownIdentity?.userId ?? null}
+          onSendMessage={handleSendChatMessage}
+          expanded={chatExpanded}
+          onExpandedChange={setChatExpanded}
         />
       )}
     </main>

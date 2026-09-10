@@ -91,6 +91,16 @@ export interface SetPresence {
   cursor_pos?: number | null
 }
 
+// TODO.md #66-i: post a message to this document's chat panel. Requires
+// an identified connection (Join first). Allowed for a viewer-role
+// connection too (VIEWER_ALLOWED_MESSAGE_TYPES) -- chat isn't a document
+// mutation.
+export interface SendChatMessage {
+  type: 'send_chat_message'
+  session_id: string
+  text: string
+}
+
 export interface EditCell {
   type: 'edit_cell'
   session_id: string
@@ -326,6 +336,7 @@ export interface RejectCellBundle {
 export type ClientMessage =
   | Join
   | SetPresence
+  | SendChatMessage
   | EditCell
   | PushCellBundle
   | WithdrawCellBundle
@@ -552,6 +563,26 @@ export interface PresenceLeft {
   connection_id: string
 }
 
+// TODO.md #66-i: a new chat message for this document's chat panel --
+// delivered to sender and every peer alike (unlike most messages, the
+// sender needs their own message echoed back with a server-assigned
+// message_id/sent_at). `is_system` marks an automatic status message
+// the server posts on a push/accept/reject cell-bundle action rather
+// than one a person typed -- rendered distinctly (no color/avatar,
+// muted styling); a system message's user_id/display_name/color are
+// empty strings, not null.
+export interface ChatMessageReceived {
+  type: 'chat_message_received'
+  session_id: string
+  message_id: string
+  user_id: string
+  display_name: string
+  color: string
+  text: string
+  sent_at: string
+  is_system: boolean
+}
+
 export interface DeckSaved {
   type: 'deck_saved'
   session_id: string
@@ -752,6 +783,7 @@ export type ServerMessage =
   | JoinAck
   | PresenceUpdate
   | PresenceLeft
+  | ChatMessageReceived
   | DeckSaved
   | CellAdded
   | SlideAdded

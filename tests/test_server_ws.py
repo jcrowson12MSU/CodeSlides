@@ -1346,6 +1346,8 @@ def test_websocket_accept_cell_bundle_replays_actions_in_order_and_attributes_to
         )
         proposed = ws_b.receive_json()
         alice_user_id = proposed["proposer_user_id"]
+        ws_b.receive_json()  # TODO.md #66-iii: system chat message for the push
+        ws_a.receive_json()  # same system chat message, echoed to the pusher too
 
         # Bob (not the proposer) accepts Alice's bundle.
         ws_b.send_json(
@@ -1356,7 +1358,10 @@ def test_websocket_accept_cell_bundle_replays_actions_in_order_and_attributes_to
                 "proposer_user_id": alice_user_id,
             }
         )
-        bob_replies = [ws_b.receive_json() for _ in range(4)]
+        # bundle_accepted, hide_code_set, cell_renamed,
+        # cell_attribution_changed, and (TODO.md #66-iii) a system chat
+        # message about the acceptance.
+        bob_replies = [ws_b.receive_json() for _ in range(5)]
         accepted = next(m for m in bob_replies if m["type"] == "bundle_accepted")
         assert accepted["cell_id"] == "cell_a"
         assert accepted["accepted_from_user_id"] == alice_user_id
@@ -1377,7 +1382,7 @@ def test_websocket_accept_cell_bundle_replays_actions_in_order_and_attributes_to
         assert attribution["cell_id"] == "renamed"
         assert attribution["last_edited_by"] == "Alice"  # the proposer, not Bob who accepted
 
-        alice_broadcast = [ws_a.receive_json() for _ in range(4)]
+        alice_broadcast = [ws_a.receive_json() for _ in range(5)]
         assert accepted in alice_broadcast
 
         session = client.app.state.registry.get("struct-3")
@@ -1394,9 +1399,9 @@ def test_websocket_accept_cell_bundle_replays_actions_in_order_and_attributes_to
         assert session.review_mode is True  # restored after the replay
 
 
-def test_websocket_reject_and_withdraw_cell_bundle(tmp_path):
-    """TODO.md #65-x: reject_cell_bundle/withdraw_cell_bundle clear a
-    pending bundle without ever replaying any of its actions."""
+def test_websocket_reject_cell_bundle(tmp_path):
+    """TODO.md #65-x: reject_cell_bundle clears a pending bundle without
+    ever replaying any of its actions."""
     from codeslides.loader import load_deck
 
     deck_path = _write_structural_deck(tmp_path)
@@ -1427,6 +1432,8 @@ def test_websocket_reject_and_withdraw_cell_bundle(tmp_path):
         )
         proposed = ws_b.receive_json()
         alice_user_id = proposed["proposer_user_id"]
+        ws_b.receive_json()  # TODO.md #66-iii: system chat message for the push
+        ws_a.receive_json()  # same system chat message, echoed to the pusher too
 
         ws_b.send_json(
             {
@@ -1439,25 +1446,48 @@ def test_websocket_reject_and_withdraw_cell_bundle(tmp_path):
         rejected_to_bob = ws_b.receive_json()
         rejected_to_alice = ws_a.receive_json()
         assert rejected_to_bob["type"] == rejected_to_alice["type"] == "bundle_rejected"
+        ws_b.receive_json()  # TODO.md #66-iii: system chat message for the rejection
+        ws_a.receive_json()  # same system chat message, echoed to the rejecter too
 
         session = client.app.state.registry.get("struct-4")
         assert session.instances["cell_a"].structural_bundle is None
         assert "cell_a" in client.app.state.registry.kernel.deck.cells
 
-        # Push again, then withdraw.
+
+def test_websocket_withdraw_cell_bundle(tmp_path):
+    """TODO.md #65-x: withdraw_cell_bundle clears the proposer's own
+    pending bundle without ever replaying any of its actions -- and
+    (TODO.md #66-iii) is deliberately excluded from the automatic
+    system-message hook (only push/accept/reject post one, per
+    PROPOSAL_review_workflow.md section 3)."""
+    from codeslides.loader import load_deck
+
+    deck_path = _write_structural_deck(tmp_path)
+    client = TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True))
+    with client.websocket_connect("/ws?document=struct-4b") as ws_a:
+        ws_a.receive_json()
+
+        rename_payload = {
+            "type": "rename_cell",
+            "session_id": "struct-4b",
+            "cell_id": "cell_a",
+            "new_name": "renamed",
+        }
         ws_a.send_json(
             {
                 "type": "push_cell_bundle",
-                "session_id": "struct-4",
+                "session_id": "struct-4b",
                 "cell_id": "cell_a",
                 "actions": [{"payload": rename_payload, "summary": "Rename to `renamed`"}],
             }
         )
-        ws_b.receive_json()  # cell_bundle_proposed
+        ws_a.receive_json()  # system chat message for the push, echoed to the pusher
 
-        ws_a.send_json({"type": "withdraw_cell_bundle", "session_id": "struct-4", "cell_id": "cell_a"})
-        withdrawn = ws_b.receive_json()
+        ws_a.send_json({"type": "withdraw_cell_bundle", "session_id": "struct-4b", "cell_id": "cell_a"})
+        withdrawn = ws_a.receive_json()
         assert withdrawn["type"] == "bundle_withdrawn"
+
+        session = client.app.state.registry.get("struct-4b")
         assert session.instances["cell_a"].structural_bundle is None
         assert "cell_a" in client.app.state.registry.kernel.deck.cells
 
@@ -1857,4 +1887,222 @@ def test_websocket_push_cell_bundle_with_set_notes_source_action(tmp_path):
 
         session = client.app.state.registry.get("notes-2")
         assert session.instances["cell_a"].elements["story"].content == "Edited notes."
-        assert session.instances["cell_a"].structural_bundle is None
+
+
+def test_websocket_chat_message_broadcasts_to_sender_and_peers():
+    """TODO.md #66-v: unlike most messages, a chat message must reach the
+    sender's own connection too (with a server-assigned message_id/
+    sent_at), not just peers -- so a joined connection sending
+    send_chat_message gets chat_message_received back on its own socket
+    as well as every peer's."""
+    client = TestClient(create_app(_build_deck()))
+
+    with (
+        client.websocket_connect("/ws?document=chat-1") as ws_a,
+        client.websocket_connect("/ws?document=chat-1") as ws_b,
+    ):
+        ws_a.receive_json()
+        ws_b.receive_json()
+        ws_a.send_json({"type": "join", "session_id": "chat-1", "display_name": "Alice"})
+        ws_a.receive_json()  # join_ack (no existing peers yet)
+        ws_b.send_json({"type": "join", "session_id": "chat-1", "display_name": "Bob"})
+        # Bob gets both his own join_ack and a presence_update about
+        # already-joined Alice (order unspecified, per
+        # PresenceUpdate's own docstring).
+        ws_b.receive_json()
+        ws_b.receive_json()
+        ws_a.receive_json()  # presence_update about Bob joining, to Alice
+
+        ws_a.send_json({"type": "send_chat_message", "session_id": "chat-1", "text": "hello everyone"})
+
+        echoed_to_sender = ws_a.receive_json()
+        delivered_to_peer = ws_b.receive_json()
+        assert echoed_to_sender["type"] == "chat_message_received", echoed_to_sender
+        assert delivered_to_peer["type"] == "chat_message_received"
+        assert echoed_to_sender == delivered_to_peer
+        assert echoed_to_sender["text"] == "hello everyone"
+        assert echoed_to_sender["display_name"] == "Alice"
+        assert echoed_to_sender["message_id"]
+        assert echoed_to_sender["sent_at"]
+        assert echoed_to_sender["is_system"] is False
+
+
+def test_websocket_viewer_role_can_send_chat_messages():
+    """TODO.md #66-i: chat isn't a document mutation, so send_chat_message
+    is on VIEWER_ALLOWED_MESSAGE_TYPES -- a viewer can post to the chat
+    panel even though every other mutating message type is rejected."""
+    client = TestClient(create_app(_build_deck()))
+
+    with (
+        client.websocket_connect("/ws?document=chat-2&role=viewer") as ws_viewer,
+        client.websocket_connect("/ws?document=chat-2") as ws_editor,
+    ):
+        ws_viewer.receive_json()
+        ws_editor.receive_json()
+        ws_viewer.send_json({"type": "join", "session_id": "chat-2", "display_name": "Watcher"})
+        ws_viewer.receive_json()  # join_ack
+        ws_editor.receive_json()  # presence_update about the viewer joining
+
+        ws_viewer.send_json(
+            {"type": "send_chat_message", "session_id": "chat-2", "text": "just watching"}
+        )
+        echoed_to_viewer = ws_viewer.receive_json()
+        delivered_to_editor = ws_editor.receive_json()
+        assert echoed_to_viewer["type"] == "chat_message_received"
+        assert delivered_to_editor["type"] == "chat_message_received"
+        assert echoed_to_viewer["text"] == "just watching"
+        assert echoed_to_viewer["display_name"] == "Watcher"
+
+
+def test_websocket_solo_connection_chat_message_requires_join():
+    """TODO.md #66-ii/2.2.3: there's no chat panel without a documentId,
+    and a solo /ws connection never sends Join -- confirms
+    send_chat_message on an unidentified connection is rejected with an
+    error rather than silently accepted with no sender identity."""
+    client = TestClient(create_app(_build_deck()))
+
+    with client.websocket_connect("/ws") as ws:
+        hello = ws.receive_json()
+        session_id = hello["session_id"]
+        ws.send_json({"type": "send_chat_message", "session_id": session_id, "text": "anyone there?"})
+        error = ws.receive_json()
+        assert error["type"] == "error"
+        assert "join" in error["message"]
+
+        session = client.app.state.registry.get(session_id)
+        assert session.chat_messages == []
+
+
+def test_websocket_push_accept_reject_cell_bundle_post_system_chat_messages(tmp_path):
+    """TODO.md #66-iii/PROPOSAL_review_workflow.md section 3: pushing,
+    accepting, and rejecting a cell bundle each post an automatic,
+    visually-distinct (is_system=True) system message into the
+    document's chat stream, delivered to sender and peers alike just
+    like a person-typed chat message."""
+    from codeslides.loader import load_deck
+
+    deck_path = _write_structural_deck(tmp_path)
+    client = TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True))
+    with (
+        client.websocket_connect("/ws?document=chat-3") as ws_a,
+        client.websocket_connect("/ws?document=chat-3") as ws_b,
+    ):
+        ws_a.receive_json()
+        ws_b.receive_json()
+        ws_a.send_json({"type": "join", "session_id": "chat-3", "display_name": "Alice"})
+        ws_a.receive_json()  # join_ack
+        ws_b.send_json({"type": "join", "session_id": "chat-3", "display_name": "Bob"})
+        # Bob gets both his own join_ack and a presence_update about
+        # already-joined Alice (order unspecified).
+        ws_b.receive_json()
+        ws_b.receive_json()
+        ws_a.receive_json()  # presence_update about Bob joining
+
+        rename_payload = {"type": "rename_cell", "session_id": "chat-3", "cell_id": "cell_a", "new_name": "renamed"}
+        ws_a.send_json(
+            {
+                "type": "push_cell_bundle",
+                "session_id": "chat-3",
+                "cell_id": "cell_a",
+                "actions": [{"payload": rename_payload, "summary": "Rename to `renamed`"}],
+            }
+        )
+        # The pusher (Alice) is the sender of push_cell_bundle --
+        # cell_bundle_proposed is Broadcast (peers only), but the system
+        # chat message is unwrapped (sender + peers), so Alice receives
+        # only the chat message, while Bob receives both.
+        push_reply_a = ws_a.receive_json()
+        assert push_reply_a["type"] == "chat_message_received"
+        assert push_reply_a["is_system"] is True
+        assert "Alice" in push_reply_a["text"]
+        assert "pushed" in push_reply_a["text"]
+        assert "cell_a" in push_reply_a["text"]
+
+        proposed = ws_b.receive_json()
+        assert proposed["type"] == "cell_bundle_proposed"
+        push_reply_b = ws_b.receive_json()
+        assert push_reply_b["type"] == "chat_message_received"
+        assert push_reply_b == push_reply_a
+        alice_user_id = proposed["proposer_user_id"]
+
+        ws_b.send_json(
+            {
+                "type": "accept_cell_bundle",
+                "session_id": "chat-3",
+                "cell_id": "cell_a",
+                "proposer_user_id": alice_user_id,
+            }
+        )
+        # bundle_accepted, cell_renamed (from the replay), and possibly
+        # cell_attribution_changed, followed by the system chat message
+        # last -- keep reading until the chat message shows up rather
+        # than hardcoding an exact reply count tied to this bundle's
+        # specific actions.
+        def _read_until_chat_message(ws):
+            messages = []
+            for _ in range(10):
+                msg = ws.receive_json()
+                messages.append(msg)
+                if msg["type"] == "chat_message_received":
+                    return messages
+            raise AssertionError(f"no chat_message_received among {messages}")
+
+        accept_replies_b = _read_until_chat_message(ws_b)
+        accept_system_b = accept_replies_b[-1]
+        assert accept_system_b["is_system"] is True
+        assert "Bob" in accept_system_b["text"]
+        assert "accepted" in accept_system_b["text"]
+        assert "Alice" in accept_system_b["text"]
+
+        accept_replies_a = _read_until_chat_message(ws_a)
+        accept_system_a = accept_replies_a[-1]
+        assert accept_system_a == accept_system_b
+
+        # Now push a second bundle on the renamed cell and reject it, to
+        # cover the reject side of this same system-message hook.
+        second_payload = {
+            "type": "rename_cell",
+            "session_id": "chat-3",
+            "cell_id": "renamed",
+            "new_name": "renamed_again",
+        }
+        ws_a.send_json(
+            {
+                "type": "push_cell_bundle",
+                "session_id": "chat-3",
+                "cell_id": "renamed",
+                "actions": [{"payload": second_payload, "summary": "Rename to `renamed_again`"}],
+            }
+        )
+        ws_a.receive_json()  # system chat message for the second push (to self)
+        second_proposed = ws_b.receive_json()
+        assert second_proposed["type"] == "cell_bundle_proposed"
+        ws_b.receive_json()  # system chat message for the second push
+
+        ws_b.send_json(
+            {
+                "type": "reject_cell_bundle",
+                "session_id": "chat-3",
+                "cell_id": "renamed",
+                "proposer_user_id": alice_user_id,
+            }
+        )
+        reject_reply_b = ws_b.receive_json()
+        assert reject_reply_b["type"] == "bundle_rejected"
+        reject_system_b = ws_b.receive_json()
+        assert reject_system_b["type"] == "chat_message_received"
+        assert reject_system_b["is_system"] is True
+        assert "Bob" in reject_system_b["text"]
+        assert "rejected" in reject_system_b["text"]
+        assert "Alice" in reject_system_b["text"]
+
+        reject_reply_a = ws_a.receive_json()
+        assert reject_reply_a["type"] == "bundle_rejected"
+        reject_system_a = ws_a.receive_json()
+        assert reject_system_a == reject_system_b
+
+        session = client.app.state.registry.get("chat-3")
+        system_messages = [m for m in session.chat_messages if m.is_system]
+        assert len(system_messages) == 4
+        assert all(m.user_id == "" and m.display_name == "" for m in system_messages)
+        assert session.instances["renamed"].structural_bundle is None
