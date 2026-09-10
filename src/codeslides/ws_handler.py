@@ -89,7 +89,6 @@ from codeslides.protocol import (
     TestSourceChanged,
     TitleSlideAdded,
     WithdrawCellState,
-    decode_client_message,
 )
 from codeslides.serialization import (
     InvalidSourceError,
