@@ -500,6 +500,16 @@ export function Cell({
     }
   }
   const [editing, setEditing] = useState(false)
+  // TODO.md #65-xiv: per the user's explicit request, the pending-
+  // actions/proposal banners are collapsed by default (not just their
+  // individual per-action <details> -- #65-xii's collapsed-by-default
+  // preview granularity), controlled by a header button (next to Edit)
+  // that shows the count and an expand/collapse arrow. Collapsed means
+  // the whole banner body (summary list, diff previews, and the real
+  // Push/Discard or Accept/Reject/Withdraw buttons) renders nothing at
+  // all -- only the header button itself is visible.
+  const [pendingExpanded, setPendingExpanded] = useState(false)
+  const [proposalExpanded, setProposalExpanded] = useState(false)
   // The code/elements split is per-cell, kept as local component state
   // (not lifted to App.tsx) -- it's pure display layout with no server
   // round-trip and no effect on execution/output, so it doesn't need the
@@ -1174,11 +1184,68 @@ export function Cell({
   const leftColumnEmpty = tabsByQuadrant['top-left'].length === 0 && tabsByQuadrant['bottom-left'].length === 0
   const rightColumnEmpty = tabsByQuadrant['top-right'].length === 0 && tabsByQuadrant['bottom-right'].length === 0
 
+  // TODO.md #65-xiv: Push/Accept notification toggles, per the user's
+  // explicit request to move them next to Edit -- computed once so they
+  // can render both inside the normal header (Cells view) and in their
+  // own always-visible row when `hideHeader` is set (SlideShow.tsx's
+  // Slides view, which hides the rest of the header row -- cell name,
+  // Edit, reorder, delete -- but must not also hide these, or Slides
+  // view silently loses the ability to push/accept at all, a real
+  // regression this fix specifically avoids). Hidden entirely (both
+  // buttons independently) when there's nothing pending/proposed.
+  const notificationButtons = (
+    <>
+      {reviewMode && pendingActions && pendingActions.length > 0 && (
+        <button
+          type="button"
+          className="cs-header-notification-toggle"
+          onClick={() => setPendingExpanded((prev) => !prev)}
+          aria-expanded={pendingExpanded}
+          aria-label={pendingExpanded ? 'Collapse pending changes to push' : 'Expand pending changes to push'}
+        >
+          Push ({pendingActions.length}) {pendingExpanded ? '▾' : '▸'}
+        </button>
+      )}
+      {reviewMode &&
+        state?.structuralBundle &&
+        (() => {
+          const bundle = state.structuralBundle
+          const isOwnBundle = ownUserId != null && bundle.proposerUserId === ownUserId
+          return (
+            <button
+              type="button"
+              className={
+                isOwnBundle
+                  ? 'cs-header-notification-toggle'
+                  : 'cs-header-notification-toggle cs-header-notification-toggle-proposal'
+              }
+              onClick={() => setProposalExpanded((prev) => !prev)}
+              aria-expanded={proposalExpanded}
+              aria-label={
+                proposalExpanded ? 'Collapse proposed changes to review' : 'Expand proposed changes to review'
+              }
+            >
+              {isOwnBundle ? `Pending (${bundle.actions.length})` : `Review (${bundle.actions.length})`}{' '}
+              {proposalExpanded ? '▾' : '▸'}
+            </button>
+          )
+        })()}
+    </>
+  )
+
   return (
     <div
       id={`cs-cell-${cellId}`}
       className={`cs-cell ${collapsed ? 'cs-cell-collapsed' : ''} ${hideHeader ? 'cs-cell-no-header' : ''}`}
     >
+      {/* TODO.md #65-xiv: Slides view (hideHeader) hides the rest of
+          the header row entirely, but must still surface Push/Accept
+          -- this collapses to nothing when notificationButtons itself
+          renders nothing (nothing pending/proposed), same as the
+          header's own copy. */}
+      {hideHeader && !collapsed && (
+        <div className="cs-cell-header-notifications-only">{notificationButtons}</div>
+      )}
       {!hideHeader && (
         <div className="cs-cell-header">
           <button
@@ -1219,6 +1286,7 @@ export function Cell({
               {editing ? 'Close' : 'Edit'}
             </button>
           )}
+          {!collapsed && notificationButtons}
           {!collapsed && onMoveCellUp && onMoveCellDown && (
             <div className="cs-cell-reorder">
               <button
@@ -1285,16 +1353,16 @@ export function Cell({
           structural changes, per direct user report that two different
           push behaviors in the same app was confusing. */}
 
-      {/* TODO.md #65-x/#65-xii: this connection's own locally-staged
-          structural changes (rename, hide toggles, add/remove element,
-          etc.) -- each rendered as a collapsed-by-default <details> the
-          user can expand to see a real preview (ActionDiffPreview),
-          per the user's own explicit request that a push notification
-          show the proposed update rather than just its summary text.
-          Shown whenever there's anything staged, regardless of
-          collapsed/hideHeader -- same "worth surfacing regardless"
-          reasoning the proposal banner below already uses. */}
-      {reviewMode && pendingActions && pendingActions.length > 0 && (
+      {/* TODO.md #65-x/#65-xii/#65-xiv: this connection's own locally-
+          staged structural changes (rename, hide toggles, add/remove
+          element, etc.) -- each rendered as a collapsed-by-default
+          <details> the user can expand to see a real preview
+          (ActionDiffPreview). The whole banner itself is now gated on
+          `pendingExpanded` (the header's "Push (N) ▸/▾" toggle next to
+          Edit, per the user's explicit request) -- collapsed means
+          nothing here renders at all, only that header button is
+          visible. */}
+      {reviewMode && pendingActions && pendingActions.length > 0 && pendingExpanded && (
         <div className="cs-cell-pending-actions">
           <p className="cs-cell-proposal-header">Changes not yet pushed:</p>
           <ul className="cs-cell-action-list">
@@ -1327,17 +1395,21 @@ export function Cell({
         </div>
       )}
 
-      {/* TODO.md #65-x/#65-xii: a pending structural bundle someone
-          (possibly this connection) has pushed for this cell, awaiting
-          Accept/Reject -- at most one at a time, unlike the
+      {/* TODO.md #65-x/#65-xii/#65-xiv: a pending structural bundle
+          someone (possibly this connection) has pushed for this cell,
+          awaiting Accept/Reject -- at most one at a time, unlike the
           per-proposer `proposals` dict above. Same collapsed-by-default
           per-action preview as the pending-actions banner above; the
           bundle's `actions` payloads reach here via #65-xii's new
           `action_payloads` wire field (previously peers only ever saw
-          `action_summaries`). */}
+          `action_summaries`). Gated on `proposalExpanded` (the header's
+          "Review (N) ▸/▾" / "Pending (N) ▸/▾" toggle next to Edit) --
+          collapsed means nothing here renders at all, only that header
+          button is visible. */}
       {reviewMode &&
         !collapsed &&
         state?.structuralBundle &&
+        proposalExpanded &&
         (() => {
           const bundle = state.structuralBundle
           const isOwnBundle = ownUserId != null && bundle.proposerUserId === ownUserId

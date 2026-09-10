@@ -638,11 +638,17 @@ through this one bundle:
   itself whenever it replays a `SetTestSource`/`SetNotesSource` action,
   letting every peer (accepter included) learn the new content the same
   way `CellSourceChanged` already covers a primary-source edit.
-- **A real per-action preview, collapsed by default (`TODO.md`
-  #65-xii).** Both the pending-actions banner (a connection's own
-  not-yet-pushed list) and the proposal banner (an incoming bundle)
-  render each action inside a native `<details>`/`<summary>` — the
-  summary text alone by default, expanding it reveals
+- **A real per-action preview, and the whole banner itself collapsed
+  by default behind a header toggle next to Edit (`TODO.md` #65-xii,
+  #65-xiv).** Both the pending-actions banner (a connection's own
+  not-yet-pushed list) and the proposal banner (an incoming bundle) are
+  entirely absent from the DOM until their own header toggle — "Push
+  (N) ▸/▾" or "Pending/Review (N) ▸/▾", rendered only when there's
+  something to push/review, next to the cell's Edit button (or, in
+  Slides view's `hideHeader` layout, their own small standalone row) —
+  is clicked to expand it. Once expanded, each action inside renders in
+  a native `<details>`/`<summary>` — the summary text alone by default,
+  expanding it reveals
   `ActionDiffPreview.tsx`: a real line-level diff (via `@codemirror/
   merge`'s `unifiedMergeView`, read-only — `mergeControls: false`, so
   its own per-chunk accept/reject controls don't sit confusingly next

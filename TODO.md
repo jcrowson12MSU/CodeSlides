@@ -4643,6 +4643,53 @@ reshape the plan below and are called out explicitly where they apply:
       other action type already gets, and accepting updates Bob's
       notes viewer with the new content.
 
+  - [x] 65-xiv. **Push/Accept moved into the cell header, next to Edit,
+    collapsed by default with an expand/collapse arrow, hidden entirely
+    when there's nothing pending/proposed** -- per direct user request.
+    Previously the pending-actions/proposal banners rendered inline in
+    the cell body, always visible whenever there was anything staged or
+    proposed (only each *individual action's* diff preview was
+    collapsed, #65-xii).
+    - `Cell.tsx` gained two `useState<boolean>(false)` flags
+      (`pendingExpanded`/`proposalExpanded`) and a `notificationButtons`
+      JSX value (computed once, rendered in two places -- see below): a
+      "Push (N) ▸/▾" toggle when `pendingActions.length > 0`, and a
+      "Pending (N) ▸/▾" (own bundle) / "Review (N) ▸/▾" (someone else's,
+      amber-accented like `.cs-cell-proposal`) toggle when
+      `state.structuralBundle` exists. Each independently renders
+      nothing when its own condition is false -- no placeholder, no
+      layout shift, matching the user's explicit "buttons should be
+      hidden" requirement.
+    - The existing `.cs-cell-pending-actions`/`.cs-cell-proposal` banner
+      bodies (summary list, diff previews, and the real Push/Discard/
+      Accept/Reject/Withdraw buttons) are unchanged except for one new
+      `&& pendingExpanded`/`&& proposalExpanded` clause each -- collapsed
+      means they render nothing at all, not just visually hidden.
+    - **Slides-view regression caught and fixed before shipping**:
+      `SlideShow.tsx` sets `hideHeader` (no cell name/Edit/reorder/
+      delete row at all, an earlier deliberate choice -- a slide is
+      already framed by its own title). Since the new toggles live
+      inside that same header block, `hideHeader` would have silently
+      hidden them too, breaking the Slides-view push/accept parity
+      #65-xii had just established. Fixed by extracting
+      `notificationButtons` into its own value and rendering it a
+      second time, unconditionally, in a small standalone top-right row
+      (`.cs-cell-header-notifications-only`) whenever `hideHeader` is
+      set -- confirmed via Playwright that this wasn't caught by
+      inspection alone, it was caught by actually driving Slides view
+      after the initial Cells-view-only implementation looked correct.
+    - No backend changes -- purely a frontend restructuring of already-
+      shipped state (`pendingActions`, `state.structuralBundle`).
+      `tsc -b` clean; full backend suite (619) unaffected/still passing.
+    - Verified end-to-end with two real browser contexts (Playwright)
+      in both Cells and Slides view against `Lectures/Chapters/
+      chapter4.py --review-mode`: no header toggle renders before any
+      edit; staging an edit shows exactly "Push (1) ▸" next to Edit
+      with the banner itself fully absent; clicking it flips to ▾ and
+      reveals the banner; after Push, the peer sees "Review (1) ▸" (not
+      "Push", and amber rather than blue) collapsed the same way; after
+      Accept, both header toggles disappear on both tabs.
+
 - [ ] **66. Collapsible chat panel for shared documents** -- lower-right
   corner collapsed to a small affordance; expands to a full-height
   third column to the right of the cells and the existing element-tabs

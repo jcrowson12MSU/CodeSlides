@@ -1825,6 +1825,58 @@ body.cs-slides-locked {
   background: #f2f2f2;
 }
 
+/* TODO.md #65-xiv: per the user's explicit request, Push/Accept moved
+   from an always-visible inline banner into a header toggle next to
+   Edit -- amber (matching .cs-cell-proposal below) for a proposal
+   awaiting this connection's Accept/Reject, blue (matching
+   .cs-cell-pending-actions) for this connection's own not-yet-pushed
+   changes. Hidden entirely (not rendered) when there's nothing
+   pending/proposed, same as the banner it replaced. */
+.cs-header-notification-toggle {
+  border: 1px solid #a9d3ee;
+  background: #eef6fc;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: var(--cs-font-sm);
+  color: #2b6ca3;
+  padding: 0.05rem 0.5rem;
+  font-weight: 600;
+}
+
+.cs-header-notification-toggle:hover {
+  background: #dcedfa;
+}
+
+/* The "review this proposal" variant (someone else's pushed bundle,
+   awaiting this connection's Accept/Reject) gets the same amber accent
+   the expanded .cs-cell-proposal banner itself uses, so the header
+   button visually previews what expanding it reveals. */
+.cs-header-notification-toggle-proposal {
+  border-color: #f0c14b;
+  background: #fff8e1;
+  color: #8a6d1a;
+}
+
+.cs-header-notification-toggle-proposal:hover {
+  background: #fcefc7;
+}
+
+/* TODO.md #65-xiv: Slides view's own hideHeader hides the rest of the
+   header row (cell name/Edit/reorder/delete), but the Push/Accept
+   toggles must still surface there -- this is their standalone row
+   when hideHeader is set, kept out of the way (top-right, over the
+   cell's own content) rather than pushing the slide's layout down,
+   since Slides view has no other header row to sit inside. Collapses
+   to zero height on its own if both toggles render nothing (nothing
+   pending/proposed), same "hidden entirely" rule the toggles
+   themselves already follow. */
+.cs-cell-header-notifications-only {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.35rem 0.75rem 0;
+}
+
 /* TODO.md #54: move this cell up/down in the deck's own cell order --
    distinct from `.cs-edit-cell-reorder`, which reorders one cell's own
    elements inside the edit panel. Lives directly in the cell header,
