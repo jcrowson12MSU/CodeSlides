@@ -4690,6 +4690,67 @@ reshape the plan below and are called out explicitly where they apply:
       "Push", and amber rather than blue) collapsed the same way; after
       Accept, both header toggles disappear on both tabs.
 
+  - [x] 65-xv. **Fix: accepting a bundle containing a notes/markdown edit
+    re-staged that same content as a new pending push, on the accepting
+    connection** -- a real user bug report: "I pushed changes made in a
+    code editor and changes made in markdown. When I accepted the
+    changes [on] another tab, the other tab treated the markdown update
+    as another change to push."
+    - **Root cause**: `NotesEditor.tsx`'s CodeMirror `EditorView.
+      updateListener` calls `onChangeSource` whenever `update.docChanged`
+      is true -- which is true for *any* document change, including one
+      this same component dispatches itself. The component's own
+      `source`-prop sync effect does exactly that: when a
+      `notes_source_changed` broadcast (#65-xiii) lands -- delivered to
+      *every* connection, including the one that just clicked Accept,
+      since `SetNotesSource`'s own handler has no reply to echo the
+      source back with otherwise -- it flows into `notesOverrides` ->
+      `state.elementContent` -> `NotesViewer`'s `content` prop ->
+      `NotesEditor`'s `source` prop, whose sync effect calls
+      `view.dispatch(...)`. With no way to tell that dispatch apart from
+      real typing, the listener re-fired `onChangeSource` with the exact
+      text the server had just confirmed was accepted, and in review
+      mode that's wired to `handleStageNotesEdit` (App.tsx), which
+      re-inserted a `set_notes_source` pending action -- appearing to
+      the user as their own tab spontaneously deciding there was
+      something new to push, immediately after accepting.
+    - **Why `EditCell`/`SetTestSource` don't have this bug**: `CodeEditor.
+      tsx` (used for both the primary editor and, via
+      `TestsElementWidget.tsx`, test sources) has the same unguarded
+      `updateListener` and the same unguarded external-sync dispatch,
+      but its edit-submitting callbacks (`onRunCell`/`onRunAll`) are
+      bound only inside a CodeMirror *keymap* (`Shift-Enter`/
+      `Mod-Shift-Enter`), never inside `updateListener` itself -- a
+      programmatic `view.dispatch()` from elsewhere cannot trigger a
+      keymap command, so there was never a live wire for an external
+      sync to accidentally cross. Notes is the only element type whose
+      always-live editing model (no explicit "run" keystroke --
+      `onChangeSource` fires on every keystroke by design, #65-xiii)
+      put its edit-submitting callback directly inside the listener,
+      which is exactly what made it reachable from a non-user dispatch.
+    - **Fix**: a CodeMirror `Annotation` (`externalSync`,
+      `NotesEditor.tsx`) tags the sync effect's own dispatch; the
+      `updateListener` checks `update.transactions.some(tr =>
+      tr.annotation(externalSync))` and skips calling `onChangeSource`
+      for exactly that dispatch, while still calling it for every other
+      (real, user-typed) change. No change needed to
+      `handleStageNotesEdit`'s upsert-per-element logic (#65-xiii) --
+      the fix is entirely inside `NotesEditor.tsx`, distinguishing the
+      transaction's origin rather than its content.
+    - Pure frontend fix, no protocol/backend changes. `tsc -b` clean;
+      full backend suite (619, minus one pre-existing unrelated
+      `test_server_watch.py` timing flake this session also independently
+      hit and confirmed was untouched by this change) unaffected.
+    - Verified end-to-end with two real browser contexts (Playwright)
+      against `Lectures/Chapters/chapter4.py --review-mode`, reproducing
+      the exact reported scenario: staged a code (tests) edit AND a
+      notes edit on the *same* cell ("Push (2)"), pushed both together
+      as one bundle, had the peer Accept -- confirmed **zero** spurious
+      Push/Review header buttons appear on either tab afterward (the
+      bug, reproduced first without the fix, showed the accepting tab's
+      header immediately reacquiring a "Push (1)" button for the notes
+      element it never itself edited).
+
 - [ ] **66. Collapsible chat panel for shared documents** -- lower-right
   corner collapsed to a small affordance; expands to a full-height
   third column to the right of the cells and the existing element-tabs
