@@ -4807,3 +4807,54 @@ reshape the plan below and are called out explicitly where they apply:
     push/accept/reject actions (verified both via these tests and via
     a real two-tab Playwright browser session driving an actual
     edit -> Shift+Enter -> Push -> Accept flow end to end).
+
+- [x] **67. Fix a real, root-caused intermittent deadlock in
+  `tests/test_server_ws.py`'s multi-connection websocket tests** --
+  found while landing #66 (this test file's own multi-connection tests
+  became a much more frequent trigger, since chat replies added more
+  cross-connection sends per turn than any single #65 test did, but the
+  underlying bug predates #66 entirely and was reproduced on completely
+  unmodified pre-#65 code). Root cause: every test in this file
+  constructed `client = TestClient(create_app(...))` *without* wrapping
+  it in its own `with` statement -- `starlette.testclient.TestClient`
+  only pins one shared `anyio` portal (background thread + event loop)
+  across every `websocket_connect()` call when `TestClient` itself is
+  used as a context manager (`TestClient.__enter__` is what sets
+  `self.portal`); without that, each `websocket_connect()` call gets
+  its *own* separate portal/thread/event loop. Any test with two
+  connections where one's handler broadcasts to the other (the
+  ordinary, correct shape of peer delivery -- `ws_handler.py`'s
+  `registry.peers(...)` -> `Peer.send`) is therefore a genuine
+  cross-event-loop `await` into a different thread's async primitives,
+  which is unsafe and produces an intermittent lost-wakeup deadlock (a
+  `receive_json()` call hangs forever, 0% CPU, not a busy loop) --
+  matches production's real single-event-loop concurrency model
+  (uvicorn) nowhere near closely enough for this test harness pattern
+  to be safe. Confirmed via direct reproduction: identical multi-
+  connection test logic with only `client = TestClient(...)` hung on
+  the 2nd (sometimes 1st) of ~15 repeated attempts; the exact same
+  logic wrapped as `with TestClient(...) as client:` passed 50/50
+  attempts with zero hangs. Fixed by converting every one of this
+  file's 45 `TestClient(...)` instantiations to the `with ... as
+  client:` form (mechanical structural change only -- re-indenting
+  each test's remaining body one level deeper -- no test logic/
+  assertions changed). This also unmasked (rather than introduced) 3
+  small pre-existing test bugs that the intermittent hang had been
+  hiding behind unpredictable pass/fail noise: `test_websocket_
+  withdraw_cell_bundle` was reading `bundle_withdrawn` back on the
+  withdrawing connection's own socket, but `BundleWithdrawn` is
+  `Broadcast`-wrapped (peers-only) and never reaches the sender --
+  fixed by adding a second (peer) connection and having *it* read the
+  broadcast, plus adding the `Join` step `push_cell_bundle`/
+  `withdraw_cell_bundle` both actually require (silently missing
+  before, since the same masking hid the resulting `ErrorMessage`/no-op
+  too); two other tests (`..._with_edit_cell_and_set_test_source_
+  actions`, `..._with_set_notes_source_action`) had fixed reply-count
+  reads (`range(8)`/`range(2)`) that didn't account for #66-iii's new
+  system chat message landing in the same reply list, bumped to
+  `range(9)`/`range(3)` with an added assertion that
+  `chat_message_received` is present. **If you hit an unexplained hang
+  in a websocket test anywhere else in this codebase, check for this
+  exact pattern (`client = TestClient(...)` with no enclosing `with`)
+  before assuming your own change caused it** -- any future test file
+  written the same unwrapped way is equally exposed.
