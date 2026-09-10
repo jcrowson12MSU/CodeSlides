@@ -66,48 +66,30 @@ class ElementInstance:
 
 
 @dataclass
-class StructuralAction:
-    """TODO.md #65-x: one staged structural change (rename, add/remove
-    element, hide toggle, etc.), stored as the exact wire-format dict
-    `protocol.encode()` would produce for the original client message
-    (`payload["type"]` is the message's own `type` tag) -- replaying it
-    is just `protocol.decode_client_message(payload)` followed by an
-    ordinary `handle_message` call, the same dispatch a non-review-mode
-    document already uses for that message type. `summary` is a short,
-    human-readable description (e.g. "Rename to `my_new_name`", "Add
-    slider `speed`") computed once at push time for the reviewer's
-    banner -- kept as plain stored text rather than re-derived at
-    display time, so it still reads correctly even if some later action
-    in the same bundle changes the very cell/element the summary
-    describes (e.g. a rename followed by an element add on the
-    newly-renamed cell)."""
-
-    payload: dict[str, Any]
-    summary: str
-
-
-@dataclass
-class StructuralBundle:
-    """TODO.md #65/#65-x/#65-xi: a cell's one pending set of staged
-    changes on a `review_mode` document -- covers everything that can be
-    pushed for a cell (its primary source, any `tests` elements'
-    sources, and structural changes like rename/hide toggles/add-remove
-    element), all unified into this single per-cell mechanism as of
-    #65-xi (earlier revisions had a separate, now-removed `CellProposal`/
-    `proposals` mechanism specifically for source text, with its own
-    accept/reject/conflict UI -- found confusing in practice: it
-    broadcast to peers immediately on every Shift+Enter, with no
-    explicit push step, while structural changes already required one).
-    `actions` is ordered and replayed in that exact order on accept (a
-    later action in the bundle may depend on an earlier one having
-    already applied, e.g. "add element" then "reorder elements" naming
-    it, or an edited cell body followed by a rename of that same
-    cell)."""
+class PendingCellState:
+    """TODO.md #68: a cell's one pending pushed snapshot on a
+    `review_mode` document -- its entire current state (primary source,
+    every `tests`/`notes` element's own source keyed by `element_id`,
+    `hide_code`/`hide_def`, and `new_cell_id`, its name after this push)
+    as of the moment it was pushed. Replaces #65's `StructuralBundle`/
+    `StructuralAction` (an ordered list of individually-replayed staged
+    messages): a real classroom bug report showed repeated Shift+Enter
+    edits before pushing built up a long queue of redundant staged
+    edits, each separately replayed (and separately re-executed) on
+    accept. There is no queue here -- pushing again always *replaces*
+    this same snapshot in place (`ws_handler.py`'s `PushCellState`
+    handler), so it only ever reflects the cell's current state, however
+    many local edits led to it."""
 
     proposer_user_id: str
     display_name: str | None
     created_at: datetime
-    actions: list[StructuralAction]
+    new_cell_id: str
+    source: str
+    test_sources: dict[str, str]
+    notes_sources: dict[str, str]
+    hide_code: bool
+    hide_def: bool
 
 
 @dataclass
@@ -115,12 +97,13 @@ class ChatMessage:
     """TODO.md #66-ii: one message in a document's chat panel, stored in
     `Session.chat_messages` in the same append-only order it was posted.
     `is_system` marks an automatic status message the server posts on a
-    `PushCellBundle`/`AcceptCellBundle`/`RejectCellBundle` action rather
-    than one a person typed (`PROPOSAL_review_workflow.md` section 3);
-    such a message has no real sender, so `user_id`/`display_name`/
-    `color` are empty strings rather than `None` -- same reasoning
-    `protocol.ChatMessageReceived`'s own docstring gives for keeping
-    field types simple on the wire."""
+    `PushCellState`/`AcceptCellState`/`RejectCellState` action (TODO.md
+    #68 -- originally `PushCellBundle`/`AcceptCellBundle`/
+    `RejectCellBundle`) rather than one a person typed
+    (`PROPOSAL_review_workflow.md` section 3); such a message has no
+    real sender, so `user_id`/`display_name`/`color` are empty strings
+    rather than `None` -- same reasoning `protocol.ChatMessageReceived`'s
+    own docstring gives for keeping field types simple on the wire."""
 
     message_id: str
     user_id: str
@@ -140,33 +123,20 @@ class CellInstance:
     error: str | None = None
     collapsed: bool = False  # pure UI state (ARCHITECTURE.md section 8)
     elements: dict[str, ElementInstance] = field(default_factory=dict)
-    # TODO.md #65/#65-x/#65-xi: this cell's one pending bundle of staged
-    # changes on a `review_mode` document -- covers everything pushable
-    # for a cell: an edit to its primary source, an edit to any `tests`
-    # element's source, and/or structural changes (rename, hide toggles,
-    # add/remove element, reorder elements, element config, add/remove
-    # primary editor, main/setup-cell flags). Every one of these message
-    # types writes straight to disk and reloads the Kernel immediately
-    # today when sent directly (`EditCell`/`SetTestSource` included, as
-    # of #65-xi -- earlier they staged into `source_overrides` and
-    # broadcast to peers immediately on every push with no separate
-    # "push" step, a separate mechanism from this one that #65-xi
-    # removed for being confusing in practice, inconsistent with the
-    # structural side's own explicit-push requirement). Each pending
-    # action is stored as the *exact wire-format dict*
-    # `protocol.encode()` already produces for that client message (plus
-    # a human-readable `summary`), so accepting a bundle can decode and
-    # replay each one straight through the same `handle_message`
-    # dispatch every one of these types already goes through for a
-    # non-review-mode document -- no parallel "apply this action"
-    # implementation to keep in sync. Only one bundle per cell at a time
-    # -- the user's own explicit "atomic accept/reject" decision extends
-    # naturally to "one bundle": letting two different people's changes
-    # to the same cell coexist as independently-reviewable bundles
-    # raises far murkier conflict questions (two edits? two renames?)
-    # than a single-bundle-per-cell model needs to answer. A second push
-    # (by anyone) while one is already pending replaces it outright.
-    structural_bundle: StructuralBundle | None = None
+    # TODO.md #68: this cell's one pending pushed snapshot on a
+    # `review_mode` document -- its entire current state (source, every
+    # tests/notes element's source, hide_code/hide_def, rename target),
+    # replacing #65's ordered `structural_bundle`/list-of-staged-actions
+    # entirely (see `PendingCellState`'s own docstring for why). Only
+    # one pending push per cell at a time -- same "atomic accept/reject"
+    # reasoning #65 already established: letting two different people's
+    # pushes to the same cell coexist raises conflict questions (whose
+    # wins?) a single-pending-push-per-cell model doesn't need to
+    # answer. A second push (by anyone) while one is already pending
+    # replaces it outright, which is also exactly what fixes the
+    # original repeated-edit-queue bug -- there's no queue to replace
+    # into, just this one slot.
+    pending_state: PendingCellState | None = None
     # TODO.md #46g-iii: who last made a structural/content change to this
     # cell, on a shared document -- `None` until the first attributable
     # edit (including for a solo, non-collaborative connection, which has
@@ -366,23 +336,25 @@ class Session:
                 # reconstruction like this one invites.
                 last_edited_by=inst.last_edited_by,
                 last_edited_at=inst.last_edited_at,
-                # TODO.md #65/#65-x: same "clone is a snapshot of current
+                # TODO.md #65/#68: same "clone is a snapshot of current
                 # state" reasoning as attribution just above -- a pending
-                # bundle is part of a cell's current state on a
+                # push is part of a cell's current state on a
                 # review_mode document, so it's copied by value rather
                 # than silently dropped or aliased onto the source
                 # Session's own dict.
-                structural_bundle=(
-                    StructuralBundle(
-                        proposer_user_id=inst.structural_bundle.proposer_user_id,
-                        display_name=inst.structural_bundle.display_name,
-                        created_at=inst.structural_bundle.created_at,
-                        actions=[
-                            StructuralAction(payload=dict(a.payload), summary=a.summary)
-                            for a in inst.structural_bundle.actions
-                        ],
+                pending_state=(
+                    PendingCellState(
+                        proposer_user_id=inst.pending_state.proposer_user_id,
+                        display_name=inst.pending_state.display_name,
+                        created_at=inst.pending_state.created_at,
+                        new_cell_id=inst.pending_state.new_cell_id,
+                        source=inst.pending_state.source,
+                        test_sources=dict(inst.pending_state.test_sources),
+                        notes_sources=dict(inst.pending_state.notes_sources),
+                        hide_code=inst.pending_state.hide_code,
+                        hide_def=inst.pending_state.hide_def,
                     )
-                    if inst.structural_bundle is not None
+                    if inst.pending_state is not None
                     else None
                 ),
             )

@@ -907,97 +907,6 @@ body.cs-resizing-vertical {
   white-space: pre-wrap;
 }
 
-/* TODO.md #65: push/review-based collaborative editing -- a pending
-   proposal (someone else's, or this connection's own) and the stale-
-   base conflict banner. Amber, distinct from cs-cell-error's red and
-   cs-cell-output's neutral gray, so a proposal reads as "needs your
-   attention" without looking like a failure. */
-.cs-cell-proposal,
-.cs-cell-proposal-conflict {
-  background: #fff8e1;
-  border: 1px solid #f0c14b;
-  border-radius: 4px;
-  padding: 0.5rem 0.75rem;
-  margin: 0.35rem 0.75rem 0;
-  font-size: var(--cs-font-base);
-}
-
-.cs-cell-proposal-header {
-  margin: 0 0 0.35rem;
-}
-
-.cs-cell-proposal-diff {
-  background: #fffdf5;
-  border-radius: 4px;
-  padding: 0.5rem;
-  margin: 0 0 0.35rem;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  font-size: var(--cs-font-base);
-}
-
-.cs-cell-proposal-actions {
-  display: flex;
-  gap: 0.5rem;
-}
-
-/* TODO.md #65-x: this connection's own locally-staged structural
-   changes, not yet pushed -- a cooler blue rather than the amber
-   proposal/conflict banners above, since nothing here has reached the
-   server yet and there's nothing for anyone else to react to. */
-.cs-cell-pending-actions {
-  background: #eef6fc;
-  border: 1px solid #a9d3ee;
-  border-radius: 4px;
-  padding: 0.5rem 0.75rem;
-  margin: 0.35rem 0.75rem 0;
-  font-size: var(--cs-font-base);
-}
-
-.cs-cell-pending-actions ul,
-.cs-cell-proposal ul {
-  margin: 0 0 0.35rem;
-  padding-left: 1.25rem;
-}
-
-/* TODO.md #65-xii: each pending/proposed action is a collapsed-by-
-   default <details> -- collapsed since the raw summary text is
-   already enough for most changes, per the user's own explicit
-   request; expanding reveals ActionDiffPreview's real content. */
-.cs-cell-action-list {
-  list-style: none;
-  padding-left: 0;
-}
-
-.cs-cell-action-list summary {
-  cursor: pointer;
-  list-style: revert;
-  margin-left: 1.1rem;
-}
-
-.cs-cell-action-list details[open] summary {
-  margin-bottom: 0.35rem;
-}
-
-.cs-action-diff {
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  overflow: hidden;
-  margin: 0 0 0.35rem 1.1rem;
-  font-size: var(--cs-font-base);
-}
-
-.cs-action-diff .cm-editor {
-  max-height: 240px;
-  overflow: auto;
-}
-
-.cs-action-preview-oneliner {
-  margin: 0 0 0.35rem 1.1rem;
-  font-size: var(--cs-font-base);
-  color: #555;
-}
-
 .cs-cell-output {
   background: #f6f6f6;
   border-radius: 4px;
@@ -1825,13 +1734,14 @@ body.cs-slides-locked {
   background: #f2f2f2;
 }
 
-/* TODO.md #65-xiv: per the user's explicit request, Push/Accept moved
-   from an always-visible inline banner into a header toggle next to
-   Edit -- amber (matching .cs-cell-proposal below) for a proposal
-   awaiting this connection's Accept/Reject, blue (matching
-   .cs-cell-pending-actions) for this connection's own not-yet-pushed
-   changes. Hidden entirely (not rendered) when there's nothing
-   pending/proposed, same as the banner it replaced. */
+/* TODO.md #65-xiv/#68: Push/Accept/Reject/Withdraw live directly in the
+   cell header next to Edit -- blue for this connection's own not-yet-
+   pushed changes, amber for a push awaiting this connection's Accept/
+   Reject. Hidden entirely (not rendered) when there's nothing
+   dirty/pending. TODO.md #68 removed the collapsed-by-default
+   expandable list these buttons used to toggle open (no diff/preview
+   is shown any more, by design) -- clicking Push/Accept/Reject/
+   Withdraw now performs the action directly. */
 .cs-header-notification-toggle {
   border: 1px solid #a9d3ee;
   background: #eef6fc;
@@ -1847,10 +1757,9 @@ body.cs-slides-locked {
   background: #dcedfa;
 }
 
-/* The "review this proposal" variant (someone else's pushed bundle,
-   awaiting this connection's Accept/Reject) gets the same amber accent
-   the expanded .cs-cell-proposal banner itself uses, so the header
-   button visually previews what expanding it reveals. */
+/* The "review this push" variant (someone else's pushed state, awaiting
+   this connection's Accept/Reject) gets an amber accent instead of the
+   default blue, so it reads as "needs your attention." */
 .cs-header-notification-toggle-proposal {
   border-color: #f0c14b;
   background: #fff8e1;
@@ -1859,6 +1768,15 @@ body.cs-slides-locked {
 
 .cs-header-notification-toggle-proposal:hover {
   background: #fcefc7;
+}
+
+/* TODO.md #68: groups a notification's own label/toggle with its
+   action button(s) (Push+Discard, or Accept+Reject/Withdraw) so they
+   sit together as one visual unit in the header row. */
+.cs-header-notification-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 /* TODO.md #65-xiv: Slides view's own hideHeader hides the rest of the

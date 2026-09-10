@@ -4858,3 +4858,83 @@ reshape the plan below and are called out explicitly where they apply:
   exact pattern (`client = TestClient(...)` with no enclosing `with`)
   before assuming your own change caused it** -- any future test file
   written the same unwrapped way is equally exposed.
+
+- [x] **68. Replace #65's ordered push/review action-list with a single
+  "push the cell's entire current state" snapshot** -- a real classroom
+  bug report: a student editing and running (Shift+Enter) the same
+  cell's code repeatedly before pushing built up a long queue of
+  redundant staged edits (`stageOrSend` only ever appended, never
+  replaced), so accepting the resulting bundle replayed -- and
+  separately re-executed -- every one of those intermediate edits, which
+  at enough volume proved disruptive mid-class. Full design/rationale
+  and the exact new model in `ARCHITECTURE.md` section 5b (rewritten in
+  full); this entry records what actually changed and where.
+  - [x] 68-i. Protocol (`protocol.py`): replaced `PushCellBundle`/
+    `WithdrawCellBundle`/`AcceptCellBundle`/`RejectCellBundle` and their
+    `CellBundleProposed`/`BundleWithdrawn`/`BundleAccepted`/
+    `BundleRejected` replies with `PushCellState { cell_id, new_cell_id,
+    source, test_sources, notes_sources, hide_code, hide_def }` (the
+    cell's whole state as one snapshot, no ordered actions list) and
+    `WithdrawCellState`/`AcceptCellState`/`RejectCellState` +
+    `CellStatePushed`/`CellStateWithdrawn`/`CellStateAccepted`/
+    `CellStateRejected`. `CellStatePushed` deliberately carries only the
+    proposer's identity, no preview of the pushed content -- there is no
+    diff/preview shown anywhere any more, by explicit user design
+    decision (the pushing student already sees their own current cell
+    state on their own screen).
+  - [x] 68-ii. `session.py`: replaced `StructuralBundle`/
+    `StructuralAction`/`CellInstance.structural_bundle` with
+    `PendingCellState` (the full snapshot shape above) and
+    `CellInstance.pending_state` -- one pending push per cell, same as
+    before, just no ordered list inside it. `Session.clone()` updated to
+    copy the new field the same "clone is a snapshot of current state"
+    way it copied the old one (and deliberately does NOT carry chat
+    history, per #66's own unrelated decision).
+  - [x] 68-iii. `ws_handler.py`: `AcceptCellState`'s handler applies the
+    snapshot as a *fixed* sequence of synthesized messages (never a
+    client-supplied variable-length list) -- source (`EditCell`, always
+    applied) -> each named test/notes element's source -> hide_code/
+    hide_def (only if changed) -> rename (only if `new_cell_id` differs,
+    applied last so nothing earlier needs the new name) -- each replayed
+    through the ordinary `handle_message` dispatch so every field reuses
+    its own already-correct non-review-mode logic. Per the user's own
+    explicit scoping call, `SetMainCell`/`SetSetupCell`/`AddElement`/
+    `RemoveElement`/`ReorderElements`/`SetElementConfig`/
+    `AddPrimaryEditor`/`RemovePrimaryEditor` are NO LONGER gated by
+    `review_mode` at all -- their `_review_mode_rejection` guards were
+    removed, so they apply immediately on a review_mode document again,
+    same as before #65-x ever gated them (rare, deck-structural,
+    instructor-setup-time changes, not something that recurs mid-class
+    the way repeated code edits do).
+  - [x] 68-iv. Frontend: replaced `App.tsx`'s `pendingActions` (a
+    per-cell list of staged `{payload, summary}` entries) with
+    `dirtyCells` (a `Set<string>` of cell ids with any un-pushed local
+    change) plus `primarySourceDrafts`/`renameDrafts` (the review-mode
+    analogues of the existing `notesOverrides`/`testSourceOverrides`
+    local-echo state, for the two fields that had nowhere else to live
+    client-side). `handlePushCellState` composes the full snapshot at
+    push time by reading each field from wherever it actually lives
+    (`primarySourceDrafts`/`testSourceOverrides`/`notesOverrides`/
+    `deck.cells[cellId]`'s own current hide_code/hide_def/name,
+    `renameDrafts` for a pending rename), not from any staged-list
+    reconstruction. `Cell.tsx`'s two expandable banners (pending-actions-
+    to-push, incoming-bundle-to-review), their collapsed-by-default
+    header toggles, and `ActionDiffPreview.tsx` (deleted entirely, no
+    remaining usages) are replaced by plain Push/Discard/Accept/Reject/
+    Withdraw buttons rendered directly in the cell header -- no
+    expand/collapse state, no diff preview, clicking a button performs
+    the action.
+  - [x] 68-v. Tests (`tests/test_server_ws.py`): every test referencing
+    the old bundle mechanism (~14 test functions) rewritten for the new
+    snapshot model; one test
+    (`test_websocket_push_cell_bundle_rejects_action_targeting_different_cell`)
+    deleted outright since it tested per-action `cell_id` validation
+    that has no equivalent in a flat snapshot (nothing to validate
+    per-action any more). Full suite (620 tests, minus the separately-
+    documented flaky watch test) passes reliably in under 10 seconds
+    across multiple consecutive runs. Also verified end-to-end in a real
+    two-tab Playwright browser session reproducing the exact bug report
+    (edit-and-run a cell 4 times before pushing): exactly one Push
+    button appears (not a queue), the peer sees exactly one Accept
+    prompt (not 4), and accepting applies only the *last* edit -- the
+    three earlier discarded edits never appear anywhere.
