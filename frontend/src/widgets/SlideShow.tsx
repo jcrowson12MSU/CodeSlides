@@ -80,6 +80,7 @@ export interface SlideShowProps {
   ownUserId?: string | null
   onStagePrimaryEdit?: (cellId: string, source: string) => void
   onStageTestEdit?: (cellId: string, elementId: string, source: string) => void
+  onStageNotesEdit?: (cellId: string, elementId: string, source: string) => void
   pendingActions?: Record<string, BundleAction[]>
   onPushPendingActions?: (cellId: string) => void
   onDiscardPendingActions?: (cellId: string) => void
@@ -137,6 +138,7 @@ export function SlideShow({
   ownUserId = null,
   onStagePrimaryEdit,
   onStageTestEdit,
+  onStageNotesEdit,
   pendingActions,
   onPushPendingActions,
   onDiscardPendingActions,
@@ -324,6 +326,11 @@ export function SlideShow({
               onStageTestEdit={
                 onStageTestEdit
                   ? (elementId, source) => onStageTestEdit(cellId, elementId, source)
+                  : undefined
+              }
+              onStageNotesEdit={
+                onStageNotesEdit
+                  ? (elementId, source) => onStageNotesEdit(cellId, elementId, source)
                   : undefined
               }
               pendingActions={pendingActions?.[cellId]}

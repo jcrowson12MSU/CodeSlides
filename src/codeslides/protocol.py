@@ -176,11 +176,23 @@ class SetElementValue:
 
 @dataclass
 class SetUiState:
-    """Cell-collapse, element-minimize (ARCHITECTURE.md section 8), or a
-    `notes` element's markdown source being edited directly in its editor
-    mode. All three are pure UI/authoring state -- explicitly does NOT
-    trigger re-execution, unlike `set_element_value` for input elements.
-    `element_id` is omitted for a cell-level collapse toggle."""
+    """Cell-collapse or element-minimize (ARCHITECTURE.md section 8) --
+    both pure UI state, explicitly does NOT trigger re-execution, unlike
+    `set_element_value` for input elements. `element_id` is omitted for a
+    cell-level collapse toggle.
+
+    TODO.md #65-xiii: a `notes` element's markdown *source* used to also
+    ride on this message (as an optional `notes_source` field) -- pulled
+    out into its own `SetNotesSource` type below, since unlike collapse/
+    minimize it's real document content (persisted into
+    `session.source_overrides`, the same slot a code edit uses, so Save
+    captures it) that a review_mode document needs to gate the same way
+    `EditCell`/`SetTestSource` already are. The two were bundled together
+    under one message purely because both happen to skip re-execution;
+    that shared property doesn't imply shared review-mode treatment, and
+    conflating them left notes edits broadcasting immediately on every
+    document regardless of review_mode -- a real gap, not a deliberate
+    carve-out like `SetElementValue`'s (TODO.md #63)."""
 
     type: ClassVar[str] = "set_ui_state"
     session_id: str
@@ -188,7 +200,6 @@ class SetUiState:
     element_id: str | None = None
     collapsed: bool | None = None
     minimized: bool | None = None
-    notes_source: str | None = None
 
 
 @dataclass
@@ -216,7 +227,7 @@ class NavigateSlide:
 @dataclass
 class SetTestSource:
     """A `tests` element's source was edited (ARCHITECTURE.md section 3b).
-    Unlike `notes_source` (pure UI state, no re-run at all) this *does*
+    Unlike `SetNotesSource` (below -- no re-run at all) this *does*
     trigger a run -- but only of the test code itself, against the owning
     cell's current namespace, never a re-run of the cell or any graph
     recomputation. Distinct from `set_ui_state` because it has real
@@ -224,6 +235,23 @@ class SetTestSource:
     explicitly never has."""
 
     type: ClassVar[str] = "set_test_source"
+    session_id: str
+    cell_id: str
+    element_id: str
+    source: str
+
+
+@dataclass
+class SetNotesSource:
+    """TODO.md #65-xiii: a `notes` element's markdown source being edited
+    directly in its editor mode (ARCHITECTURE.md section 8) -- pulled out
+    of the shared `set_ui_state` message (see its own docstring for why)
+    so a review_mode document can gate this the same way `EditCell`/
+    `SetTestSource` already are. Unlike `SetTestSource`, this never
+    triggers any execution at all -- only `Kernel.on_notes_edited`'s
+    in-memory content update and `session.source_overrides` write."""
+
+    type: ClassVar[str] = "set_notes_source"
     session_id: str
     cell_id: str
     element_id: str
@@ -594,6 +622,22 @@ class TestSourceChanged:
     forever with nothing to ever refresh it."""
 
     type: ClassVar[str] = "test_source_changed"
+    session_id: str
+    cell_id: str
+    element_id: str
+    source: str
+
+
+@dataclass
+class NotesSourceChanged:
+    """TODO.md #65-xiii: the `notes`-element analogue of
+    `TestSourceChanged` above, for the same reason -- `SetNotesSource`
+    replayed inside `AcceptCellBundle` has no other way to tell every
+    connection (including the accepter's own) what the newly-accepted
+    markdown source is, since a non-review-mode document's single sender
+    already had it locally and never needed this broadcast before."""
+
+    type: ClassVar[str] = "notes_source_changed"
     session_id: str
     cell_id: str
     element_id: str
@@ -1139,6 +1183,7 @@ ClientMessage = (
     | SetElementValue
     | SetUiState
     | SetTestSource
+    | SetNotesSource
     | CloneSession
     | NavigateSlide
     | SaveDeck
@@ -1167,6 +1212,7 @@ ServerMessage = (
     | CellOutput
     | CellSourceChanged
     | TestSourceChanged
+    | NotesSourceChanged
     | CellAttributionChanged
     | CellBundleProposed
     | BundleWithdrawn
@@ -1214,6 +1260,7 @@ _CLIENT_MESSAGE_TYPES: dict[str, type[ClientMessage]] = {
         SetElementValue,
         SetUiState,
         SetTestSource,
+        SetNotesSource,
         CloneSession,
         NavigateSlide,
         SaveDeck,

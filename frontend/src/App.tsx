@@ -142,10 +142,13 @@ function App() {
   )
   const [saving, setSaving] = useState(false)
   const [elementValues, setElementValues] = useState<Record<string, Record<string, unknown>>>({})
-  // Local-only override for notes content while editing: set_ui_state
-  // produces no server reply (ARCHITECTURE.md section 8 -- pure UI state,
-  // never a re-run), so without this the textarea would show stale
-  // content until some unrelated cell_output happened to refresh it.
+  // Local-only override for notes content while editing: set_notes_source
+  // produces no server reply on its own (ARCHITECTURE.md section 8 --
+  // no re-run), so without this the editor would show stale content
+  // until some unrelated cell_output happened to refresh it. In review
+  // mode (handleStageNotesEdit) this is also the *only* place a staged-
+  // but-not-yet-pushed edit is visible at all, since nothing reaches
+  // deckState until accept_cell_bundle's notes_source_changed lands.
   const [notesOverrides, setNotesOverrides] = useState<Record<string, Record<string, string>>>({})
   // Same shape as notesOverrides, for a `tests` element's editable source
   // (ARCHITECTURE.md section 3b) -- set_test_source does get a server
@@ -156,8 +159,8 @@ function App() {
     {},
   )
   // Collapse (ARCHITECTURE.md section 8): pure UI state, kept client-side
-  // same as notesOverrides above, since set_ui_state produces no server
-  // reply to sync from either.
+  // for the same reason notesOverrides/testSourceOverrides above are --
+  // set_ui_state produces no server reply to sync from.
   const [collapsedCells, setCollapsedCells] = useState<Record<string, boolean>>({})
   // Feedback for a rejected rename_cell/add_element/remove_element (TODO.md
   // #22) -- e.g. renaming a cell another cell calls directly by name.
@@ -726,6 +729,24 @@ function App() {
         return next
       })
     }
+
+    // TODO.md #65-xiii: same reasoning as acceptedTestSources above, for
+    // a notes element -- SetNotesSource's own handler returns [], so
+    // notes_source_changed is the only way any connection (including
+    // the accepter's own) learns the newly-accepted markdown text after
+    // an AcceptCellBundle replay.
+    const acceptedNotesSources = newMessages.filter(
+      (m): m is Extract<ServerMessage, { type: 'notes_source_changed' }> => m.type === 'notes_source_changed',
+    )
+    if (acceptedNotesSources.length > 0) {
+      setNotesOverrides((prev) => {
+        const next = { ...prev }
+        for (const m of acceptedNotesSources) {
+          next[m.cell_id] = { ...next[m.cell_id], [m.element_id]: m.source }
+        }
+        return next
+      })
+    }
   }, [messages])
 
   function handleSetElementValue(cellId: string, elementId: string, value: unknown) {
@@ -1154,11 +1175,44 @@ function App() {
       [cellId]: { ...prev[cellId], [elementId]: source },
     }))
     send({
-      type: 'set_ui_state',
+      type: 'set_notes_source',
       session_id: sessionId,
       cell_id: cellId,
       element_id: elementId,
-      notes_source: source,
+      source,
+    })
+  }
+
+  // TODO.md #65-xiii: notes-source used to bypass review mode entirely
+  // (it rode on set_ui_state, shared with the genuinely-exempt
+  // collapse/minimize flags, which never had a review_mode gate), a
+  // real gap confirmed by direct user report. Deliberately NOT routed
+  // through stageOrSend (unlike handleStageTestEdit/
+  // handleStagePrimaryEdit): NotesEditor fires onChangeSource on every
+  // keystroke (Obsidian-style live preview, viewerElements.tsx's own
+  // docstring), not just on an explicit Shift+Enter -- stageOrSend's
+  // "append a new pending action" model would flood pendingActions with
+  // one entry per character typed. Instead this upserts a single
+  // per-element pending entry in place, so typing a whole paragraph
+  // still stages as exactly one "Edit notes `<name>`" action.
+  function handleStageNotesEdit(cellId: string, elementId: string, source: string) {
+    if (!sessionId) return
+    setNotesOverrides((prev) => ({
+      ...prev,
+      [cellId]: { ...prev[cellId], [elementId]: source },
+    }))
+    const payload = { type: 'set_notes_source', session_id: sessionId, cell_id: cellId, element_id: elementId, source }
+    const summary = `Edit notes \`${elementId}\``
+    setPendingActions((prev) => {
+      const existing = prev[cellId] ?? []
+      const index = existing.findIndex(
+        (a) => a.payload.type === 'set_notes_source' && a.payload.element_id === elementId,
+      )
+      const next =
+        index === -1
+          ? [...existing, { payload, summary }]
+          : existing.map((a, i) => (i === index ? { payload, summary } : a))
+      return { ...prev, [cellId]: next }
     })
   }
 
@@ -1461,6 +1515,7 @@ function App() {
               ownUserId={ownIdentity?.userId ?? null}
               onStagePrimaryEdit={(source) => handleStagePrimaryEdit(cellId, source)}
               onStageTestEdit={(elementId, source) => handleStageTestEdit(cellId, elementId, source)}
+              onStageNotesEdit={(elementId, source) => handleStageNotesEdit(cellId, elementId, source)}
               pendingActions={pendingActions[cellId]}
               onPushPendingActions={() => handlePushPendingActions(cellId)}
               onDiscardPendingActions={() => handleDiscardPendingActions(cellId)}
@@ -1524,6 +1579,7 @@ function App() {
           ownUserId={ownIdentity?.userId ?? null}
           onStagePrimaryEdit={handleStagePrimaryEdit}
           onStageTestEdit={handleStageTestEdit}
+          onStageNotesEdit={handleStageNotesEdit}
           pendingActions={pendingActions}
           onPushPendingActions={handlePushPendingActions}
           onDiscardPendingActions={handleDiscardPendingActions}

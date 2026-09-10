@@ -118,7 +118,18 @@ export interface SetUiState {
   element_id?: string
   collapsed?: boolean
   minimized?: boolean
-  notes_source?: string
+}
+
+// TODO.md #65-xiii: pulled out of SetUiState (see its own comment) so a
+// notes edit can be gated by review_mode like every other real content
+// edit -- unlike collapse/minimize, this is document content persisted
+// into session.source_overrides, not ephemeral UI state.
+export interface SetNotesSource {
+  type: 'set_notes_source'
+  session_id: string
+  cell_id: string
+  element_id: string
+  source: string
 }
 
 export interface CloneSession {
@@ -275,9 +286,10 @@ export interface SetElementConfig {
   config: Record<string, unknown>
 }
 
-// TODO.md #65/#65-x/#65-xi: stage an ordered list of changes to
+// TODO.md #65/#65-x/#65-xi/#65-xiii: stage an ordered list of changes to
 // `cell_id` -- an edit to its primary source (EditCell-shaped), an edit
-// to a tests element's source (SetTestSource-shaped), and/or structural
+// to a tests element's source (SetTestSource-shaped), an edit to a
+// notes element's source (SetNotesSource-shaped), and/or structural
 // changes (rename, hide toggles, add/remove element, reorder elements,
 // element config, add/remove primary editor, main/setup-cell flags).
 // None of it is applied until accept_cell_bundle replays it. Each
@@ -323,6 +335,7 @@ export type ClientMessage =
   | SetElementValue
   | SetUiState
   | SetTestSource
+  | SetNotesSource
   | CloneSession
   | NavigateSlide
   | SaveDeck
@@ -391,6 +404,16 @@ export interface CellSourceChanged {
 // once test-source edits started replaying through accept_cell_bundle.
 export interface TestSourceChanged {
   type: 'test_source_changed'
+  session_id: string
+  cell_id: string
+  element_id: string
+  source: string
+}
+
+// TODO.md #65-xiii: the notes-element analogue of TestSourceChanged
+// above, for the same reason -- SetNotesSource's own reply is [].
+export interface NotesSourceChanged {
+  type: 'notes_source_changed'
   session_id: string
   cell_id: string
   element_id: string
@@ -716,6 +739,7 @@ export type ServerMessage =
   | CellOutput
   | CellSourceChanged
   | TestSourceChanged
+  | NotesSourceChanged
   | CellAttributionChanged
   | CellBundleProposed
   | BundleWithdrawn

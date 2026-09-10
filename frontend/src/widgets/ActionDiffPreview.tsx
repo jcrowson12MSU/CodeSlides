@@ -1,4 +1,5 @@
 import { unifiedMergeView } from '@codemirror/merge'
+import { markdown } from '@codemirror/lang-markdown'
 import { python } from '@codemirror/lang-python'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
@@ -24,9 +25,25 @@ export interface ActionDiffPreviewProps {
   /** This cell's currently-known `tests` element sources, keyed by
    * element name, for a `set_test_source` action's diff base. */
   currentTestSources: Record<string, string>
+  /** TODO.md #65-xiii: same as currentTestSources, for a `notes`
+   * element's currently-known markdown source (`set_notes_source`'s
+   * diff base). */
+  currentNotesSources: Record<string, string>
 }
 
-function SourceDiff({ original, proposed }: { original: string; proposed: string }) {
+function SourceDiff({
+  original,
+  proposed,
+  language = 'python',
+}: {
+  original: string
+  proposed: string
+  /** TODO.md #65-xiii: notes content is markdown, not Python -- picks
+   * the matching CodeMirror language extension for syntax highlighting
+   * inside the diff. Defaults to python since every other caller here
+   * (edit_cell/set_test_source) is Python source. */
+  language?: 'python' | 'markdown'
+}) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
 
@@ -36,7 +53,7 @@ function SourceDiff({ original, proposed }: { original: string; proposed: string
       state: EditorState.create({
         doc: proposed,
         extensions: [
-          python(),
+          language === 'markdown' ? markdown() : python(),
           EditorView.editable.of(false),
           EditorView.lineWrapping,
           // mergeControls: false -- this is a read-only preview of what
@@ -54,7 +71,7 @@ function SourceDiff({ original, proposed }: { original: string; proposed: string
     // Re-created whenever the diff's own inputs change -- this is a
     // small read-only preview, not worth a reconfigure/dispatch path.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [original, proposed])
+  }, [original, proposed, language])
 
   return <div className="cs-action-diff" ref={containerRef} />
 }
@@ -91,7 +108,12 @@ function bestEffortStructuralPreview(payload: Record<string, unknown>): string |
   }
 }
 
-export function ActionDiffPreview({ payload, currentSource, currentTestSources }: ActionDiffPreviewProps) {
+export function ActionDiffPreview({
+  payload,
+  currentSource,
+  currentTestSources,
+  currentNotesSources,
+}: ActionDiffPreviewProps) {
   if (payload.type === 'edit_cell' && typeof payload.source === 'string') {
     return <SourceDiff original={currentSource} proposed={payload.source} />
   }
@@ -102,6 +124,14 @@ export function ActionDiffPreview({ payload, currentSource, currentTestSources }
   ) {
     const original = currentTestSources[payload.element_id] ?? ''
     return <SourceDiff original={original} proposed={payload.source} />
+  }
+  if (
+    payload.type === 'set_notes_source' &&
+    typeof payload.source === 'string' &&
+    typeof payload.element_id === 'string'
+  ) {
+    const original = currentNotesSources[payload.element_id] ?? ''
+    return <SourceDiff original={original} proposed={payload.source} language="markdown" />
   }
   const oneLiner = bestEffortStructuralPreview(payload)
   if (oneLiner) {

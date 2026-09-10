@@ -51,6 +51,7 @@ from codeslides.protocol import (
     JoinAck,
     MainCellSet,
     NavigateSlide,
+    NotesSourceChanged,
     PeerInfo,
     PresenceUpdate,
     PrimaryEditorAdded,
@@ -74,6 +75,7 @@ from codeslides.protocol import (
     SetHideCode,
     SetHideDef,
     SetMainCell,
+    SetNotesSource,
     SetPresence,
     SetSetupCell,
     SetSlideOrder,
@@ -595,6 +597,7 @@ VIEWER_ALLOWED_MESSAGE_TYPES: tuple[type, ...] = (Join, SetPresence)
 ATTRIBUTABLE_MESSAGE_TYPES: tuple[type, ...] = (
     EditCell,
     SetTestSource,
+    SetNotesSource,
     SetCellLayout,
     RenameCell,
     SetMainCell,
@@ -975,6 +978,20 @@ def handle_message(
                             source=decoded.source,
                         )
                     )
+                # TODO.md #65-xiii: same gap, same fix, for a notes
+                # element's source -- SetNotesSource's own handler
+                # returns [] (Kernel.on_notes_edited has no execution
+                # result to report), so this is the *only* way any
+                # connection learns the newly-accepted markdown text.
+                if isinstance(decoded, SetNotesSource):
+                    replies.append(
+                        NotesSourceChanged(
+                            session_id=message.session_id,
+                            cell_id=decoded.cell_id,
+                            element_id=decoded.element_id,
+                            source=decoded.source,
+                        )
+                    )
         finally:
             session.review_mode = True
         # TODO.md #65-x/#46g: attribution credits the *proposer*, same
@@ -1094,16 +1111,6 @@ def handle_message(
                 ]
             if message.minimized is not None:
                 instance.elements[message.element_id].minimized = message.minimized
-            if message.notes_source is not None:
-                # Also folds this edit into session.source_overrides (a
-                # regenerated whole-cell source with the docstring
-                # replaced) so the existing Save button persists it --
-                # see Kernel.on_notes_edited's own docstring for why this
-                # can't just be the direct instance.content assignment
-                # every other branch here uses.
-                registry.kernel.on_notes_edited(
-                    message.cell_id, message.element_id, message.notes_source, session
-                )
         return []
 
     if isinstance(message, SetTestSource):
@@ -1167,6 +1174,47 @@ def handle_message(
                     )
                 )
         return messages
+
+    if isinstance(message, SetNotesSource):
+        session = registry.get(message.session_id)
+        if session is None:
+            return [ErrorMessage(message="unknown session", session_id=message.session_id)]
+        # TODO.md #65-xiii: same "review_mode documents only change
+        # accepted state via AcceptCellBundle" rule EditCell/SetTestSource
+        # already enforce -- notes-source used to ride on set_ui_state,
+        # which never had this gate at all, so a notes edit on a
+        # review_mode document broadcast immediately regardless (the
+        # actual bug this fixes).
+        if session.review_mode:
+            return [
+                ErrorMessage(
+                    message="this document is in review mode; use push_cell_bundle instead of set_notes_source",
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                )
+            ]
+        if message.cell_id not in session.instances:
+            return [
+                ErrorMessage(
+                    message="unknown cell", session_id=message.session_id, cell_id=message.cell_id
+                )
+            ]
+        instance = session.instances[message.cell_id]
+        if message.element_id not in instance.elements:
+            return [
+                ErrorMessage(
+                    message="unknown element",
+                    session_id=message.session_id,
+                    cell_id=message.cell_id,
+                )
+            ]
+        # Also folds this edit into session.source_overrides (a
+        # regenerated whole-cell source with the docstring replaced) so
+        # the existing Save button persists it -- see
+        # Kernel.on_notes_edited's own docstring for why this can't just
+        # be a direct instance.content assignment.
+        registry.kernel.on_notes_edited(message.cell_id, message.element_id, message.source, session)
+        return []
 
     if isinstance(message, CloneSession):
         clone = registry.clone(message.source_session_id)

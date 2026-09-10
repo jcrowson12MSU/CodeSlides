@@ -112,10 +112,13 @@ export interface NotesViewerProps {
 // Always-live markdown (Obsidian-style live preview, ARCHITECTURE.md
 // section 3a): no Edit/Preview toggle -- NotesEditor renders markdown
 // inline as you type, revealing raw syntax only on the line(s) the
-// cursor currently touches. Editing is pure UI/authoring state -- it
-// doesn't send set_element_value nor trigger a cell re-run
-// (ARCHITECTURE.md section 8); edits go out as set_ui_state's
-// notes_source field instead, same wire path the old textarea used.
+// cursor currently touches. Editing doesn't send set_element_value nor
+// trigger a cell re-run (ARCHITECTURE.md section 8); edits go out as
+// their own set_notes_source message instead (TODO.md #65-xiii --
+// previously set_ui_state's notes_source field, pulled out into its own
+// type so a review_mode document can gate it like real content, same as
+// EditCell/SetTestSource). `onChangeSource` fires on every keystroke,
+// not just on blur/Shift+Enter -- App.tsx's caller accounts for this.
 // Unlike every other viewer, this one never shows its own element name
 // -- notes content is markdown meant to be read starting right at its
 // own title if it has one, not prefixed with authoring metadata a

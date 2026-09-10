@@ -313,10 +313,12 @@ new dependency edges — it only *observes* the namespace, it never
 contributes to it. Editing test source (`set_test_source`, §5) re-runs
 just the test, immediately, against the namespace as it currently stands;
 it never re-runs the owning cell or recomputes the dependency graph,
-matching how `notes` editing is pure UI state with no re-run — except
-`set_test_source` *does* have a real side effect (a fresh pass/fail
-result), which is why it's its own message type rather than reusing
-`set_ui_state`.
+matching how `notes` editing (`set_notes_source`, `TODO.md` #65-xiii)
+also never re-runs anything — except `set_test_source` *does* have a
+real side effect (a fresh pass/fail result), which is why both are
+their own message types rather than folding into `set_ui_state` (whose
+own scope is now just collapse/minimize, the two flags that are
+genuinely ephemeral UI state with no document content at all).
 
 **Auto-run, not on-demand.** Every time the owning cell itself re-runs
 (an edit, a bound slider changing, `run_all`, an upstream dependency
@@ -575,7 +577,8 @@ proposer identity, a human-readable per-action summary list, and an
 ordered list of `StructuralAction`s, each storing the exact wire-format
 dict `protocol.encode()` would produce for the original client message.
 *Every* mutation a cell can receive while in review mode — its primary
-source (`EditCell`), any `tests` element's source (`SetTestSource`), and
+source (`EditCell`), any `tests` element's source (`SetTestSource`), any
+`notes` element's source (`SetNotesSource`, `TODO.md` #65-xiii), and
 all 11 structural message types (rename, hide toggles, add/remove
 element, reorder, config, add/remove primary editor, main/setup-cell
 flags) — is rejected outright if sent directly, and instead flows
@@ -625,15 +628,16 @@ through this one bundle:
   final cell id off the *last* replayed action's own reply
   (`attributed_cell_id`, scanning from the end), the same trap — and the
   same fix — `TODO.md` #46g-iii already documents for a single rename.
-- **`TestSourceChanged`**: `SetTestSource`'s own reply is only ever the
-  resulting `ElementOutput` (pass/fail/print) — unlike `EditCell`, it
-  never echoes the new *source* text itself back, since a non-review-
-  mode document's single sender already has it locally. A bundle-accept
-  has no such sender on the receiving end, so `AcceptCellBundle`'s
-  replay loop emits this message itself whenever it replays a
-  `SetTestSource` action, letting every peer (accepter included) learn
-  the new test source the same way `CellSourceChanged` already covers a
-  primary-source edit.
+- **`TestSourceChanged`/`NotesSourceChanged`**: `SetTestSource`'s own
+  reply is only ever the resulting `ElementOutput` (pass/fail/print),
+  and `SetNotesSource`'s own reply is `[]` entirely (`TODO.md`
+  #65-xiii) — unlike `EditCell`, neither echoes the new *source* text
+  itself back, since a non-review-mode document's single sender already
+  has it locally. A bundle-accept has no such sender on the receiving
+  end, so `AcceptCellBundle`'s replay loop emits the matching message
+  itself whenever it replays a `SetTestSource`/`SetNotesSource` action,
+  letting every peer (accepter included) learn the new content the same
+  way `CellSourceChanged` already covers a primary-source edit.
 - **A real per-action preview, collapsed by default (`TODO.md`
   #65-xii).** Both the pending-actions banner (a connection's own
   not-yet-pushed list) and the proposal banner (an incoming bundle)
@@ -659,12 +663,13 @@ through this one bundle:
 
 **Scope boundaries** (all deliberate, per `PROPOSAL_review_workflow.md`'s
 resolved open questions): per-cell only, no batching multiple *cells*
-into one push (a single cell's several changes — source, test, and
-structural alike — bundle together fine, as above); text-diff-only
+into one push (a single cell's several changes — source, test, notes,
+and structural alike — bundle together fine, as above); text-diff-only
 review for v1, no preview execution of a pending bundle; a cell's
-primary source, its `tests` elements' sources, and all 11 structural
-message types go through review — element values (`SetElementValue`)
-remain the one significant carve-out, governed entirely by the separate,
+primary source, its `tests`/`notes` elements' sources, and all 11
+structural message types go through review — element values
+(`SetElementValue`) remain the one significant carve-out, governed
+entirely by the separate,
 still-undecided `TODO.md` #63, along with deck/slide-scoped operations
 with no single cell to attach a bundle to (`AddCell`, `RemoveCell`,
 `ReorderCells`, `AddSlide`, `RemoveSlide`, `SetSlideOrder`, `SaveDeck`).
