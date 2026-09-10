@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react'
-import type { CellState } from '../deckState'
+import type { BundleAction, CellState } from '../deckState'
 import type { CellLayout } from '../protocol'
 import { Cell, type CellMeta } from './Cell'
 import { CodeEditor } from './CodeEditor'
@@ -67,13 +67,25 @@ export interface SlideShowProps {
   // `readOnly` (the main cell's, via Cell.tsx, and the title slide's
   // separate `extraCodeAbove` setup-cell editor, composed directly here).
   viewerMode?: boolean
-  // TODO.md #65/#65-xi: see Cell.tsx's own docstrings for these --
-  // forwarded here for the same reason viewerMode is (Slides view
-  // renders the same live Cell as Cells view, just one at a time).
+  // TODO.md #65/#65-xi/#65-xii: see Cell.tsx's own docstrings for these
+  // -- forwarded here for the same reason viewerMode is (Slides view
+  // renders the same live Cell as Cells view, just one at a time). The
+  // push/accept bundle props below were missing entirely until
+  // #65-xii, per the user's explicit request that pushing/receiving
+  // changes work from Slides view too -- previously reviewMode/
+  // onStagePrimaryEdit/onStageTestEdit let a Slides-view user *stage* a
+  // change, but neither the resulting Push/Discard banner nor an
+  // incoming Accept/Reject banner ever rendered there.
   reviewMode?: boolean
   ownUserId?: string | null
   onStagePrimaryEdit?: (cellId: string, source: string) => void
   onStageTestEdit?: (cellId: string, elementId: string, source: string) => void
+  pendingActions?: Record<string, BundleAction[]>
+  onPushPendingActions?: (cellId: string) => void
+  onDiscardPendingActions?: (cellId: string) => void
+  onAcceptBundle?: (cellId: string, proposerUserId: string) => void
+  onRejectBundle?: (cellId: string, proposerUserId: string) => void
+  onWithdrawBundle?: (cellId: string) => void
 }
 
 // Slideshow/presentation mode (TODO.md #10, ARCHITECTURE.md's "one tool,
@@ -125,6 +137,12 @@ export function SlideShow({
   ownUserId = null,
   onStagePrimaryEdit,
   onStageTestEdit,
+  pendingActions,
+  onPushPendingActions,
+  onDiscardPendingActions,
+  onAcceptBundle,
+  onRejectBundle,
+  onWithdrawBundle,
 }: SlideShowProps) {
   const slideRef = useRef<HTMLDivElement | null>(null)
 
@@ -308,6 +326,18 @@ export function SlideShow({
                   ? (elementId, source) => onStageTestEdit(cellId, elementId, source)
                   : undefined
               }
+              pendingActions={pendingActions?.[cellId]}
+              onPushPendingActions={onPushPendingActions ? () => onPushPendingActions(cellId) : undefined}
+              onDiscardPendingActions={
+                onDiscardPendingActions ? () => onDiscardPendingActions(cellId) : undefined
+              }
+              onAcceptBundle={
+                onAcceptBundle ? (proposerUserId) => onAcceptBundle(cellId, proposerUserId) : undefined
+              }
+              onRejectBundle={
+                onRejectBundle ? (proposerUserId) => onRejectBundle(cellId, proposerUserId) : undefined
+              }
+              onWithdrawBundle={onWithdrawBundle ? () => onWithdrawBundle(cellId) : undefined}
               onRunCell={(source) => onRunCell(cellId, source)}
               onRunAll={onRunAll}
               onSetElementValue={(elementId, value) => onSetElementValue(cellId, elementId, value)}

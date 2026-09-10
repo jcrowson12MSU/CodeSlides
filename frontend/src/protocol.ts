@@ -440,11 +440,12 @@ export interface SessionCreated {
   review_mode: boolean
 }
 
-// TODO.md #65-x: broadcast (peers-only) when a push_cell_bundle stages
-// or replaces a pending structural bundle. `action_summaries` are the
-// plain human-readable strings only -- a receiving peer's reviewer
-// banner never needs the full `payload`, only the server's own
-// accept_cell_bundle replay ever decodes one.
+// TODO.md #65-x/#65-xii: broadcast (peers-only) when a push_cell_bundle
+// stages or replaces a pending structural bundle. `action_payloads` is
+// index-aligned with `action_summaries` -- the reviewer banner uses it
+// to render a real preview (a source diff for edit_cell/set_test_source,
+// a best-effort one-liner for cheap structural types) instead of the
+// summary text alone.
 export interface CellBundleProposed {
   type: 'cell_bundle_proposed'
   session_id: string
@@ -452,6 +453,7 @@ export interface CellBundleProposed {
   proposer_user_id: string
   proposer_display_name: string
   action_summaries: string[]
+  action_payloads: Record<string, unknown>[]
   created_at: string
 }
 

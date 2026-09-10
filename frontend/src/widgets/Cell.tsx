@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import type { CellState } from '../deckState'
+import type { BundleAction, CellState } from '../deckState'
+import { ActionDiffPreview } from './ActionDiffPreview'
 import { CODE_TAB_ID, INPUTS_TAB_ID, type CellLayout, type Quadrant } from '../protocol'
 import { CellOutputView } from './CellOutputView'
 import { hasCellOutput } from './cellOutput'
@@ -183,15 +184,16 @@ export interface CellProps {
   // TODO.md #65-xi: same as onStagePrimaryEdit, for a `tests` element's
   // own source.
   onStageTestEdit?: (elementId: string, source: string) => void
-  // TODO.md #65-x/#65-xi: this cell's locally-staged (not-yet-pushed)
-  // changes -- primary/test source edits and structural changes (rename,
-  // hide toggles, add/remove element, reorder elements, element config,
-  // add/remove primary editor, main/setup flags) -- shown as a plain
-  // summary list near a "Push" button, and this cell's own currently-
-  // pending *bundle* (someone's already-pushed set of such changes
-  // awaiting Accept/Reject), reduced from `cell_bundle_proposed`/etc.
-  // into `state.structuralBundle`.
-  pendingActionSummaries?: string[]
+  // TODO.md #65-x/#65-xi/#65-xii: this cell's locally-staged
+  // (not-yet-pushed) changes -- primary/test source edits and
+  // structural changes (rename, hide toggles, add/remove element,
+  // reorder elements, element config, add/remove primary editor,
+  // main/setup flags) -- shown as a collapsible per-action list (each
+  // expandable to a real preview, `ActionDiffPreview`) near a "Push"
+  // button, and this cell's own currently-pending *bundle* (someone's
+  // already-pushed set of such changes awaiting Accept/Reject), reduced
+  // from `cell_bundle_proposed`/etc. into `state.structuralBundle`.
+  pendingActions?: BundleAction[]
   onPushPendingActions?: () => void
   onDiscardPendingActions?: () => void
   onAcceptBundle?: (proposerUserId: string) => void
@@ -436,7 +438,7 @@ export function Cell({
   ownUserId = null,
   onStagePrimaryEdit,
   onStageTestEdit,
-  pendingActionSummaries,
+  pendingActions,
   onPushPendingActions,
   onDiscardPendingActions,
   onAcceptBundle,
@@ -1257,26 +1259,35 @@ export function Cell({
       {/* TODO.md #65-xi: the separate per-edit text-proposal banner (a
           push_cell that broadcast to peers immediately on Shift+Enter,
           with its own accept/reject/conflict UI) was removed here --
-          primary/test source edits now stage into pendingActionSummaries
-          below and push through the same single per-cell bundle
-          mechanism as structural changes, per direct user report that
-          two different push behaviors in the same app was confusing. */}
+          primary/test source edits now stage into pendingActions below
+          and push through the same single per-cell bundle mechanism as
+          structural changes, per direct user report that two different
+          push behaviors in the same app was confusing. */}
 
-      {/* TODO.md #65-x: this connection's own locally-staged structural
-          changes (rename, hide toggles, add/remove element, etc.) --
-          NOT a live preview of the cell as it would look after these
-          apply (that would require replicating server-computed
-          fields), just the plain list of what's about to be pushed,
-          plus the Push button itself. Shown whenever there's anything
-          staged, regardless of collapsed/hideHeader -- same "worth
-          surfacing regardless" reasoning the proposal banner above
-          already uses. */}
-      {reviewMode && pendingActionSummaries && pendingActionSummaries.length > 0 && (
+      {/* TODO.md #65-x/#65-xii: this connection's own locally-staged
+          structural changes (rename, hide toggles, add/remove element,
+          etc.) -- each rendered as a collapsed-by-default <details> the
+          user can expand to see a real preview (ActionDiffPreview),
+          per the user's own explicit request that a push notification
+          show the proposed update rather than just its summary text.
+          Shown whenever there's anything staged, regardless of
+          collapsed/hideHeader -- same "worth surfacing regardless"
+          reasoning the proposal banner below already uses. */}
+      {reviewMode && pendingActions && pendingActions.length > 0 && (
         <div className="cs-cell-pending-actions">
           <p className="cs-cell-proposal-header">Changes not yet pushed:</p>
-          <ul>
-            {pendingActionSummaries.map((summary, i) => (
-              <li key={i}>{summary}</li>
+          <ul className="cs-cell-action-list">
+            {pendingActions.map((action, i) => (
+              <li key={i}>
+                <details>
+                  <summary>{action.summary}</summary>
+                  <ActionDiffPreview
+                    payload={action.payload}
+                    currentSource={meta.source}
+                    currentTestSources={testSourceValues}
+                  />
+                </details>
+              </li>
             ))}
           </ul>
           <div className="cs-cell-proposal-actions">
@@ -1294,10 +1305,14 @@ export function Cell({
         </div>
       )}
 
-      {/* TODO.md #65-x: a pending structural bundle someone (possibly
-          this connection) has pushed for this cell, awaiting Accept/
-          Reject -- at most one at a time, unlike the per-proposer
-          `proposals` dict above. */}
+      {/* TODO.md #65-x/#65-xii: a pending structural bundle someone
+          (possibly this connection) has pushed for this cell, awaiting
+          Accept/Reject -- at most one at a time, unlike the
+          per-proposer `proposals` dict above. Same collapsed-by-default
+          per-action preview as the pending-actions banner above; the
+          bundle's `actions` payloads reach here via #65-xii's new
+          `action_payloads` wire field (previously peers only ever saw
+          `action_summaries`). */}
       {reviewMode &&
         !collapsed &&
         state?.structuralBundle &&
@@ -1309,9 +1324,18 @@ export function Cell({
               <p className="cs-cell-proposal-header">
                 <strong>{bundle.displayName}</strong> proposed these changes to this cell:
               </p>
-              <ul>
-                {bundle.actionSummaries.map((summary, i) => (
-                  <li key={i}>{summary}</li>
+              <ul className="cs-cell-action-list">
+                {bundle.actions.map((action, i) => (
+                  <li key={i}>
+                    <details>
+                      <summary>{action.summary}</summary>
+                      <ActionDiffPreview
+                        payload={action.payload}
+                        currentSource={meta.source}
+                        currentTestSources={testSourceValues}
+                      />
+                    </details>
+                  </li>
                 ))}
               </ul>
               <div className="cs-cell-proposal-actions">

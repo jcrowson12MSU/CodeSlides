@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
-import { useDeckState } from './deckState'
+import { useDeckState, type BundleAction } from './deckState'
 import { usePresenceState } from './presenceState'
 import type { CellLayout, ServerMessage } from './protocol'
 import { useCodeSlidesSocket } from './useCodeSlidesSocket'
@@ -175,18 +175,18 @@ function App() {
   // on push (server round-trip decides success/failure from there,
   // same as every other message this app sends) or on withdraw.
   //
-  // Deliberately NOT rendered as a live preview of the cell's actual
-  // post-change UI (that would require replicating server-computed
-  // fields -- Cell.tsx's `instance`/`source`/`elements`/`layout` are
-  // all derived server-side from `display_source`/the Cell's real
-  // parsed state, not available client-side before the round-trip) --
-  // just a plain list of the summaries themselves, shown near the Push
-  // button, so what you're about to push is always exactly what you
-  // asked for, never a simulated re-render that could drift from what
-  // actually happens on accept.
-  const [pendingActions, setPendingActions] = useState<
-    Record<string, Array<{ payload: Record<string, unknown>; summary: string }>>
-  >({})
+  // Not a live preview of the cell's actual post-change UI (that would
+  // require replicating server-computed fields -- Cell.tsx's
+  // `instance`/`source`/`elements`/`layout` are all derived server-side
+  // from `display_source`/the Cell's real parsed state, not available
+  // client-side before the round-trip). #65-xii does render a real
+  // preview of the *content itself* though (a source diff for
+  // edit_cell/set_test_source, a best-effort one-liner for cheap
+  // structural types) inside a collapsed-by-default <details> per
+  // action, per the user's own explicit request -- see Cell.tsx's
+  // ActionDiffPreview usage, which is exactly why `.payload` (not just
+  // `.summary`) needs to reach Cell.tsx now.
+  const [pendingActions, setPendingActions] = useState<Record<string, BundleAction[]>>({})
   // Feedback for a rejected add_slide (e.g. no cells selected, or the
   // deck wasn't started from a file) -- same "clear on next attempt"
   // shape as editErrors, just not keyed by cell since a slide isn't one.
@@ -1461,7 +1461,7 @@ function App() {
               ownUserId={ownIdentity?.userId ?? null}
               onStagePrimaryEdit={(source) => handleStagePrimaryEdit(cellId, source)}
               onStageTestEdit={(elementId, source) => handleStageTestEdit(cellId, elementId, source)}
-              pendingActionSummaries={pendingActions[cellId]?.map((a) => a.summary)}
+              pendingActions={pendingActions[cellId]}
               onPushPendingActions={() => handlePushPendingActions(cellId)}
               onDiscardPendingActions={() => handleDiscardPendingActions(cellId)}
               onAcceptBundle={(proposerUserId) => handleAcceptBundle(cellId, proposerUserId)}
@@ -1524,6 +1524,12 @@ function App() {
           ownUserId={ownIdentity?.userId ?? null}
           onStagePrimaryEdit={handleStagePrimaryEdit}
           onStageTestEdit={handleStageTestEdit}
+          pendingActions={pendingActions}
+          onPushPendingActions={handlePushPendingActions}
+          onDiscardPendingActions={handleDiscardPendingActions}
+          onAcceptBundle={handleAcceptBundle}
+          onRejectBundle={handleRejectBundle}
+          onWithdrawBundle={handleWithdrawBundle}
         />
       )}
     </main>
