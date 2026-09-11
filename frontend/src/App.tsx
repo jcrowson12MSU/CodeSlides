@@ -3,6 +3,7 @@ import './App.css'
 import { useChatState } from './chatState'
 import { useDeckState } from './deckState'
 import { usePresenceState } from './presenceState'
+import { runCellClientSide, type PyodideCellResult } from './pyodideKernel'
 import type { CellLayout, ServerMessage } from './protocol'
 import { useCodeSlidesSocket } from './useCodeSlidesSocket'
 import { Cell, type CellMeta } from './widgets/Cell'
@@ -160,6 +161,18 @@ function App() {
   const [testSourceOverrides, setTestSourceOverrides] = useState<Record<string, Record<string, string>>>(
     {},
   )
+  // TODO.md #64/PROPOSAL_pyscript_execution.md: a cell's own most recent
+  // client-side (Pyodide) execution result -- this first implementation
+  // slice's whole point. Unlike every other override above, this is not
+  // an echo of something the server also knows about: the server never
+  // executes anything and never sees this at all (the proposal's
+  // section 2.1 axiom -- no execution result crosses a browser
+  // boundary), so this is the ONLY source of a cell's status/output/
+  // error now. Merged into mergedCellState below, same pattern as
+  // notesOverrides, but replacing rather than layering onto
+  // `cellState[cellId]` (there is no server-side execution state left
+  // to layer on top of).
+  const [clientExecutionState, setClientExecutionState] = useState<Record<string, PyodideCellResult>>({})
   // Collapse (ARCHITECTURE.md section 8): pure UI state, kept client-side
   // for the same reason notesOverrides/testSourceOverrides above are --
   // set_ui_state produces no server reply to sync from.
@@ -780,9 +793,47 @@ function App() {
     send({ type: 'set_element_value', session_id: sessionId, cell_id: cellId, element_id: elementId, value })
   }
 
+  // TODO.md #64/PROPOSAL_pyscript_execution.md section 6 (first slice):
+  // Shift+Enter now runs entirely client-side via Pyodide -- no
+  // edit_cell websocket message at all. Marked "queued" immediately (so
+  // the UI shows something changed right away, matching the old
+  // send-then-wait-for-cell_status-broadcast feel) then replaced with
+  // the real result once Pyodide finishes. Errors thrown by
+  // runCellClientSide itself (Pyodide failed to load, a fetch for one
+  // of the codeslides_pyscript/ files 404'd, etc.) are surfaced as this
+  // cell's own error, same "never silently do nothing" rule the rest
+  // of this file follows for a failed send.
   function handleRunCell(cellId: string, source: string) {
-    if (!sessionId) return
-    send({ type: 'edit_cell', session_id: sessionId, cell_id: cellId, source })
+    setClientExecutionState((prev) => ({
+      ...prev,
+      [cellId]: {
+        status: 'idle',
+        value: prev[cellId]?.value ?? null,
+        kind: prev[cellId]?.kind ?? null,
+        data: prev[cellId]?.data ?? null,
+        error: null,
+        stdout: '',
+        stderr: '',
+      },
+    }))
+    runCellClientSide(cellId, source)
+      .then((result) => {
+        setClientExecutionState((prev) => ({ ...prev, [cellId]: result }))
+      })
+      .catch((err: unknown) => {
+        setClientExecutionState((prev) => ({
+          ...prev,
+          [cellId]: {
+            status: 'error',
+            value: null,
+            kind: null,
+            data: null,
+            error: err instanceof Error ? err.message : String(err),
+            stdout: '',
+            stderr: '',
+          },
+        }))
+      })
   }
 
   // TODO.md #65/#68: the review_mode analogue of handleRunCell above --
@@ -1262,15 +1313,37 @@ function App() {
     }
   }
 
-  // Merge notes overrides into cell state once, shared by both views.
+  // Merge notes overrides and this cell's own client-side execution
+  // result into cell state once, shared by both views. TODO.md #64: the
+  // execution fields (status/value/kind/data/error) come ONLY from
+  // clientExecutionState now -- cellState[cellId] (reduced from server
+  // messages) never carries them any more, since the server never
+  // executes anything (PROPOSAL_pyscript_execution.md section 2.1).
+  // Non-execution fields (elementContent, lastEditedBy/At) still come
+  // from the server as before -- this slice doesn't touch those.
   const mergedCellState: Record<string, ReturnType<typeof useDeckState>[string] | undefined> = {}
   if (deck) {
     for (const cellId of Object.keys(deck.cells)) {
       const overrides = notesOverrides[cellId]
       const state = cellState[cellId]
-      mergedCellState[cellId] = overrides
+      const execution = clientExecutionState[cellId]
+      const withNotes = overrides
         ? { ...state, elementContent: { ...state?.elementContent, ...overrides } }
         : state
+      mergedCellState[cellId] = execution
+        ? {
+            ...withNotes,
+            status: execution.status,
+            value: execution.value,
+            kind: execution.kind,
+            data: execution.data,
+            error: execution.error,
+            elementContent: withNotes?.elementContent ?? {},
+            lastEditedBy: withNotes?.lastEditedBy ?? null,
+            lastEditedAt: withNotes?.lastEditedAt ?? null,
+            pendingPush: withNotes?.pendingPush ?? null,
+          }
+        : withNotes
     }
   }
 
