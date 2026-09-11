@@ -2432,3 +2432,48 @@ body.cs-slides-locked {
   padding: 0.4rem 0.8rem;
   border-radius: 0.3rem;
 }
+
+/* TODO.md #64/PROPOSAL_pyscript_execution.md: cold-start loading
+   indicator (App.tsx's own pyodideStatus). `position: sticky` at the
+   very top of `.app`, matching `.cs-app-header`'s own pinned-to-
+   viewport-top pattern above -- an "overlay, no reflow" `position:
+   fixed` banner (`.cs-chat-panel`'s own approach) would need its own
+   width/z-index tuning to avoid ever sitting over real controls; a
+   sticky bar earns its own space in the layout instead, appropriate
+   for something shown for several real seconds on first load, not a
+   transient toast. */
+.cs-pyodide-loading-banner {
+  position: sticky;
+  top: 0;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: #fff8e1;
+  border-bottom: 1px solid #f0d878;
+  color: #6b5900;
+  font-size: var(--cs-font-base);
+}
+
+.cs-pyodide-loading-banner-error {
+  background: #fdecea;
+  border-bottom-color: #f3b4ac;
+  color: #7a1f1f;
+}
+
+.cs-pyodide-loading-spinner {
+  display: inline-block;
+  width: 0.9rem;
+  height: 0.9rem;
+  border: 2px solid #d9c37a;
+  border-top-color: #6b5900;
+  border-radius: 50%;
+  animation: cs-pyodide-spin 0.8s linear infinite;
+}
+
+@keyframes cs-pyodide-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

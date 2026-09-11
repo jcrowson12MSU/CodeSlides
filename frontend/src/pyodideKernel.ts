@@ -121,6 +121,47 @@ declare global {
 
 let pyodidePromise: Promise<PyodideInterface> | null = null
 
+// TODO.md #64/PROPOSAL_pyscript_execution.md: cold-start loading state
+// (PROPOSAL_pyscript_execution.md's own "measure and address cold-start
+// latency" follow-up, first called out once the structural-ops/
+// tests-element slices made it clear every cell run now genuinely
+// depends on Pyodide's own ~several-second first-load). App.tsx has no
+// other way to know whether Pyodide is still loading -- getPyodide's
+// own pyodidePromise above is module-private, and nothing about the
+// existing run*ClientSide functions' own Promise return value
+// distinguishes "was already loaded, ran instantly" from "just spent 5
+// seconds loading Pyodide before this call's own work even started."
+// A plain module-level status + subscriber list (not a React hook
+// itself -- this file has no framework dependency today, and adding
+// one just for this would be a bigger change than the loading
+// indicator itself needs) lets App.tsx subscribe via
+// subscribePyodideStatus and mirror it into its own React state.
+export type PyodideStatus = 'idle' | 'loading' | 'ready' | 'error'
+
+let pyodideStatus: PyodideStatus = 'idle'
+const pyodideStatusListeners = new Set<(status: PyodideStatus) => void>()
+
+function setPyodideStatus(status: PyodideStatus): void {
+  pyodideStatus = status
+  for (const listener of pyodideStatusListeners) listener(status)
+}
+
+export function getPyodideStatus(): PyodideStatus {
+  return pyodideStatus
+}
+
+// Returns an unsubscribe function, the usual DOM/React-friendly
+// listener contract (matches window.addEventListener's own
+// removeEventListener-via-closure idiom) so a useEffect can clean up
+// on unmount without needing to keep the original callback reference
+// around separately.
+export function subscribePyodideStatus(listener: (status: PyodideStatus) => void): () => void {
+  pyodideStatusListeners.add(listener)
+  return () => {
+    pyodideStatusListeners.delete(listener)
+  }
+}
+
 function loadPyodideScript(src: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const script = document.createElement('script')
@@ -751,16 +792,31 @@ async function installModules(pyodide: PyodideInterface): Promise<void> {
 // each independently trigger a fresh ~10MB download/init.
 async function getPyodide(): Promise<PyodideInterface> {
   if (!pyodidePromise) {
+    setPyodideStatus('loading')
     pyodidePromise = (async () => {
-      await loadPyodideScript(PYODIDE_CDN_URL)
-      if (!window.__loadPyodideImpl) throw new Error('Pyodide script loaded but loadPyodide was not found')
-      const pyodide = await window.__loadPyodideImpl()
-      await installModules(pyodide)
-      await pyodide.runPythonAsync(
-        'import sys; sys.path.insert(0, "/codeslides_pkg") if "/codeslides_pkg" not in sys.path else None',
-      )
-      await pyodide.runPythonAsync(RUNNER_MODULE_PYTHON)
-      return pyodide
+      try {
+        await loadPyodideScript(PYODIDE_CDN_URL)
+        if (!window.__loadPyodideImpl) throw new Error('Pyodide script loaded but loadPyodide was not found')
+        const pyodide = await window.__loadPyodideImpl()
+        await installModules(pyodide)
+        await pyodide.runPythonAsync(
+          'import sys; sys.path.insert(0, "/codeslides_pkg") if "/codeslides_pkg" not in sys.path else None',
+        )
+        await pyodide.runPythonAsync(RUNNER_MODULE_PYTHON)
+        setPyodideStatus('ready')
+        return pyodide
+      } catch (err) {
+        // Reset pyodidePromise (not just the status) on failure -- a
+        // transient network blip loading the CDN script shouldn't
+        // permanently wedge every future cell run behind a Promise
+        // that's already rejected; the NEXT getPyodide() call should
+        // genuinely retry from scratch, matching how a failed
+        // run*ClientSide call today already surfaces the error as
+        // that one cell's own error and lets a later edit try again.
+        pyodidePromise = null
+        setPyodideStatus('error')
+        throw err
+      }
     })()
   }
   return pyodidePromise

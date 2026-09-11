@@ -4,12 +4,15 @@ import { useChatState } from './chatState'
 import { useDeckState } from './deckState'
 import { usePresenceState } from './presenceState'
 import {
+  getPyodideStatus,
   onElementChangedClientSide,
   runAllClientSide,
   runCellClientSide,
   runTestClientSide,
+  subscribePyodideStatus,
   type PyodideCellInput,
   type PyodideCellResult,
+  type PyodideStatus,
   type PyodideTestResult,
 } from './pyodideKernel'
 import type { CellLayout, ServerMessage } from './protocol'
@@ -78,6 +81,22 @@ function roleFromUrl(): 'editor' | 'viewer' {
 // and how.
 function App() {
   const [deck, setDeck] = useState<DeckSummary | null>(null)
+  // TODO.md #64/PROPOSAL_pyscript_execution.md: cold-start loading
+  // state -- Pyodide's first-ever load on a page (the CDN script fetch,
+  // loadPyodide() itself, and writing/importing the codeslides package
+  // into its virtual filesystem) genuinely takes several seconds, and
+  // until now nothing in the UI reflected that at all: the page just
+  // looked frozen/broken from the moment "open a deck, run it
+  // automatically" (below) kicks off runAllClientSide until the first
+  // cell's status finally appears. Mirrors pyodideKernel.ts's own
+  // module-level status into React state via subscribePyodideStatus --
+  // that module deliberately has no framework dependency of its own
+  // (see its own comment), so this is the one place the two meet.
+  // Initialized from getPyodideStatus() (not a hardcoded 'idle') so a
+  // fast-refresh/remount after Pyodide has already loaded doesn't
+  // flash a loading indicator for state that's actually already ready.
+  const [pyodideStatus, setPyodideStatus] = useState<PyodideStatus>(getPyodideStatus())
+  useEffect(() => subscribePyodideStatus(setPyodideStatus), [])
   const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode)
   // Slides-view-only: collapses the entire header (title row + the
   // Prev/Next/Reveal-code toolbar rendered inside SlideShow) down to just
@@ -1730,6 +1749,17 @@ function App() {
         slidesHeaderExpanded ? 'cs-slides-header-expanded' : ''
       } ${documentId && chatExpanded ? 'cs-chat-is-open' : ''}`}
     >
+      {pyodideStatus === 'loading' && (
+        <div className="cs-pyodide-loading-banner" role="status">
+          <span className="cs-pyodide-loading-spinner" aria-hidden="true" />
+          Starting Python runtime&hellip;
+        </div>
+      )}
+      {pyodideStatus === 'error' && (
+        <div className="cs-pyodide-loading-banner cs-pyodide-loading-banner-error" role="alert">
+          Couldn&rsquo;t start the Python runtime. Check your connection and reload the page.
+        </div>
+      )}
       {slidesHeaderCollapsed && (
         <div className="cs-app-header cs-app-header-collapsed">
           <button
