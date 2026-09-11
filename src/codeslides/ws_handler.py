@@ -1282,35 +1282,15 @@ def handle_message(
                     cell_id=message.cell_id,
                 )
             ]
-        result = registry.kernel.on_tests_edited(
-            message.cell_id, message.element_id, message.source, session
-        )
-        messages: list[ServerMessage] = [
-            ElementOutput(
-                session_id=message.session_id,
-                cell_id=message.cell_id,
-                element_id=message.element_id,
-                content=result,
-            )
-        ]
-        # If the cell has a turtle_canvas, the test's own turtle drawing
-        # (kernel.py's _run_and_apply_test) already replaced that canvas
-        # element's content -- surface it too, same as the test's own
-        # result, so the browser actually sees the redrawn canvas rather
-        # than needing a separate cell re-run to pick it up.
-        cell = session.deck.cells.get(message.cell_id)
-        if cell is not None:
-            canvases = [e.name for e in cell.elements if e.kind == "turtle_canvas"]
-            if len(canvases) == 1:
-                messages.append(
-                    ElementOutput(
-                        session_id=message.session_id,
-                        cell_id=message.cell_id,
-                        element_id=canvases[0],
-                        content=instance.elements[canvases[0]].content,
-                    )
-                )
-        return messages
+        # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        # section 7: no more ElementOutput/turtle-resend reply tail --
+        # Kernel.on_tests_edited no longer runs the test at all (see its
+        # own docstring). App.tsx triggers the client-side equivalent
+        # (pyodideKernel.ts's runTestClientSide) once it sees this same
+        # edit's TestSourceChanged reply below, including the turtle-
+        # canvas forced-resend behavior this used to compute here.
+        registry.kernel.on_tests_edited(message.cell_id, message.element_id, message.source, session)
+        return []
 
     if isinstance(message, SetNotesSource):
         session = registry.get(message.session_id)

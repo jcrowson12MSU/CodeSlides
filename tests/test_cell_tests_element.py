@@ -7,7 +7,7 @@ with whatever arguments it chooses) exercises it. See TODO.md's
 block" entry."""
 
 from codeslides import App, turtle, ui
-from codeslides.kernel import Kernel, run_tests
+from codeslides.kernel import Kernel, _run_and_apply_test, run_tests
 from codeslides.session import Session
 
 
@@ -246,6 +246,18 @@ def test_tests_element_does_not_run_when_the_cell_itself_fails_to_define():
 
 
 def test_on_tests_edited_reruns_the_test_without_rerunning_the_cell():
+    """TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    section 7: on_tests_edited itself no longer runs the test at all
+    (see its own docstring) -- the equivalent client-side path is
+    pyodideKernel.ts's runTestClientSide, covered by this rework's own
+    live browser verification. What this test still genuinely covers
+    -- a test edit re-running the test without re-running/re-defining
+    the owning cell -- is now checked directly against
+    _run_and_apply_test (still the real function `on_tests_edited` used
+    to call, kept for the same reason run_tests/_run_cells/run_all are
+    kept), with the "cell never re-ran" namespace-unchanged assertion
+    unaffected: nothing about on_tests_edited's own removal changes
+    what _run_and_apply_test itself does."""
     app = _build_deck("assert live_demo(3) == 999")
     kernel = Kernel(app.deck)
     session = Session(deck=app.deck)
@@ -253,7 +265,10 @@ def test_on_tests_edited_reruns_the_test_without_rerunning_the_cell():
     assert session.instances["live_demo"].elements["unit"].content["status"] == "fail"
     namespace_before = dict(session.namespace)
 
-    result = kernel.on_tests_edited("live_demo", "unit", "assert live_demo(3) == 15", session)
+    instance = session.instances["live_demo"]
+    instance.elements["unit"].value = "assert live_demo(3) == 15"
+    elements = app.deck.cells["live_demo"].elements
+    result = _run_and_apply_test(instance, "unit", session.namespace, elements, deck_imports=app.deck.imports)
 
     assert result == {"status": "pass", "message": "", "stdout": "", "stderr": ""}
     assert session.instances["live_demo"].elements["unit"].content == {
@@ -358,13 +373,25 @@ def test_a_print_only_test_with_no_assertions_still_shows_its_output_end_to_end(
 
 
 def test_tests_element_isolated_across_cloned_sessions():
+    """TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    section 7: same "on_tests_edited itself no longer executes" note as
+    test_on_tests_edited_reruns_the_test_without_rerunning_the_cell
+    above -- the isolation guarantee this test actually checks (a
+    clone's test run never touches the source session's own test
+    state) belongs to Session.clone()/_run_and_apply_test's own
+    per-session namespace/instance separation, unrelated to which
+    caller (a handler vs. a direct call) triggers the run, so it's
+    checked the same way: directly against _run_and_apply_test."""
     app = _build_deck("assert live_demo(3) == 15")
     kernel = Kernel(app.deck)
     session = Session(deck=app.deck)
     kernel.run_all(session)
 
     clone = session.clone()
-    kernel.on_tests_edited("live_demo", "unit", "assert live_demo(3) == 999", clone)
+    clone_instance = clone.instances["live_demo"]
+    clone_instance.elements["unit"].value = "assert live_demo(3) == 999"
+    elements = app.deck.cells["live_demo"].elements
+    _run_and_apply_test(clone_instance, "unit", clone.namespace, elements, deck_imports=app.deck.imports)
 
     # the clone's edit never touches the source session's test state
     assert session.instances["live_demo"].elements["unit"].value == "assert live_demo(3) == 15"
@@ -473,15 +500,21 @@ def test_tests_elements_turtle_drawing_replaces_the_cells_own_drawing():
 
 
 def test_editing_the_test_source_updates_the_canvas_without_rerunning_the_cell():
+    """TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    section 7: same "on_tests_edited itself no longer executes" note as
+    the other tests above -- the turtle-forced-resend behavior this
+    checks belongs to _run_and_apply_test itself (kernel.py's own
+    docstring), so it's exercised directly the same way."""
     app = _build_turtle_deck(cell_source_draws=True, test_source="turtle.forward(1)")
     kernel = Kernel(app.deck)
     session = Session(deck=app.deck)
     kernel.run_all(session)
     namespace_before = dict(session.namespace)
 
-    kernel.on_tests_edited(
-        "draw_something", "unit", "turtle.forward(1)\nturtle.forward(1)\nturtle.forward(1)", session
-    )
+    instance = session.instances["draw_something"]
+    instance.elements["unit"].value = "turtle.forward(1)\nturtle.forward(1)\nturtle.forward(1)"
+    elements = app.deck.cells["draw_something"].elements
+    _run_and_apply_test(instance, "unit", session.namespace, elements, deck_imports=app.deck.imports)
 
     canvas_content = session.instances["draw_something"].elements["canvas"].content
     assert len(canvas_content) == 3

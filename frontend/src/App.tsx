@@ -7,8 +7,10 @@ import {
   onElementChangedClientSide,
   runAllClientSide,
   runCellClientSide,
+  runTestClientSide,
   type PyodideCellInput,
   type PyodideCellResult,
+  type PyodideTestResult,
 } from './pyodideKernel'
 import type { CellLayout, ServerMessage } from './protocol'
 import { useCodeSlidesSocket } from './useCodeSlidesSocket'
@@ -179,6 +181,21 @@ function App() {
   // `cellState[cellId]` (there is no server-side execution state left
   // to layer on top of).
   const [clientExecutionState, setClientExecutionState] = useState<Record<string, PyodideCellResult>>({})
+  // TODO.md #64/PROPOSAL_pyscript_execution.md section 7: a tests
+  // element's own most recent client-side (Pyodide) result -- same role
+  // clientExecutionState plays for a cell's own run, but keyed by
+  // cellId+elementId (cellId -> elementId -> PyodideTestResult) since a
+  // cell can only ever have one clientExecutionState entry but could in
+  // principle have more than one tests element (ARCHITECTURE.md section
+  // 3b's own "exactly one" rule is enforced by the editor UI, not the
+  // data model). Merged into mergedCellState.elementContent below,
+  // replacing whatever the server-derived value was there (there is no
+  // server-side test result left to layer on top of, same "the ONLY
+  // source of truth now" reasoning clientExecutionState's own comment
+  // gives for cell execution).
+  const [clientTestResults, setClientTestResults] = useState<Record<string, Record<string, PyodideTestResult>>>(
+    {},
+  )
   // Collapse (ARCHITECTURE.md section 8): pure UI state, kept client-side
   // for the same reason notesOverrides/testSourceOverrides above are --
   // set_ui_state produces no server reply to sync from.
@@ -822,9 +839,10 @@ function App() {
     // mode path -- without this, every connection's test editor
     // (including the accepter's own) would keep showing pre-accept text
     // forever after an AcceptCellState applies a pushed test-source
-    // field, having no other path that ever refreshes it (SetTestSource's
-    // own reply is only ever the resulting ElementOutput result, never
-    // an echo of the source itself).
+    // field, having no other path that ever refreshes it (TODO.md #64
+    // section 7: SetTestSource's own reply no longer runs the test at
+    // all any more, so this is also the ONLY signal any connection gets
+    // that an accepted test needs re-running client-side).
     const acceptedTestSources = newMessages.filter(
       (m): m is Extract<ServerMessage, { type: 'test_source_changed' }> => m.type === 'test_source_changed',
     )
@@ -836,6 +854,71 @@ function App() {
         }
         return next
       })
+      // TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+      // section 7: every connection (including the accepter's own) runs
+      // the newly-accepted test source in its own Pyodide instance now,
+      // matching handleChangeTestSource's own direct-edit path -- an
+      // AcceptCellState on one connection must not leave every OTHER
+      // connection's test badge showing a stale pre-accept result
+      // forever. Deliberately inline here (not routed through the
+      // cellsNeedingClientRerun/[deck]-effect pattern the 6 structural
+      // message types use above) since a test re-run never depends on
+      // `deck.cells` reflecting new structure first -- the cell this
+      // message names already exists, unchanged, in the current deck.
+      for (const m of acceptedTestSources) {
+        runTestClientSide(m.cell_id, m.source, currentCellInputs())
+          .then((result) => {
+            setClientTestResults((prev) => ({
+              ...prev,
+              [m.cell_id]: { ...prev[m.cell_id], [m.element_id]: result },
+            }))
+            // Same turtle-canvas forced-resend as handleChangeTestSource's
+            // own direct-edit path (this effect's own comment above for
+            // why the synthesized-entry fallback below is needed).
+            if (result.turtleCommands === null) return
+            const cellMeta = deck?.cells[m.cell_id]
+            const canvasElement = cellMeta?.elements.find((e) => e.kind === 'turtle_canvas')
+            if (!canvasElement) return
+            setClientExecutionState((prev) => {
+              const existing = prev[m.cell_id] ?? {
+                status: 'idle' as const,
+                value: null,
+                kind: null,
+                data: null,
+                error: null,
+                stdout: '',
+                stderr: '',
+                elementWrites: [],
+              }
+              const otherWrites = existing.elementWrites.filter((w) => w.elementName !== canvasElement.name)
+              return {
+                ...prev,
+                [m.cell_id]: {
+                  ...existing,
+                  elementWrites: [
+                    ...otherWrites,
+                    { elementName: canvasElement.name, kind: 'turtle', content: result.turtleCommands },
+                  ],
+                },
+              }
+            })
+          })
+          .catch((err: unknown) => {
+            setClientTestResults((prev) => ({
+              ...prev,
+              [m.cell_id]: {
+                ...prev[m.cell_id],
+                [m.element_id]: {
+                  status: 'error',
+                  message: err instanceof Error ? err.message : String(err),
+                  stdout: '',
+                  stderr: '',
+                  turtleCommands: null,
+                },
+              },
+            }))
+          })
+      }
     }
 
     // TODO.md #65-xiii/#68: same reasoning as acceptedTestSources above,
@@ -855,6 +938,16 @@ function App() {
         return next
       })
     }
+    // deck/currentCellInputs are read only inside the acceptedTestSources
+    // branch's client-side test re-run above, needed to know each
+    // pending test's own cell (for the turtle-canvas lookup) and to
+    // build the Pyodide call's own current-sources snapshot -- neither
+    // should re-fire this whole message-scanning effect on every
+    // unrelated render, same "eslint-disable, not a real missing
+    // dependency" precedent the deck-keyed effect (and this file's
+    // sessionId/deck bootstrap effect) already use for the same reason:
+    // this effect must only run when NEW messages actually arrive.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages])
 
   // TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
@@ -1464,12 +1557,84 @@ function App() {
     setDirtyCells((prev) => (prev.has(cellId) ? prev : new Set(prev).add(cellId)))
   }
 
+  // TODO.md #64/PROPOSAL_pyscript_execution.md section 7: runs the test
+  // entirely client-side via Pyodide -- SetTestSource is still sent (so
+  // the source itself is recorded into session.source_overrides/
+  // set_tests_default for Save, exactly like before), but its reply no
+  // longer carries any execution result (Kernel.on_tests_edited's own
+  // docstring); this is what actually produces the pass/fail/error the
+  // TestsElementWidget badge shows now. A turtle-drawing test's own
+  // canvas resend (this cell's turtle_canvas element, if it has one) is
+  // folded into clientExecutionState as a synthetic elementWrite rather
+  // than a separate piece of state, reusing mergedCellState's existing
+  // elementWrites -> elementContent merge instead of adding a third
+  // parallel path for what's ultimately the same "this element's
+  // content changed" concern cs.image/cs.iframe writes already are.
   function handleChangeTestSource(cellId: string, elementId: string, source: string) {
     if (!sessionId) return
     setTestSourceOverrides((prev) => ({
       ...prev,
       [cellId]: { ...prev[cellId], [elementId]: source },
     }))
+    runTestClientSide(cellId, source, currentCellInputs())
+      .then((result) => {
+        setClientTestResults((prev) => ({
+          ...prev,
+          [cellId]: { ...prev[cellId], [elementId]: result },
+        }))
+        if (result.turtleCommands === null || !deck) return
+        const canvasElement = deck.cells[cellId]?.elements.find((e) => e.kind === 'turtle_canvas')
+        if (!canvasElement) return
+        setClientExecutionState((prev) => {
+          // A cell with only a turtle_canvas + tests element (no turtle
+          // calls of its own) may never have gone through
+          // runCellClientSide at all by the time its FIRST test run
+          // happens -- run_test_b64 (pyodideKernel.ts) still executes
+          // it once internally (so the test's own namespace/kwargs are
+          // valid), but that internal run's own result never reaches
+          // applyClientExecutionResults. Synthesize a bare "idle, no
+          // output of its own yet" entry in that case, same default
+          // shape reportClientExecutionError already establishes for
+          // its own error case, so the canvas write below always has
+          // somewhere real to land rather than silently no-op'ing.
+          const existing = prev[cellId] ?? {
+            status: 'idle' as const,
+            value: null,
+            kind: null,
+            data: null,
+            error: null,
+            stdout: '',
+            stderr: '',
+            elementWrites: [],
+          }
+          const otherWrites = existing.elementWrites.filter((w) => w.elementName !== canvasElement.name)
+          return {
+            ...prev,
+            [cellId]: {
+              ...existing,
+              elementWrites: [
+                ...otherWrites,
+                { elementName: canvasElement.name, kind: 'turtle', content: result.turtleCommands },
+              ],
+            },
+          }
+        })
+      })
+      .catch((err: unknown) => {
+        setClientTestResults((prev) => ({
+          ...prev,
+          [cellId]: {
+            ...prev[cellId],
+            [elementId]: {
+              status: 'error',
+              message: err instanceof Error ? err.message : String(err),
+              stdout: '',
+              stderr: '',
+              turtleCommands: null,
+            },
+          },
+        }))
+      })
     send({
       type: 'set_test_source',
       session_id: sessionId,
@@ -1497,44 +1662,52 @@ function App() {
   // (cs.image()/cs.iframe() calls, mirroring kernel.py's own
   // element_writes -> element_output translation, ws_handler.py's
   // _element_output_messages) are folded into elementContent here, the
-  // same role that function plays server-side -- notes/tests fall
-  // through to the server-derived value unchanged (notes is static
-  // authored content, never re-computed by any run; tests has its own
-  // separate, still-server-only execution path, out of this slice's
-  // scope), matching _element_output_messages' own "notes/tests need a
-  // fallback, viewer writes don't" split.
+  // same role that function plays server-side -- notes falls through to
+  // the server-derived value unchanged (static authored content, never
+  // re-computed by any run). TODO.md #64 (tests-element slice): a
+  // cell's tests-element result(s) (clientTestResults) are folded in
+  // the same way, unconditionally (not gated on `execution` existing --
+  // a tests element can have a real result even for a cell this tab has
+  // never run standalone, e.g. one whose only "run" happened inside
+  // run_test_b64's own internal execute-if-needed step), matching
+  // _element_output_messages' own former "notes/tests need a fallback,
+  // viewer writes don't" split minus the now-removed server-tests half.
   const mergedCellState: Record<string, ReturnType<typeof useDeckState>[string] | undefined> = {}
   if (deck) {
     for (const cellId of Object.keys(deck.cells)) {
       const overrides = notesOverrides[cellId]
+      const testResults = clientTestResults[cellId]
       const state = cellState[cellId]
       const execution = clientExecutionState[cellId]
       const withNotes = overrides
         ? { ...state, elementContent: { ...state?.elementContent, ...overrides } }
         : state
+      const withTestResults = testResults
+        ? { ...withNotes, elementContent: { ...withNotes?.elementContent, ...testResults } }
+        : withNotes
       const withElementWrites =
         execution && execution.elementWrites.length > 0
           ? {
               elementContent: {
-                ...withNotes?.elementContent,
+                ...withTestResults?.elementContent,
                 ...Object.fromEntries(execution.elementWrites.map((w) => [w.elementName, w.content])),
               },
             }
           : null
       mergedCellState[cellId] = execution
         ? {
-            ...withNotes,
+            ...withTestResults,
             status: execution.status,
             value: execution.value,
             kind: execution.kind,
             data: execution.data,
             error: execution.error,
-            elementContent: withElementWrites?.elementContent ?? withNotes?.elementContent ?? {},
-            lastEditedBy: withNotes?.lastEditedBy ?? null,
-            lastEditedAt: withNotes?.lastEditedAt ?? null,
-            pendingPush: withNotes?.pendingPush ?? null,
+            elementContent: withElementWrites?.elementContent ?? withTestResults?.elementContent ?? {},
+            lastEditedBy: withTestResults?.lastEditedBy ?? null,
+            lastEditedAt: withTestResults?.lastEditedAt ?? null,
+            pendingPush: withTestResults?.pendingPush ?? null,
           }
-        : withNotes
+        : withTestResults
     }
   }
 

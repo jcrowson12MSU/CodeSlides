@@ -1073,26 +1073,44 @@ class Kernel:
         with invalid syntax elsewhere in the same session) means there's
         nowhere reliable to update the decorator -- silently skip
         updating `source_overrides` in that case; the in-memory
-        `instance.value`/test-run result above still always happens
-        regardless, so the editor never appears to reject or lose what
-        was typed."""
+        `instance.value` update above still always happens regardless,
+        so the editor never appears to reject or lose what was typed.
+
+        TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        section 7: no longer runs the test (`run_tests`/
+        `_run_and_apply_test`) at all -- this used to execute the test's
+        own body immediately against `session.namespace` so a pass/fail/
+        print result could be sent straight back. That's the last
+        network-reachable path that ran a student's Python server-side;
+        pyodideKernel.ts's runTestClientSide is what App.tsx now calls
+        once it sees this edit's own `TestSourceChanged` reply (or,
+        for a review_mode document, once `AcceptCellState`'s replay of
+        this same message lands), against that one browser's own
+        Pyodide namespace -- exactly the same "no execution result ever
+        crosses a browser boundary" rule the 6 structural methods and
+        RunAll/EditCell/SetElementValue already established. Always
+        returns an empty dict now (nothing left to report) rather than
+        the pass/fail/stdout/stderr shape `SetTestSource`'s handler used
+        to relay -- kept as `dict[str, str]` rather than `-> None` for
+        the same "no signature-level ripple" reason `on_cell_edited`/
+        `on_element_changed` give for their own now-always-empty return
+        values.
+
+        `run_tests`/`_run_and_apply_test` are NOT deleted -- both are
+        still real, working functions with their own direct test
+        coverage (test_kernel.py exercises them as a plain Python API),
+        kept for the same reason `_run_cells`/`run_all` were kept: not
+        because anything server-side still calls them to serve a live
+        request, but because deleting genuinely-correct, independently
+        useful code isn't this rework's goal."""
         instance = session.instances[cell_name]
-        elements = self.deck.cells[cell_name].elements
         instance.elements[element_name].value = source
-        result = _run_and_apply_test(
-            instance, element_name, session.namespace, elements, deck_imports=self.deck.imports
-        )
         current = session.source_overrides.get(cell_name, self.deck.cells[cell_name].source)
         try:
             session.source_overrides[cell_name] = set_tests_default(current, element_name, source)
         except (SyntaxError, ValueError):
             pass
-        return {
-            "status": result["status"],
-            "message": result["message"],
-            "stdout": result["stdout"],
-            "stderr": result["stderr"],
-        }
+        return {}
 
     def add_cell(self, session: Session) -> Cell:
         """Add a brand-new, blank `instance="editable"` cell (TODO.md

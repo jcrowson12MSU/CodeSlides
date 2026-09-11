@@ -1512,15 +1512,24 @@ def test_websocket_push_cell_state_with_source_test_and_hide_fields(tmp_path):
                 }
             )
             # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
-            # section 3: AcceptCellState's own EditCell replay no longer
-            # produces cell_status/cell_output at all (on_cell_edited no
-            # longer executes anything server-side -- see its own
-            # docstring), so this reply set shrinks by those two: now
-            # cell_state_accepted, cell_source_changed, element_output
-            # (set_test_source's own re-run against the *new* source --
-            # the tests element itself is still server-executed, out of
-            # this rework's scope per section 7), hide_code_set,
-            # cell_attribution_changed, and a system chat message.
+            # section 3+7: AcceptCellState's own EditCell replay no
+            # longer produces cell_status/cell_output at all
+            # (on_cell_edited no longer executes anything server-side --
+            # see its own docstring), and its SetTestSource replay no
+            # longer produces element_output either (on_tests_edited no
+            # longer runs the test at all -- see its own docstring, and
+            # SetTestSource's handler always returns [] now). So this
+            # reply set shrinks to: cell_state_accepted,
+            # cell_source_changed, test_source_changed (SetTestSource's
+            # replay still records the new source and TestSourceChanged
+            # still broadcasts it -- only the execution-result reply is
+            # gone), hide_code_set, cell_attribution_changed, and a
+            # system chat message. The client-side equivalent of the
+            # test actually running against the newly-accepted source is
+            # pyodideKernel.ts's runTestClientSide, triggered once
+            # App.tsx sees this same test_source_changed reply --
+            # covered by this rework's own live browser verification,
+            # not this server-side handler test.
             def _read_until_chat_message(ws):
                 messages = []
                 for _ in range(15):
@@ -1539,25 +1548,11 @@ def test_websocket_push_cell_state_with_source_test_and_hide_fields(tmp_path):
             assert "chat_message_received" in types
             assert "cell_status" not in types
             assert "cell_output" not in types
+            assert "element_output" not in types
 
             test_source_changed = next(m for m in replies if m["type"] == "test_source_changed")
             assert test_source_changed["element_id"] == "check"
             assert test_source_changed["source"] == "print(cell_a())"
-
-            # Exactly one element_output fires now -- set_test_source's
-            # own re-run against the newly-accepted source (there is no
-            # more edit_cell-triggered auto-test replay, since edit_cell
-            # itself no longer runs anything at all). on_cell_edited
-            # still define_cell's a tests-element cell (see its own
-            # docstring: compiling+binding the function, never calling
-            # its body, is categorically different from actually
-            # executing it), so cell_a IS bound into session.namespace by
-            # the time this test runs -- its own print(cell_a()) call
-            # proves the new source ("a = 42") actually took effect.
-            test_results = [m for m in replies if m["type"] == "element_output"]
-            assert len(test_results) == 1
-            assert test_results[0]["content"]["status"] == "pass"
-            assert test_results[0]["content"]["stdout"].strip() == "42"
 
             session = client.app.state.registry.get("unify-2")
             assert session.instances["cell_a"].pending_state is None

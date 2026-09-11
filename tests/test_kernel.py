@@ -1,7 +1,7 @@
 import pytest
 
 from codeslides import App, cs, ui
-from codeslides.kernel import Kernel
+from codeslides.kernel import Kernel, run_tests
 from codeslides.session import Session
 
 
@@ -437,7 +437,20 @@ def test_input_also_works_inside_a_tests_element():
     """`ui.tests` boxes run as ordinary Python against the owning cell's
     own namespace (run_tests's own docstring) -- input() should be just
     as readable there as inside the cell's own body, reading from the
-    same cell's text_input elements."""
+    same cell's text_input elements.
+
+    TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    section 7: this used to drive the check through
+    Kernel.on_tests_edited (a real request-shaped call), which no
+    longer runs the test at all (see its own docstring) -- the
+    equivalent client-side path is pyodideKernel.ts's runTestClientSide,
+    covered by this rework's own live browser verification, not a
+    server-side unit test. run_tests itself is untouched and still the
+    real thing doing this work (kernel.py's own module docstring on why
+    it's kept), so this test now calls it directly -- same input()-
+    reads-from-elements behavior, just exercised as the plain Python API
+    it's always also been, rather than through a now execution-free
+    handler."""
     from codeslides.deck import Cell, Deck
 
     deck = Deck()
@@ -458,7 +471,12 @@ def test_input_also_works_inside_a_tests_element():
     kernel.run_all(session)
 
     assert session.instances["greet"].status == "idle", session.instances["greet"].error
-    result = kernel.on_tests_edited("greet", "unit", "assert input('Name: ') == 'Ada'", session)
+    result = run_tests(
+        "assert input('Name: ') == 'Ada'",
+        session.namespace,
+        deck.cells["greet"].elements,
+        element_instances=session.instances["greet"].elements,
+    )
     assert result["status"] == "pass", result["message"]
 
 

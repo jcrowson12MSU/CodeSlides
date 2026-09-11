@@ -201,47 +201,17 @@ def test_set_notes_source_updates_content_without_rerun():
 # than a broader "tests are broken" claim.
 
 
-def test_set_test_source_runs_the_test_and_emits_element_output():
-    app = App()
-
-    @app.cell(elements=[ui.tests("unit", default="assert cell_with_tests() == 1")])
-    def cell_with_tests():
-        x = 1
-        return x
-
-    registry = SessionRegistry(kernel=Kernel(app.deck))
-    session = registry.create()
-    handle_message(registry, RunAll(session_id=session.session_id))
-    # KNOWN REGRESSION (see module comment above): RunAll no longer
-    # executes anything at all (not even the "define, then auto-run the
-    # tests element" step _run_cells used to do), so `unit`'s content is
-    # still whatever it was seeded to -- never populated -- rather than
-    # a real pass/fail/error result.
-    assert session.instances["cell_with_tests"].elements["unit"].content is None
-
-    messages = handle_message(
-        registry,
-        SetTestSource(
-            session_id=session.session_id,
-            cell_id="cell_with_tests",
-            element_id="unit",
-            source="assert cell_with_tests() == 999, 'nope'",
-        ),
-    )
-
-    assert len(messages) == 1
-    assert isinstance(messages[0], ElementOutput)
-    # Same NameError either way -- the test source itself is irrelevant
-    # once the function it calls was never defined in this namespace.
-    # `message` is a full traceback (run_tests' own "error" status
-    # formatting), not a bare string -- checked by substring.
-    assert messages[0].content["status"] == "error"
-    assert "NameError: name 'cell_with_tests' is not defined" in messages[0].content["message"]
-    assert session.instances["cell_with_tests"].elements["unit"].content == messages[0].content
-    assert (
-        session.instances["cell_with_tests"].elements["unit"].value
-        == "assert cell_with_tests() == 999, 'nope'"
-    )
+# TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+# section 7: test_set_test_source_runs_the_test_and_emits_element_output
+# is deleted -- its whole point was proving SetTestSource's handler ran
+# the test server-side and replied with the resulting ElementOutput
+# (pass/fail/error). That's exactly what this slice removes:
+# Kernel.on_tests_edited no longer runs the test at all (see its own
+# docstring), so SetTestSource's handler no longer calls
+# run_tests/_run_and_apply_test or returns any ElementOutput -- it
+# always returns []. The equivalent behavior now lives client-side
+# (pyodideKernel.ts's runTestClientSide), verified live in a real
+# browser rather than through this server-side handler test.
 
 
 def test_set_test_source_does_not_rerun_the_cell():
@@ -304,60 +274,33 @@ def test_set_test_source_unknown_element_produces_error_not_crash():
 # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
 # section 7: test_run_all_surfaces_a_fresh_cells_test_result_without_any_edit
 # and test_run_all_emits_exactly_one_canvas_message_reflecting_the_tests_drawing
-# are deleted -- both depended on RunAll's own now-removed "define, then
-# auto-run this cell's tests element" behavior (_run_cells' own
-# tests_element branch) to produce ANY tests-element result at all on a
-# session that never explicitly edited the test source. RunAll is now a
-# no-op (see the KNOWN REGRESSION comment on the tests element above and
-# test_run_all_is_a_harmless_no_op) -- there is no adaptable equivalent
-# for "a tests element's result reaches the browser on the very first
-# run with no edit," since nothing runs anything on the first run any
-# more. test_set_test_source_runs_the_test_and_emits_element_output and
-# test_set_test_source_with_turtle_calls_updates_the_canvas (both still
-# present, still passing) keep covering the part of this that survives:
-# an EXPLICIT SetTestSource still runs and reports a real result,
-# canvas included -- just never as a side effect of a plain run/edit any
-# more.
-
-
-def _build_turtle_and_tests_deck(test_source: str = "turtle.forward(1)"):
-    app = App()
-
-    @app.cell(
-        elements=[
-            ui.turtle_canvas("canvas", width=400, height=400),
-            ui.tests("unit", default=test_source),
-        ],
-    )
-    def draw_something():
-        turtle.forward(200)
-        turtle.right(90)
-        turtle.forward(200)
-
-    return app
-
-
-def test_set_test_source_with_turtle_calls_updates_the_canvas():
-    registry = SessionRegistry(kernel=Kernel(_build_turtle_and_tests_deck("turtle.forward(1)").deck))
-    session = registry.create()
-    handle_message(registry, RunAll(session_id=session.session_id))
-
-    messages = handle_message(
-        registry,
-        SetTestSource(
-            session_id=session.session_id,
-            cell_id="draw_something",
-            element_id="unit",
-            source="turtle.forward(1)\nturtle.forward(1)\nturtle.forward(1)",
-        ),
-    )
-
-    unit_messages = [m for m in messages if isinstance(m, ElementOutput) and m.element_id == "unit"]
-    canvas_messages = [m for m in messages if isinstance(m, ElementOutput) and m.element_id == "canvas"]
-    assert len(unit_messages) == 1
-    assert unit_messages[0].content == {"status": "pass", "message": "", "stdout": "", "stderr": ""}
-    assert len(canvas_messages) == 1
-    assert len(canvas_messages[0].content) == 3
+# were deleted in an earlier pass of this same rework -- both depended
+# on RunAll's own now-removed "define, then auto-run this cell's tests
+# element" behavior (_run_cells' own tests_element branch) to produce
+# ANY tests-element result at all on a session that never explicitly
+# edited the test source. RunAll is now a no-op (see the KNOWN
+# REGRESSION comment on the tests element above and
+# test_run_all_is_a_harmless_no_op).
+#
+# This slice (section 7's own execution removal) goes one step further:
+# test_set_test_source_runs_the_test_and_emits_element_output and
+# test_set_test_source_with_turtle_calls_updates_the_canvas -- which
+# the comment above once described as "still present, still passing,"
+# covering the part that survived RunAll's own removal -- are now ALSO
+# deleted (see their own former locations, just above where this
+# comment used to sit). Kernel.on_tests_edited no longer runs the test
+# at all (see its own docstring); SetTestSource's handler no longer
+# calls run_tests/_run_and_apply_test or returns any ElementOutput,
+# turtle canvas included. There is no remaining server-side request
+# shape where a tests element's result reaches the browser as a
+# genuine pass/fail/error any more -- the equivalent now lives entirely
+# client-side (pyodideKernel.ts's runTestClientSide), verified live in
+# a real browser instead of through a server-side handler test.
+#
+# _build_turtle_and_tests_deck (the shared turtle+tests fixture builder
+# both deleted tests used) is removed too -- its only remaining caller
+# was test_set_test_source_with_turtle_calls_updates_the_canvas, now
+# gone.
 
 
 def test_set_test_source_without_turtle_calls_does_not_emit_a_canvas_message():

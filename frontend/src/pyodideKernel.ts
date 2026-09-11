@@ -82,6 +82,23 @@ export interface PyodideCellInput {
   elements: PyodideElementMeta[]
 }
 
+// TODO.md #64/PROPOSAL_pyscript_execution.md section 7: kernel.py's own
+// run_tests result shape (ARCHITECTURE.md section 3b) -- status is
+// "pass"/"fail"/"error" (never "idle", unlike PyodideCellResult: a
+// tests element's own status vocabulary has always been distinct from
+// a cell's own run status, see TestsElementWidget's own TestResult
+// type). turtleCommands mirrors PyodideElementWrite's own turtle
+// content shape (a list of command dicts), present only when the
+// owning cell has a turtle_canvas element, same "ambiguous means none"
+// rule run_tests itself documents.
+export interface PyodideTestResult {
+  status: 'pass' | 'fail' | 'error'
+  message: string
+  stdout: string
+  stderr: string
+  turtleCommands: unknown[] | null
+}
+
 // Minimal ambient shape for what this module actually calls on a
 // loaded Pyodide instance -- not a full @types/pyodide surface (the
 // full types package targets the npm-bundled runtime; this loads from
@@ -159,6 +176,7 @@ import base64
 import io
 import json
 import contextlib
+import textwrap
 import traceback
 
 from codeslides import cs, turtle
@@ -358,11 +376,235 @@ def _execute_one(cell_name, source, elements):
         ],
     }
 
+def _define_one(cell_name, source):
+    """Mirrors kernel.py's define_cell: compile the cell's function and
+    bind it into _namespace under its own name, but never actually CALL
+    it -- unlike _execute_one, no kwargs binding, no cs/turtle execution
+    context, no return-named value written back (nothing ran to produce
+    one). This is what a cell with a tests element attached gets instead
+    of _execute_one as its own "run" (kernel.py's own _run_cells: "a
+    cell with a tests element is defined but never auto-run with no
+    arguments the way a plain cell is"), needed here specifically so
+    run_test_b64's own "run the owning cell first if this tab never has"
+    step doesn't crash a cell like drawLineSegment(t, p1, p2, p3, p4) --
+    real required parameters with no input elements to bind them, which
+    _execute_one would call as drawLineSegment() and get a guaranteed
+    TypeError from. A test's own call into the function (with whatever
+    arguments IT chooses) is the only thing that ever actually invokes
+    a tested cell's body, exactly like the server-side flow."""
+    exec(compile(source, f"<cell:{cell_name}>", "exec"), _namespace)
+
+_READABLE_INPUT_KINDS = ("text_input", "slider")
+
+def _make_input_shim(cell_name, elements, element_values):
+    """kernel.py's own _make_input_shim, unchanged in behavior: each
+    successive input() call reads the next text_input/slider element's
+    current value, in declaration order (the two kinds share one
+    combined sequence -- see kernel.py's own docstring for why). Prompt
+    and value are both echoed to stdout together (no real terminal here
+    to echo the typed value back), same "plausible transcript" reasoning
+    as the server-side version. element_values is this tab's own
+    _element_values.get(cell_name, {}) -- a plain {element_name: value}
+    dict, falling back to the element's own config["default"] exactly
+    like _kwargs_for already does for input-element kwargs binding."""
+    readable = [e for e in elements if e.kind in _READABLE_INPUT_KINDS]
+    calls = {"count": 0}
+
+    def shim(prompt=""):
+        index = calls["count"]
+        calls["count"] += 1
+        if index >= len(readable):
+            raise EOFError(
+                f"input(): cell {cell_name!r} only has {len(readable)} ui.text_input/ui.slider "
+                f"element(s), but input() was called a {index + 1}{'st' if index == 0 else 'th'} time -- "
+                "add another ui.text_input or ui.slider to this cell's elements=[...] for this call to read from."
+            )
+        element = readable[index]
+        raw = element_values.get(element.name, (element.config or {}).get("default"))
+        value = "" if raw is None else str(raw)
+        print(f"{prompt}{value}")
+        return value
+
+    return shim
+
+def _run_test(test_source, cell_name, elements):
+    """Mirrors kernel.py's run_tests + _run_and_apply_test: run a tests
+    element's source as plain top-level Python (ordinary asserts, not
+    unittest) against _namespace itself -- the SAME shared dict
+    _execute_one already exec'd the owning cell's function into, so the
+    test can call the cell's own function by name and read/write any
+    global it declares, exactly like a real Python script calling a
+    function from the same module. cs/turtle are already seeded into
+    _namespace once at runner-module init time (this file's own header
+    comment), so no separate seeding is needed here the way kernel.py's
+    run_tests does with setdefault (that call happened once, this
+    module's whole lifetime ago, and _namespace is the one shared dict
+    -- re-seeding here would just be a no-op every time).
+
+    input() is shadowed for the duration of this call only (same save/
+    restore-in-finally pattern kernel.py's run_tests uses), reading from
+    cell_name's own text_input/slider elements via _make_input_shim.
+
+    turtle.execution_context() establishes a fresh canvas state (see
+    turtle.py's own execution_context) whenever the owning cell has
+    exactly one turtle_canvas element -- the test's own drawing, not
+    layered on top of whatever the cell's own last run drew (same
+    "replaces, doesn't layer" rule kernel.py's _run_and_apply_test
+    documents), returned as turtleCommands for the caller to write into
+    that same canvas element, forcing a resend even when the cell's own
+    canvas write already happened in the same client-side run (the
+    exact behavior ws_handler.py's old SetTestSource handler used to
+    compute server-side, preserved here client-side instead)."""
+    turtle_element = _find_turtle_canvas(elements)
+    result = {"status": "pass", "message": "", "stdout": "", "stderr": "", "turtleCommands": None}
+    if turtle_element is not None:
+        result["turtleCommands"] = []
+    if not test_source.strip():
+        return result
+
+    stdout, stderr = io.StringIO(), io.StringIO()
+    _NO_PRIOR_INPUT = object()
+    prior_input = _namespace.get("input", _NO_PRIOR_INPUT)
+    element_values = _element_values.get(cell_name, {})
+    _namespace["input"] = _make_input_shim(cell_name, elements, element_values)
+    try:
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(contextlib.redirect_stdout(stdout))
+            stack.enter_context(contextlib.redirect_stderr(stderr))
+            turtle_commands = (
+                stack.enter_context(turtle.execution_context()) if turtle_element is not None else None
+            )
+            exec(compile(test_source, "<test>", "exec"), _namespace)
+    except AssertionError as exc:
+        result["status"] = "fail"
+        result["message"] = str(exc) or "assertion failed"
+    except Exception:
+        result["status"] = "error"
+        result["message"] = traceback.format_exc()
+    finally:
+        if prior_input is _NO_PRIOR_INPUT:
+            _namespace.pop("input", None)
+        else:
+            _namespace["input"] = prior_input
+
+    result["stdout"] = stdout.getvalue()
+    result["stderr"] = stderr.getvalue()
+    if turtle_element is not None:
+        result["turtleCommands"] = turtle_commands
+    return result
+
+def run_test_b64(cell_name_b64, test_source_b64, cells_json_b64):
+    """App.tsx's client-side entry point for a tests-element edit
+    (SetTestSource's former server-side execution, ARCHITECTURE.md
+    section 3b). Unlike run_cell_and_dependents_b64/on_element_changed_b64,
+    this never rebuilds/consults the dependency graph at all -- a
+    test's source has no reads/writes of its own to the graph (kernel.py's
+    on_tests_edited docstring: it only observes results other cells
+    already produced), matching that method's own "no graph
+    recomputation" rule exactly. cells_json_b64 is still needed (not just
+    the one cell's elements) so the owning cell's own function is at
+    least DEFINED first if this tab has never touched it yet --
+    otherwise a test targeting a cell the user never directly touched
+    would NameError against an empty _namespace, the same 'missing
+    upstream' gap run_cell_and_dependents_b64 already handles for a
+    plain cell edit. Deliberately _define_one, never _execute_one: a
+    cell with a tests element attached is always define-only from a
+    test's own perspective (kernel.py's _run_cells: "a cell with a
+    tests element is defined but never auto-run with no arguments the
+    way a plain cell is") -- _execute_one would call the function with
+    no bound arguments, a guaranteed TypeError for any cell with a real
+    required parameter and no matching input element (e.g.
+    drawLineSegment(t, p1, p2, p3, p4)). Also deliberately never adds
+    cell_name to _run_once: that set gates _missing_upstream's "already
+    executed" check for run_cell_and_dependents_b64/
+    on_element_changed_b64, and a define-only pass never writes any
+    return-named value into _namespace the way a real execution does --
+    marking it 'run' here would wrongly tell a LATER plain edit of some
+    other cell that reads this one's return value that its upstream
+    dependency is already satisfied, when it never actually ran."""
+    cell_name = _decode(cell_name_b64)
+    test_source = _decode(test_source_b64)
+    deck = _build_deck(cells_json_b64)
+    cell = deck.cells[cell_name]
+    if cell_name not in _namespace:
+        _define_one(cell_name, cell.source)
+    return json.dumps(_run_test(test_source, cell_name, cell.elements))
+
+def _find_tests_element(elements):
+    """kernel.py's own _find_tests_element, unchanged: the cell's one
+    tests element, if it has exactly one -- same "ambiguous means none"
+    rule as _find_turtle_canvas."""
+    test_elements = [e.name for e in elements if e.kind == "tests"]
+    return test_elements[0] if len(test_elements) == 1 else None
+
+def _has_unbound_required_param(source, elements):
+    """kernel.py's own _has_unbound_required_param, unchanged: True if
+    the cell's function has a parameter with no default that isn't also
+    bound by a matching input element -- see its own docstring for why
+    this must be checked (via ast, never by compiling/calling) BEFORE
+    choosing whether to _execute_one or _define_one a cell, the same
+    "decide before running" ordering _run_cells needs server-side."""
+    try:
+        tree = ast.parse(textwrap.dedent(source))
+    except SyntaxError:
+        return False
+    func_defs = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    if len(func_defs) != 1:
+        return False
+    func = func_defs[0]
+
+    element_names = {e.name for e in elements}
+    args = func.args.posonlyargs + func.args.args
+    positional_required = args[: len(args) - len(func.args.defaults)]
+    kwonly_required = [a for a, default in zip(func.args.kwonlyargs, func.args.kw_defaults) if default is None]
+
+    return any(a.arg not in element_names for a in (*positional_required, *kwonly_required))
+
 def _run_names(names, cells):
+    """Mirrors kernel.py's _run_cells' own execute-vs-define branch: a
+    cell with a tests element attached, or an unbound required
+    parameter (no default, no matching input element), is _define_one'd
+    instead of _execute_one'd -- never auto-called with no arguments the
+    way a plain cell is (kernel.py's own _run_cells docstring). Ported
+    here specifically because runAllClientSide/runCellClientSide (via
+    App.tsx's own "open a deck, run it automatically" effect -- the
+    client-side replacement for the old run_all websocket message) hit
+    exactly the TypeError this guards against for any tested cell with a
+    real required parameter and no bound element (e.g.
+    markCorners(cells, t), drawLineSegment(t, p1, p2, p3, p4)) -- a
+    define-only cell still reports its own definition-time errors
+    (CellDefinitionError/SyntaxError) as a real ExecutionResult, exactly
+    like define_cell does, just never the call-time TypeError a forced
+    zero-arg call would produce."""
     results = {}
     for name in names:
         cell = cells[name]
-        results[name] = _execute_one(name, cell.source, cell.elements)
+        if _find_tests_element(cell.elements) is not None or _has_unbound_required_param(cell.source, cell.elements):
+            try:
+                _define_one(name, cell.source)
+                results[name] = {
+                    "status": "idle",
+                    "value": None,
+                    "kind": None,
+                    "data": None,
+                    "error": None,
+                    "stdout": "",
+                    "stderr": "",
+                    "elementWrites": [],
+                }
+            except Exception:
+                results[name] = {
+                    "status": "error",
+                    "value": None,
+                    "kind": None,
+                    "data": None,
+                    "error": traceback.format_exc(),
+                    "stdout": "",
+                    "stderr": "",
+                    "elementWrites": [],
+                }
+        else:
+            results[name] = _execute_one(name, cell.source, cell.elements)
         _run_once.add(name)
     return results
 
@@ -627,4 +869,27 @@ export async function onElementChangedClientSide(
   const call = `on_element_changed_b64(${JSON.stringify(toBase64(cellName))}, ${JSON.stringify(toBase64(elementName))}, ${JSON.stringify(valueB64)}, ${JSON.stringify(cellsB64)})`
   const resultJson = await pyodide.runPythonAsync(call)
   return JSON.parse(resultJson as string) as Record<string, PyodideCellResult>
+}
+
+// TODO.md #64/PROPOSAL_pyscript_execution.md section 7: kernel.py's
+// on_tests_edited client-side equivalent -- runs `testSource` against
+// cellName's own namespace (running cellName itself first, if this tab
+// has never executed it), preserving the exact turtle-forced-resend/
+// input-shim/stdout-capture behavior run_tests already has server-side
+// (this file's own run_test_b64/_run_test docstrings). Does not re-run
+// cellName itself if it's already been executed in this tab -- same
+// "test source has no reads/writes of its own to the graph" rule
+// on_tests_edited's own docstring gives for skipping any graph
+// recomputation.
+export async function runTestClientSide(
+  cellName: string,
+  testSource: string,
+  allCells: Record<string, PyodideCellInput>,
+): Promise<PyodideTestResult> {
+  const pyodide = await getPyodide()
+  await ensureMatplotlibIfNeeded(pyodide, allCells)
+  const cellsB64 = toBase64(JSON.stringify(allCells))
+  const call = `run_test_b64(${JSON.stringify(toBase64(cellName))}, ${JSON.stringify(toBase64(testSource))}, ${JSON.stringify(cellsB64)})`
+  const resultJson = await pyodide.runPythonAsync(call)
+  return JSON.parse(resultJson as string) as PyodideTestResult
 }
