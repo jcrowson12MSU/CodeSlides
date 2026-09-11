@@ -283,7 +283,7 @@ def test_websocket_second_push_replaces_first_pending_push(tmp_path):
     from codeslides.loader import load_deck
 
     deck_path = _write_structural_deck(tmp_path)
-    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True)) as client:
+    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path))) as client:
         with (
             client.websocket_connect("/ws?document=struct-second-push") as ws_a,
             client.websocket_connect("/ws?document=struct-second-push") as ws_b,
@@ -984,23 +984,21 @@ def test_websocket_session_created_reports_review_mode():
     """TODO.md #65-ii: session_created's review_mode field originally
     reflected create_app's own review_mode flag for a shared document.
     TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
-    section 2.2: every shared document is accept-gated now,
-    unconditionally, so review_mode is always True for one regardless of
-    create_app's own parameter (explicitly passed False for the first
-    client here, proving it no longer has any effect) -- still always
-    False for a non-collaborative connection (there's no one to review a
-    push on a solo session, so it's meaningless there)."""
-    with TestClient(create_app(_build_deck(), review_mode=False)) as client_plain:
-        with client_plain.websocket_connect("/ws?document=plain-1") as ws:
-            assert ws.receive_json()["review_mode"] is True
-
-    with TestClient(create_app(_build_deck(), review_mode=True)) as client_review:
-        with client_review.websocket_connect("/ws?document=review-1") as ws:
+    section 2.2/7: every shared document is accept-gated now,
+    unconditionally -- create_app's own review_mode parameter (along
+    with cli.py's --review-mode flag and SessionRegistry's
+    default_review_mode) is removed entirely, since there was no
+    document-level choice left for it to configure. review_mode is
+    always True for a shared document, always False for a solo
+    connection (there's no one to review a push on a solo session, so
+    it's meaningless there)."""
+    with TestClient(create_app(_build_deck())) as client:
+        with client.websocket_connect("/ws?document=review-1") as ws:
             assert ws.receive_json()["review_mode"] is True
 
         # A solo connection is still never itself in review mode --
         # accept-gating only applies to shared documents.
-        with client_review.websocket_connect("/ws") as ws:
+        with client.websocket_connect("/ws") as ws:
             assert ws.receive_json()["review_mode"] is False
 
 
@@ -1011,7 +1009,7 @@ def test_websocket_edit_cell_rejected_on_review_mode_document():
     is expected to keep this edit as a local draft and push it via
     push_cell_state once it knows via session_created this document is
     in review mode."""
-    with TestClient(create_app(_build_deck(), review_mode=True)) as client:
+    with TestClient(create_app(_build_deck())) as client:
         with client.websocket_connect("/ws?document=review-2") as ws:
             ws.receive_json()  # session_created
             ws.send_json(
@@ -1031,39 +1029,18 @@ def test_websocket_edit_cell_rejected_on_review_mode_document():
         assert "live_demo" not in session.source_overrides
 
 
-def test_websocket_shared_document_always_review_mode_even_with_default_review_mode_false():
-    """TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
-    section 2.2: every collaborative document is accept-gated now,
-    unconditionally -- replaces the old
-    test_websocket_non_review_mode_document_is_completely_unaffected_by_65,
-    which asserted the opposite (a "plain", review_mode=False shared
-    document where edit_cell still ran/broadcast immediately). That
-    state is no longer reachable at all: SessionRegistry.create_or_join
-    always sets review_mode=True for a newly-created shared Session,
-    regardless of create_app's own review_mode/default_review_mode
-    parameter (explicitly passed as False here to prove the parameter no
-    longer has any effect on a shared document) -- edit_cell is
-    therefore always rejected on any document=... connection, matching
-    the review-mode-gated behavior test_websocket_edit_cell_rejected_on_review_mode_document
-    already covers for an explicitly-review_mode=True app."""
-    with TestClient(create_app(_build_deck(), review_mode=False)) as client:
-        with client.websocket_connect("/ws?document=plain-3") as ws:
-            ws.receive_json()  # session_created
-            ws.send_json(
-                {
-                    "type": "edit_cell",
-                    "session_id": "plain-3",
-                    "cell_id": "live_demo",
-                    "source": "def live_demo(speed):\n    return 1\n",
-                }
-            )
-            error = ws.receive_json()
-            assert error["type"] == "error"
-            assert "review mode" in error["message"]
-
-            session = client.app.state.registry.get("plain-3")
-            assert session.review_mode is True
-            assert "live_demo" not in session.source_overrides
+# TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+# section 2.2/7: test_websocket_shared_document_always_review_mode_even_with_default_review_mode_false
+# is deleted -- its whole premise was proving create_app's own
+# review_mode/default_review_mode parameters have no effect on a shared
+# document, which is now vacuous: both parameters are removed entirely
+# (see server.py/ws_handler.py's own docstrings), so there's nothing
+# left to "prove has no effect." Every shared document is unconditionally
+# review_mode=True with no way to construct one otherwise, which is
+# exactly what test_websocket_edit_cell_rejected_on_review_mode_document
+# above already covers (identical assertions -- edit_cell rejected,
+# source_overrides untouched -- the only difference was which
+# now-nonexistent parameter value was passed to create_app).
 
 
 # -- TODO.md #65-x: structural (non-source) changes through review too --
@@ -1083,7 +1060,7 @@ def test_websocket_rename_cell_rejected_on_review_mode_document(tmp_path):
     from codeslides.loader import load_deck
 
     deck_path = _write_structural_deck(tmp_path)
-    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True)) as client:
+    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path))) as client:
         with client.websocket_connect("/ws?document=struct-1") as ws:
             ws.receive_json()
             ws.send_json(
@@ -1106,7 +1083,7 @@ def test_websocket_push_cell_state_does_not_apply_until_accepted(tmp_path):
     from codeslides.loader import load_deck
 
     deck_path = _write_structural_deck(tmp_path)
-    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True)) as client:
+    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path))) as client:
         with (
             client.websocket_connect("/ws?document=struct-2") as ws_a,
             client.websocket_connect("/ws?document=struct-2") as ws_b,
@@ -1152,7 +1129,7 @@ def test_websocket_accept_cell_state_applies_source_hide_and_rename_and_attribut
     from codeslides.loader import load_deck
 
     deck_path = _write_structural_deck(tmp_path)
-    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True)) as client:
+    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path))) as client:
         with (
             client.websocket_connect("/ws?document=struct-3") as ws_a,
             client.websocket_connect("/ws?document=struct-3") as ws_b,
@@ -1261,7 +1238,7 @@ def test_websocket_reject_cell_state(tmp_path):
     from codeslides.loader import load_deck
 
     deck_path = _write_structural_deck(tmp_path)
-    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True)) as client:
+    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path))) as client:
         with (
             client.websocket_connect("/ws?document=struct-4") as ws_a,
             client.websocket_connect("/ws?document=struct-4") as ws_b,
@@ -1324,7 +1301,7 @@ def test_websocket_withdraw_cell_state(tmp_path):
     from codeslides.loader import load_deck
 
     deck_path = _write_structural_deck(tmp_path)
-    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True)) as client:
+    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path))) as client:
         with (
             client.websocket_connect("/ws?document=struct-4b") as ws_a,
             client.websocket_connect("/ws?document=struct-4b") as ws_b,
@@ -1370,7 +1347,7 @@ def test_websocket_viewer_role_rejects_cell_state_messages(tmp_path):
     from codeslides.loader import load_deck
 
     deck_path = _write_structural_deck(tmp_path)
-    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True)) as client:
+    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path))) as client:
         with client.websocket_connect("/ws?document=struct-5&role=viewer") as ws:
             ws.receive_json()
             for payload in (
@@ -1405,38 +1382,15 @@ def test_websocket_viewer_role_rejects_cell_state_messages(tmp_path):
                 assert "viewer" in error["message"]
 
 
-def test_websocket_shared_document_structural_changes_always_gated_even_with_default_review_mode_false(
-    tmp_path,
-):
-    """TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
-    section 2.2: replaces the old
-    test_websocket_non_review_mode_document_unaffected_by_structural_bundles,
-    which asserted rename_cell (a structural message) still applied
-    immediately on a "plain" (review_mode=False) shared document -- that
-    state is no longer reachable (see the sibling edit_cell test's own
-    docstring above for why). Proves rename_cell is rejected on a
-    document=... connection even when create_app itself is given
-    review_mode=False explicitly, confirming SessionRegistry.
-    create_or_join's own hardcoded review_mode=True for a shared Session
-    is what actually governs this now, not create_app's parameter."""
-    from codeslides.loader import load_deck
-
-    deck_path = _write_structural_deck(tmp_path)
-    with TestClient(
-        create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=False)
-    ) as client:
-        with client.websocket_connect("/ws?document=struct-7") as ws:
-            ws.receive_json()
-            ws.send_json(
-                {"type": "rename_cell", "session_id": "struct-7", "cell_id": "cell_a", "new_name": "renamed"}
-            )
-            error = ws.receive_json()
-            assert error["type"] == "error"
-            assert "review mode" in error["message"]
-            # Nothing on disk changed.
-            assert "def cell_a" in deck_path.read_text()
-            session = client.app.state.registry.get("struct-7")
-            assert session.review_mode is True
+# TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+# section 2.2/7: test_websocket_shared_document_structural_changes_always_gated_even_with_default_review_mode_false
+# is deleted for the same reason as the sibling edit_cell-focused test
+# above -- create_app's review_mode parameter is removed entirely, so
+# "rejected even when explicitly passed review_mode=False" is vacuous
+# (there's no longer any way to pass it at all). Identical to
+# test_websocket_rename_cell_rejected_on_review_mode_document above in
+# every assertion (rename_cell rejected, disk unchanged) once that
+# now-nonexistent parameter is the only difference between them.
 
 
 # -- TODO.md #65-xi: unify primary/test source edits into the one push
@@ -1459,7 +1413,7 @@ def test_websocket_edit_cell_no_longer_broadcasts_immediately_in_review_mode():
     behavior, unchanged); this test's point is that there is no other
     message type a client could send that reaches a peer immediately
     either."""
-    with TestClient(create_app(_build_deck(), review_mode=True)) as client:
+    with TestClient(create_app(_build_deck())) as client:
         with (
             client.websocket_connect("/ws?document=unify-1") as ws_a,
             client.websocket_connect("/ws?document=unify-1") as ws_b,
@@ -1519,7 +1473,7 @@ def test_websocket_push_cell_state_with_source_test_and_hide_fields(tmp_path):
     )
     from codeslides.loader import load_deck
 
-    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True)) as client:
+    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path))) as client:
         with (
             client.websocket_connect("/ws?document=unify-2") as ws_a,
             client.websocket_connect("/ws?document=unify-2") as ws_b,
@@ -1634,7 +1588,7 @@ def test_websocket_set_notes_source_rejected_on_review_mode_document():
     a review_mode document must be rejected outright, exactly like
     edit_cell/set_test_source already are, instead of applying and
     broadcasting immediately."""
-    with TestClient(create_app(_build_deck_with_notes(), review_mode=True)) as client:
+    with TestClient(create_app(_build_deck_with_notes())) as client:
         with (
             client.websocket_connect("/ws?document=notes-1") as ws_a,
             client.websocket_connect("/ws?document=notes-1") as ws_b,
@@ -1693,7 +1647,7 @@ def test_websocket_push_cell_state_with_notes_source(tmp_path):
     deck_path.write_text(original_source)
     from codeslides.loader import load_deck
 
-    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True)) as client:
+    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path))) as client:
         with (
             client.websocket_connect("/ws?document=notes-2") as ws_a,
             client.websocket_connect("/ws?document=notes-2") as ws_b,
@@ -1845,7 +1799,7 @@ def test_websocket_push_accept_reject_cell_state_post_system_chat_messages(tmp_p
     from codeslides.loader import load_deck
 
     deck_path = _write_structural_deck(tmp_path)
-    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True)) as client:
+    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path))) as client:
         with (
             client.websocket_connect("/ws?document=chat-3") as ws_a,
             client.websocket_connect("/ws?document=chat-3") as ws_b,

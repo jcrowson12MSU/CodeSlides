@@ -90,28 +90,14 @@ def main() -> None:
         )
         # TODO.md #65/PROPOSAL_review_workflow.md: originally opted a
         # collaborative document into the propose/review/accept workflow
-        # instead of always-live editing. TODO.md #64 (collaboration
-        # rework)/PROPOSAL_pyscript_execution.md section 2.2: every
-        # collaborative document is accept-gated now, unconditionally
-        # (SessionRegistry.create_or_join always sets review_mode=True
-        # for a shared document, regardless of this flag) -- always-live
-        # mode no longer exists as an option, so this flag is now a
-        # no-op, kept only so an existing script/README passing it
-        # doesn't hard-error. Left as a real flag (not deleted) per the
-        # frontend-only scope this rework was deliberately kept to; a
-        # follow-up slice may remove it outright once the server-side
-        # execution/broadcast machinery it also used to gate is cleaned
-        # up too (PROPOSAL_pyscript_execution.md section 7).
-        sub.add_argument(
-            "--review-mode",
-            action="store_true",
-            default=False,
-            help=(
-                "No-op as of TODO.md #64: every --collaborative document now always "
-                "requires Push + Accept for cell edits to become visible to other "
-                "peers, regardless of this flag"
-            ),
-        )
+        # instead of always-live editing, via a `--review-mode` flag.
+        # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        # section 2.2/7: every collaborative document is accept-gated
+        # now, unconditionally (SessionRegistry.create_or_join always
+        # sets review_mode=True for a shared document) -- always-live
+        # mode no longer exists as an option at all, so the flag is
+        # removed outright rather than kept as a no-op: there is no
+        # longer any document-level choice left for it to (not) affect.
 
     args = parser.parse_args()
 
@@ -121,7 +107,7 @@ def main() -> None:
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(1) from None
 
-    app = create_app(deck, deck_path=args.path, review_mode=args.review_mode)
+    app = create_app(deck, deck_path=args.path)
     base_url = f"http://{args.host}:{args.port}/"
 
     print(f"codeslides {args.command}: {args.path}")
@@ -149,9 +135,8 @@ def main() -> None:
         print(f"  Editor (can make changes): {url}")
         print(f"  Viewer (read-only):        {viewer_url}")
         # TODO.md #64 (collaboration rework): every collaborative
-        # document is accept-gated now, unconditionally -- no longer
-        # gated on args.review_mode (a no-op flag as of this change, see
-        # this file's own --review-mode help text).
+        # document is accept-gated now, unconditionally -- there is no
+        # flag left that could make this print something else.
         print("Cell edits are pushed as proposals, not broadcast immediately.")
 
     if args.open_browser:

@@ -235,17 +235,6 @@ class SessionRegistry:
     kernel: Kernel
     sessions: dict[str, Session] = field(default_factory=dict)
     connections: dict[str, dict[ConnectionId, Peer]] = field(default_factory=dict)
-    # TODO.md #65: whether a *newly created* shared document defaults to
-    # `Session.review_mode=True` -- set once, from `cli.py`'s
-    # `--review-mode` flag, for this registry's whole lifetime (one CLI
-    # process serves one deck/document today, same "one collaborative
-    # link per process" scope `--collaborative` itself already has).
-    # Only consulted by `create_or_join` at the moment it actually
-    # constructs a brand-new Session; joining an *existing* one always
-    # uses that Session's own already-decided `review_mode`, since the
-    # mode is fixed per-document, not per-registry-default, the instant
-    # a document exists.
-    default_review_mode: bool = False
 
     def _seed_persisted_attribution(self, session: Session) -> None:
         """TODO.md #46g-v: load a deck's sidecar attribution file (if the
@@ -308,19 +297,15 @@ class SessionRegistry:
             return existing
         # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
         # section 2.2: every collaborative document is accept-gated now,
-        # unconditionally -- `self.default_review_mode` (cli.py's
-        # `--review-mode` flag) no longer decides this; a shared document
-        # always gets `review_mode=True` regardless of that flag, so that
-        # EditCell/PushCellState's own existing review_mode gates (still
-        # untouched -- this frontend-driving slice deliberately leaves
-        # the server's execution/broadcast machinery alone, see
-        # PROPOSAL_pyscript_execution.md section 7) agree with the
-        # frontend's own acceptGated = Boolean(documentId) condition
-        # (App.tsx), rather than a --collaborative-without---review-mode
-        # session silently rejecting the push_cell_state the frontend now
-        # always sends. `--review-mode` itself becomes a no-op flag as of
-        # this change (kept, not removed, per the chosen frontend-only
-        # scope -- see cli.py's own note).
+        # unconditionally -- a shared document always gets
+        # `review_mode=True`, unconfigurable (the `--review-mode` CLI
+        # flag/`create_app`'s own `review_mode` parameter/this registry's
+        # own former `default_review_mode` field that used to let this
+        # vary are all removed entirely -- see cli.py/server.py's own
+        # docstrings), so EditCell/PushCellState's own existing
+        # review_mode gates agree with the frontend's own
+        # acceptGated = Boolean(documentId) condition (App.tsx) on every
+        # shared document, with no way to make them disagree any more.
         session = Session(deck=self.kernel.deck, session_id=document_id, review_mode=True)
         self._seed_persisted_attribution(session)
         self.sessions[session.session_id] = session

@@ -76,7 +76,6 @@ def create_app(
     deck_path: str | None = None,
     *,
     shared_session_grace_period_seconds: float = SHARED_SESSION_GRACE_PERIOD_SECONDS,
-    review_mode: bool = False,
 ) -> FastAPI:
     """`deck_path`, if given, is watched for changes (TODO.md #10): on
     save, the file is re-parsed and `Kernel.reload_deck` swaps in the new
@@ -91,18 +90,17 @@ def create_app(
     (TODO.md #46a-iii) -- exposed as a parameter purely so tests can use a
     short window instead of the real production default.
 
-    `review_mode` (TODO.md #65) was originally this server process's
-    document-level default for the propose/review/accept workflow
-    instead of always-live editing -- `cli.py`'s `--review-mode` flag.
     TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
-    section 2.2: every collaborative document is accept-gated now,
-    unconditionally -- `SessionRegistry.create_or_join` always sets a
-    newly-created shared Session's own `review_mode=True` regardless of
-    this parameter, so it no longer has any effect (kept as a real
-    parameter, not removed, per this rework's deliberately frontend-only
-    scope; a solo (non-collaborative) Session still ignores it entirely,
-    same as before, since accept-gating only makes sense where there's
-    someone else to accept a push)."""
+    section 2.2/7: this used to also take a `review_mode` parameter
+    (TODO.md #65) -- this server process's document-level default for
+    the propose/review/accept workflow instead of always-live editing,
+    `cli.py`'s `--review-mode` flag. Removed outright: every
+    collaborative document is accept-gated now, unconditionally
+    (`SessionRegistry.create_or_join` always sets a newly-created shared
+    Session's own `review_mode=True`), so the parameter had no effect
+    left to configure -- `Session.review_mode` itself is still real,
+    live-valued state (see `session.py`'s own docstring), just no longer
+    something a caller of `create_app` can influence."""
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -120,7 +118,7 @@ def create_app(
     api = FastAPI(title="CodeSlides", lifespan=lifespan)
     api.state.deck = deck or Deck()
     api.state.kernel = Kernel(api.state.deck, deck_path=deck_path)
-    api.state.registry = SessionRegistry(kernel=api.state.kernel, default_review_mode=review_mode)
+    api.state.registry = SessionRegistry(kernel=api.state.kernel)
     api.state.deck_path = deck_path
 
     @api.get("/api/health")
