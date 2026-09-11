@@ -142,6 +142,30 @@ def create_app(
                 name: {
                     "instance": cell.instance,
                     "source": display_source(cell.source, hide_def=cell.hide_def),
+                    # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md:
+                    # a `notes` element's content is the cell's own docstring
+                    # (`Cell.docstring`, deck.py) -- authored content, never
+                    # computed by any run (session.py's seed_cell_instance's
+                    # own docstring). Before this rework, ws_handler.py's
+                    # now-deleted _element_output_messages surfaced it via a
+                    # websocket element_output message as part of every
+                    # RunAll/EditCell/etc. reply's own "static content
+                    # fallback" branch -- the server executed nothing any
+                    # more once that fell out of scope, so that was the ONE
+                    # remaining path any notes content ever reached the
+                    # browser through. Removing it (TODO.md #64-iv) silently
+                    # broke every notes element in the app: confirmed
+                    # directly (a real user report -- Lectures/Chapters/
+                    # chapter4.py's `intro` cell shows a real docstring in
+                    # its own .py source but rendered a blank notes editor
+                    # in the browser). Exposing it here instead means
+                    # App.tsx can seed a cell's notes content purely from
+                    # `deck.cells[id].docstring` -- no execution, no
+                    # websocket round trip, matching every other piece of
+                    # this deck's own static metadata (source/elements/
+                    # layout/etc.) that already flows through this same
+                    # response.
+                    "docstring": cell.docstring,
                     "elements": [
                         {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                     ],

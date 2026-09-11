@@ -56,6 +56,40 @@ def test_deck_endpoint_reports_cell_instance_source_and_elements():
     assert "@app.cell" not in live_demo_meta["source"]
 
 
+def test_deck_endpoint_reports_each_cells_own_docstring():
+    """TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md:
+    a real regression, found via direct user report (Lectures/Chapters/
+    chapter4.py's `intro` cell has a real docstring in its own .py
+    source but rendered a blank notes editor in the browser) --
+    ws_handler.py's now-removed _element_output_messages was the ONE
+    remaining path any `notes` element's content (the owning cell's own
+    docstring, deck.py's Cell.docstring) ever reached the browser
+    through, since the server stopped executing anything in an earlier
+    slice of this same rework. Exposing `docstring` here is what lets
+    App.tsx seed a notes element's content purely from static deck
+    metadata now, with no execution and no websocket round trip."""
+    app = App()
+
+    @app.cell(elements=[ui.notes("notes")])
+    def documented():
+        """# A real docstring\nWith more than one line."""
+        return 1
+
+    @app.cell
+    def undocumented():
+        return 2
+
+    client = TestClient(create_app(app.deck))
+    body = client.get("/api/deck").json()
+
+    assert body["cells"]["documented"]["docstring"] == "# A real docstring\nWith more than one line."
+    # A cell with no docstring at all reports an empty string, not null/
+    # missing -- App.tsx's own docstring seeding assumes a plain string
+    # it can always safely fall back to `''` from either way, but this
+    # confirms the server side of that contract directly.
+    assert body["cells"]["undocumented"]["docstring"] == ""
+
+
 def test_deck_endpoint_title_slide_shows_setup_then_main_cell():
     app = App()
 

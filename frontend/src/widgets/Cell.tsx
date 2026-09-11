@@ -35,6 +35,25 @@ const MAX_CODE_FRACTION = 0.85
 export interface CellMeta {
   instance: 'static' | 'editable'
   source: string
+  // TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md:
+  // a `notes` element's content is this cell's own docstring
+  // (codeslides.deck.Cell.docstring) -- authored content, never
+  // computed by any run. Server-side GET /api/deck's own docstring on
+  // why this needs to be here at all now: the server no longer
+  // executes anything, and there is no other request shape left that
+  // ever surfaces a notes element's content to the browser. App.tsx
+  // seeds a notes element's base content from this field, layering
+  // notesOverrides (the local live-edit echo) on top exactly like it
+  // already did before this field existed -- this only fixes what the
+  // BASE value is before any edit, not the edit path itself. Optional
+  // (unlike source/elements/instance) since CellAdded/ElementAdded/
+  // ElementRemoved/PrimaryEditorAdded/PrimaryEditorRemoved/
+  // TitleSlideAdded don't carry it at all (none of those operations
+  // ever change a cell's own docstring) -- App.tsx's own reducer
+  // carries the existing value forward for those, same "?? existing
+  // value, not a required field" precedent is_main/is_setup/hide_code/
+  // hide_def already follow there.
+  docstring?: string
   elements: ElementMeta[]
   // The browser's saved divider/tab arrangement (per the user's request
   // that Save persist it) -- `null`/`undefined` means "never saved,
