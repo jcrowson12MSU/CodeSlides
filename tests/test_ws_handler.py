@@ -8,7 +8,6 @@ from codeslides.protocol import (
     AddSlide,
     AddTitleSlide,
     CellAdded,
-    CellOutput,
     CellRemoved,
     CellRenamed,
     CellsReordered,
@@ -115,125 +114,42 @@ def test_run_all_is_a_harmless_no_op():
     assert session.namespace == {}
 
 
-def test_add_element_to_an_existing_cs_image_cell_emits_its_element_output(tmp_path):
-    """TODO.md #64 (collaboration rework)'s replacement for the deleted
-    test_run_all_emits_element_output_for_cs_image_write: RunAll no
-    longer executes anything, so this now needs a still-executing
-    trigger for a cell whose BODY calls cs.image() -- AddElement's own
-    handler still re-runs the cell it just added an element to
-    (Kernel.add_element, a structural method untouched by this rework,
-    see PROPOSAL_pyscript_execution.md section 7), so adding a second,
-    otherwise-irrelevant element to an existing cs.image()-calling cell
-    is the cleanest still-available way to exercise
-    _element_output_messages' PRIMARY path (translating a real
-    cs.image() write from result.element_writes), as opposed to the
-    static-content fallback path the two test_add_element_surfaces_*
-    tests above exercise."""
-    deck_path = tmp_path / "deck.py"
-    deck_path.write_text(
-        "from codeslides import App, cs, ui\n\n"
-        "app = App()\n\n"
-        '@app.cell(elements=[ui.image("plot")])\n'
-        "def make_plot():\n"
-        '    cs.image("plot", "/tmp/figure.png")\n'
-        "    x = 1\n"
-        "    return x\n"
-    )
-    from codeslides.loader import load_deck
-
-    registry = SessionRegistry(kernel=Kernel(load_deck(str(deck_path)), deck_path=str(deck_path)))
-    session = registry.create()
-
-    messages = handle_message(
-        registry,
-        AddElement(
-            session_id=session.session_id,
-            cell_id="make_plot",
-            element_name="unrelated_button",
-            kind="button",
-            config={},
-        ),
-    )
-
-    element_outputs = [m for m in messages if isinstance(m, ElementOutput)]
-    plot_outputs = [m for m in element_outputs if m.element_id == "plot"]
-    assert len(plot_outputs) == 1
-    assert plot_outputs[0].cell_id == "make_plot"
-    assert plot_outputs[0].content == ["/tmp/figure.png"]
+# TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+# section 3: test_add_element_to_an_existing_cs_image_cell_emits_its_element_output
+# is deleted -- it relied on AddElement's own handler re-running the
+# cell it just added an element to (Kernel.add_element), documented at
+# the time as "a structural method untouched by this rework, see
+# PROPOSAL_pyscript_execution.md section 7" -- that assumption is
+# exactly what this slice invalidates: add_element no longer executes
+# anything server-side at all (see its own docstring). There is no
+# longer any still-executing server-side trigger left for a cell whose
+# body calls cs.image() to exercise _element_output_messages' PRIMARY
+# path (translating a real cs.image() write) -- pyodideKernel.ts's own
+# runCellClientSide is the real, client-side replacement (already
+# proven via this repo's own Playwright-driven verification, this
+# session's history), not a pytest one, since it never touches the
+# server at all.
 
 
 # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
-# section 3: the two tests below used to drive _element_output_messages'
-# static-content fallback (an image/notes element's content reaching the
-# browser even when the owning cell's body never writes to it) via
-# RunAll, back when the RunAll websocket message actually triggered
-# Kernel.run_all server-side. RunAll's own handler is now a no-op
-# (Kernel.run_all itself still exists, unreachable from any network
-# message -- see its own docstring; pyodideKernel.ts's runAllClientSide
-# is the real, client-side replacement browsers actually use).
-# _element_output_messages itself is
-# UNCHANGED and still real, load-bearing logic -- it's still called by
-# every structural Kernel method that adds/changes an element
-# (add_cell, add_element, etc., all still server-executed since they're
-# outside this rework's scope per PROPOSAL_pyscript_execution.md
-# section 7). So these are rewritten to drive the same fallback through
-# AddElement instead of RunAll -- AddElement's own handler still calls
-# Kernel.add_element, which still re-runs the newly-elemented cell once
-# server-side (a structural method's own execution, untouched by this
-# rework) and produces the exact same ElementOutput fallback message.
-def test_add_element_surfaces_an_images_static_src_without_any_cs_image_call(tmp_path):
-    """Regression test for the reported "uploaded image disappears on
-    reload" bug: an image element's own static `src=` (set via the
-    browser's file-picker/set_element_config, or given at construction
-    time) must reach the browser even when the owning cell's body never
-    calls cs.image(...) at all -- seed_cell_instance already seeds the
-    Session-side content correctly, but without this fallback (mirroring
-    notes'/tests' own below), _element_output_messages never actually
-    tells the browser about it, so a fresh page load/Session shows "no
-    image yet" despite the Session's own state being correct."""
-    registry, _ = _build_file_backed_registry(tmp_path)
-    session = registry.create()
-
-    messages = handle_message(
-        registry,
-        AddElement(
-            session_id=session.session_id,
-            cell_id="setup",
-            element_name="photo",
-            kind="image",
-            config={"src": "data:image/png;base64,abc"},
-        ),
-    )
-
-    element_outputs = [m for m in messages if isinstance(m, ElementOutput)]
-    assert len(element_outputs) == 1
-    assert element_outputs[0].cell_id == "setup"
-    assert element_outputs[0].element_id == "photo"
-    assert element_outputs[0].content == ["data:image/png;base64,abc"]
-
-
-def test_add_element_surfaces_notes_docstring_without_any_write(tmp_path):
-    registry, _ = _build_file_backed_registry(tmp_path)
-    session = registry.create()
-
-    messages = handle_message(
-        registry,
-        AddElement(
-            session_id=session.session_id,
-            cell_id="setup",
-            element_name="n",
-            kind="notes",
-            config={},
-        ),
-    )
-
-    element_outputs = [m for m in messages if isinstance(m, ElementOutput)]
-    assert len(element_outputs) == 1
-    assert element_outputs[0].element_id == "n"
-    # `setup` (_DECK_FILE_SOURCE) has no docstring -- the point here is
-    # that the fallback fires at all (exactly one ElementOutput, for the
-    # newly-added element, immediately), not any particular text.
-    assert element_outputs[0].content == ""
+# section 3: test_add_element_surfaces_an_images_static_src_without_any_cs_image_call
+# and test_add_element_surfaces_notes_docstring_without_any_write are
+# deleted -- both drove _element_output_messages' static-content
+# fallback via AddElement's own re-run, documented at the time as "a
+# structural method's own execution, untouched by this rework." That's
+# exactly what this slice removes: Kernel.add_element no longer executes
+# anything (see its own docstring), so AddElement's handler no longer
+# calls _element_output_messages at all. Checked directly: after this
+# change, _element_output_messages' only remaining callers anywhere are
+# EditCell and SetElementValue, and both always pass an empty results
+# dict (on_cell_edited/on_element_changed permanently return {} --
+# see their own docstrings from the prior slice) -- there is no
+# request shape left, anywhere in the app, that can ever reach this
+# function's static-content-fallback branch with real data again. This
+# is a real, confirmed dead-code finding (not fixed here, since it's a
+# distinct cleanup from porting structural operations): removing
+# _element_output_messages/_results_to_messages and their two now-inert
+# call sites is a legitimate follow-up.
 
 
 def test_set_notes_source_updates_content_without_rerun():
@@ -1259,16 +1175,14 @@ def test_add_title_slide_emits_title_slide_added_and_writes_to_disk(tmp_path):
     assert added.cell_id in session.instances
 
 
-def test_add_title_slide_runs_the_new_cell(tmp_path):
-    registry, _ = _build_file_backed_registry(tmp_path)
-    session = registry.create()
-
-    messages = handle_message(registry, AddTitleSlide(session_id=session.session_id))
-
-    added = messages[0]
-    output_messages = [m for m in messages if isinstance(m, CellOutput) and m.cell_id == added.cell_id]
-    assert len(output_messages) == 1
-    assert output_messages[0].error is None
+# TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+# section 3: test_add_title_slide_runs_the_new_cell is deleted -- its
+# entire point was proving AddTitleSlide's handler re-runs the new
+# cell server-side, exactly the execution behavior this slice removes
+# (see Kernel.add_title_slide's own docstring). No adaptable equivalent
+# exists: pyodideKernel.ts's runCellClientSide is the real, client-side
+# replacement, with its own Playwright-driven verification, not a
+# pytest one, since it never touches the server at all.
 
 
 def test_add_title_slide_before_an_existing_slide_keeps_it_second(tmp_path):

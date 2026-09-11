@@ -1531,10 +1531,15 @@ def handle_message(
                 )
             ]
         try:
-            cell, result = registry.kernel.add_cell(session)
+            cell = registry.kernel.add_cell(session)
         except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
             return [ErrorMessage(message=str(exc), session_id=message.session_id)]
-        results = {cell.name: result}
+        # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        # section 3: no more _results_to_messages/_element_output_messages
+        # tail -- Kernel.add_cell no longer executes anything server-side
+        # (see its own docstring). App.tsx triggers the client-side
+        # equivalent (pyodideKernel.ts's runCellClientSide) once it sees
+        # this new cell in CellAdded's own reply below.
         return [
             CellAdded(
                 session_id=message.session_id,
@@ -1546,8 +1551,6 @@ def handle_message(
                 ],
                 layout=cell.layout,
             ),
-            *_results_to_messages(message.session_id, results),
-            *_element_output_messages(session, results, registry.kernel.deck),
         ]
 
     if isinstance(message, AddSlide):
@@ -1594,10 +1597,11 @@ def handle_message(
                 )
             ]
         try:
-            cell, _slide, result = registry.kernel.add_title_slide(session)
+            cell, _slide = registry.kernel.add_title_slide(session)
         except (InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
             return [ErrorMessage(message=str(exc), session_id=message.session_id)]
-        results = {cell.name: result}
+        # TODO.md #64 (collaboration rework): no more execution tail --
+        # see Kernel.add_title_slide's own docstring.
         slides_payload = [
             {
                 "title": s.title,
@@ -1619,8 +1623,6 @@ def handle_message(
                 layout=cell.layout,
                 slides=slides_payload,
             ),
-            *_results_to_messages(message.session_id, results),
-            *_element_output_messages(session, results, registry.kernel.deck),
         ]
 
     if isinstance(message, SetSlideOrder):
@@ -1829,10 +1831,11 @@ def handle_message(
 
         try:
             element = Element(name=message.element_name, kind=message.kind, config=message.config)
-            cell, result = registry.kernel.add_element(session, message.cell_id, element)
+            cell = registry.kernel.add_element(session, message.cell_id, element)
         except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
             return [ErrorMessage(message=str(exc), session_id=message.session_id, cell_id=message.cell_id)]
-        results = {cell.name: result}
+        # TODO.md #64 (collaboration rework): no more execution tail --
+        # see Kernel.add_element's own docstring.
         return [
             ElementAdded(
                 session_id=message.session_id,
@@ -1844,8 +1847,6 @@ def handle_message(
                 ],
                 layout=cell.layout,
             ),
-            *_results_to_messages(message.session_id, results),
-            *_element_output_messages(session, results, registry.kernel.deck),
         ]
 
     if isinstance(message, RemoveElement):
@@ -1855,10 +1856,11 @@ def handle_message(
         # TODO.md #68: NOT gated by review_mode -- see SetMainCell's own
         # comment above for why.
         try:
-            cell, result = registry.kernel.remove_element(session, message.cell_id, message.element_name)
+            cell = registry.kernel.remove_element(session, message.cell_id, message.element_name)
         except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
             return [ErrorMessage(message=str(exc), session_id=message.session_id, cell_id=message.cell_id)]
-        results = {cell.name: result}
+        # TODO.md #64 (collaboration rework): no more execution tail --
+        # see Kernel.remove_element's own docstring.
         return [
             ElementRemoved(
                 session_id=message.session_id,
@@ -1870,8 +1872,6 @@ def handle_message(
                 ],
                 layout=cell.layout,
             ),
-            *_results_to_messages(message.session_id, results),
-            *_element_output_messages(session, results, registry.kernel.deck),
         ]
 
     if isinstance(message, RemovePrimaryEditor):
@@ -1881,10 +1881,11 @@ def handle_message(
         # TODO.md #68: NOT gated by review_mode -- see SetMainCell's own
         # comment above for why.
         try:
-            cell, result = registry.kernel.remove_primary_editor(session, message.cell_id)
+            cell = registry.kernel.remove_primary_editor(session, message.cell_id)
         except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
             return [ErrorMessage(message=str(exc), session_id=message.session_id, cell_id=message.cell_id)]
-        results = {cell.name: result}
+        # TODO.md #64 (collaboration rework): no more execution tail --
+        # see Kernel.remove_primary_editor's own docstring.
         return [
             PrimaryEditorRemoved(
                 session_id=message.session_id,
@@ -1896,8 +1897,6 @@ def handle_message(
                 ],
                 layout=cell.layout,
             ),
-            *_results_to_messages(message.session_id, results),
-            *_element_output_messages(session, results, registry.kernel.deck),
         ]
 
     if isinstance(message, AddPrimaryEditor):
@@ -1907,10 +1906,11 @@ def handle_message(
         # TODO.md #68: NOT gated by review_mode -- see SetMainCell's own
         # comment above for why.
         try:
-            cell, result = registry.kernel.add_primary_editor(session, message.cell_id)
+            cell = registry.kernel.add_primary_editor(session, message.cell_id)
         except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
             return [ErrorMessage(message=str(exc), session_id=message.session_id, cell_id=message.cell_id)]
-        results = {cell.name: result}
+        # TODO.md #64 (collaboration rework): no more execution tail --
+        # see Kernel.add_primary_editor's own docstring.
         return [
             PrimaryEditorAdded(
                 session_id=message.session_id,
@@ -1922,8 +1922,6 @@ def handle_message(
                 ],
                 layout=cell.layout,
             ),
-            *_results_to_messages(message.session_id, results),
-            *_element_output_messages(session, results, registry.kernel.deck),
         ]
 
     if isinstance(message, ReorderElements):

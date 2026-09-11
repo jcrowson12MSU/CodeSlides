@@ -1094,7 +1094,7 @@ class Kernel:
             "stderr": result["stderr"],
         }
 
-    def add_cell(self, session: Session) -> tuple[Cell, ExecutionResult]:
+    def add_cell(self, session: Session) -> Cell:
         """Add a brand-new, blank `instance="editable"` cell (TODO.md
         #21) -- appended to the deck's `.py` file on disk immediately
         (not staged behind the Save button, unlike an edit to an
@@ -1113,14 +1113,22 @@ class Kernel:
         most of this test suite).
 
         Backfills `session`'s own `instances` for the new cell via
-        `Session.seed_cell_instance` -- without this, the very next
-        `run_all`/`on_cell_edited` in *this* session would `KeyError`
-        on `session.instances[new_name]`, since every such lookup
-        assumes every cell in the graph already has an instance. Then
-        runs the new cell once (its body is just `pass`, so this mostly
-        exists for consistency -- every other cell is running-state by
-        the time an author sees it, a blank cell shouldn't look
-        conspicuously different)."""
+        `Session.seed_cell_instance` -- without this, a later
+        `on_cell_edited`/`on_element_changed` in *this* session would
+        `KeyError` on `session.instances[new_name]`, since every such
+        lookup assumes every cell in the graph already has an instance.
+
+        TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        section 3: no longer runs the new cell at all -- this used to
+        call `_run_cells([name], session)` purely "for consistency"
+        (its own former docstring's words: a blank `pass`-bodied cell
+        produces nothing meaningful to show, unlike `add_title_slide`'s
+        own real content). The server never executes cell code any more
+        (every browser runs its own Pyodide instance against its own
+        local view of the deck's sources); pyodideKernel.ts's own
+        runCellClientSide is what App.tsx now calls once it sees this
+        new cell in a `CellAdded` reply, matching every other
+        structural-change reply's same pattern."""
         if self.deck_path is None:
             raise ValueError("cannot add a cell: this Kernel was not started from a deck file")
 
@@ -1135,8 +1143,7 @@ class Kernel:
 
         cell = self.deck.cells[name]
         session.seed_cell_instance(name, cell)
-        results = self._run_cells([name], session)
-        return cell, results[name]
+        return cell
 
     def add_slide(
         self, title: str, cell_names: list[str], reveal_code: bool = False
@@ -1194,7 +1201,7 @@ class Kernel:
 
         self.reload_deck(load_deck(self.deck_path))
 
-    def add_title_slide(self, session: Session) -> tuple[Cell, Slide, ExecutionResult]:
+    def add_title_slide(self, session: Session) -> tuple[Cell, Slide]:
         """Create a title slide (TODO.md #61): a new `cs.md(...)` cell
         holding the deck's own title, a one-line summary placeholder, and
         a generated table of contents of the deck's other slides,
@@ -1208,11 +1215,14 @@ class Kernel:
 
         Backfills `session`'s own `instances` for the new cell (same
         reason as `add_cell`: every existing lookup assumes
-        `session.instances[cell_name]` always exists) and runs it once,
-        for the same "shouldn't look conspicuously unlike every other
-        cell by the time the author sees it" consistency `add_cell`
-        already established -- unlike a blank cell's `pass` body, this
-        one actually has real content to show immediately.
+        `session.instances[cell_name]` always exists).
+
+        TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        section 3: no longer runs the new cell -- unlike a blank
+        `add_cell` cell, this one has real `cs.md(...)` content, so the
+        client-side re-run App.tsx triggers off `TitleSlideAdded`
+        (mirroring `CellAdded`'s own pattern) is what makes it show up
+        immediately, not a server-side one.
 
         Requires `self.deck_path` (raises `ValueError` without one, same
         as `add_cell`/`add_slide`)."""
@@ -1230,9 +1240,8 @@ class Kernel:
 
         cell = self.deck.cells[cell_name]
         session.seed_cell_instance(cell_name, cell)
-        results = self._run_cells([cell_name], session)
         slide = next(s for s in self.deck.slides if s.title == slide_title)
-        return cell, slide, results[cell_name]
+        return cell, slide
 
     def rename_cell(self, session: Session, old_name: str, new_name: str) -> Cell:
         """Rename a cell's identity (TODO.md #22 -- the edit button's
@@ -1504,21 +1513,29 @@ class Kernel:
 
         self.reload_deck(load_deck(self.deck_path))
 
-    def add_element(self, session: Session, cell_name: str, element: Element) -> tuple[Cell, ExecutionResult]:
+    def add_element(self, session: Session, cell_name: str, element: Element) -> Cell:
         """Add `element` to `cell_name`'s `elements=[...]` list, on disk,
         immediately (TODO.md #22's element picker), then reload this
         Kernel's baseline synchronously, same pattern as `add_cell`.
 
         Backfills `session`'s own instance for the new element (via
         `Session.seed_cell_instance`, safe to call again for an
-        already-seeded cell -- it only fills in what's missing) and
-        re-runs the cell once so its status/output reflect the change
-        immediately, same as a freshly-added cell does.
+        already-seeded cell -- it only fills in what's missing).
 
         Also resyncs any pending, unsaved `session.source_overrides`
         entry for this cell (`_resync_stale_override`) -- otherwise a
         later Save would splice that override's now-stale `elements=[...]`
-        decorator back onto the file, silently reverting this add."""
+        decorator back onto the file, silently reverting this add.
+
+        TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        section 3: no longer re-runs the cell -- this used to be required
+        for a newly-added viewer element (e.g. `ui.image`) to show
+        anything at all (its `cs.image(...)` call has nowhere to write
+        until the cell actually runs). App.tsx now triggers the
+        equivalent client-side re-run (pyodideKernel.ts's
+        runCellClientSide) once it sees this cell's new element list in
+        `ElementAdded`'s reply, so the same "shows up immediately"
+        behavior holds without any server-side execution."""
         if self.deck_path is None:
             raise ValueError("cannot add an element: this Kernel was not started from a deck file")
         if cell_name not in self.deck.cells:
@@ -1535,10 +1552,9 @@ class Kernel:
 
         cell = self.deck.cells[cell_name]
         session.seed_cell_instance(cell_name, cell)
-        results = self._run_cells([cell_name], session)
-        return cell, results[cell_name]
+        return cell
 
-    def remove_element(self, session: Session, cell_name: str, element_name: str) -> tuple[Cell, ExecutionResult]:
+    def remove_element(self, session: Session, cell_name: str, element_name: str) -> Cell:
         """Remove the element named `element_name` from `cell_name`, on
         disk, immediately, then reload this Kernel's baseline
         synchronously -- the inverse of `add_element`.
@@ -1546,11 +1562,17 @@ class Kernel:
         Drops the element's now-stale `ElementInstance` from `session`'s
         own instance for this cell (a removed element's leftover value/
         content would otherwise linger in memory even though it's gone
-        from the Deck) and re-runs the cell once.
+        from the Deck).
 
         Also resyncs any pending, unsaved `session.source_overrides`
         entry for this cell (`_resync_stale_override`), same reasoning
-        as `add_element`."""
+        as `add_element`.
+
+        TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        section 3: no longer re-runs the cell -- App.tsx now triggers the
+        client-side equivalent (pyodideKernel.ts's runCellClientSide)
+        once it sees this cell's new (shorter) element list in
+        `ElementRemoved`'s reply, same reasoning as `add_element`."""
         if self.deck_path is None:
             raise ValueError("cannot remove an element: this Kernel was not started from a deck file")
         if cell_name not in self.deck.cells:
@@ -1569,30 +1591,31 @@ class Kernel:
         if cell_name in session.instances:
             session.instances[cell_name].elements.pop(element_name, None)
         session.seed_cell_instance(cell_name, cell)
-        results = self._run_cells([cell_name], session)
-        return cell, results[cell_name]
+        return cell
 
-    def remove_primary_editor(self, session: Session, cell_name: str) -> tuple[Cell, ExecutionResult]:
+    def remove_primary_editor(self, session: Session, cell_name: str) -> Cell:
         """Delete `cell_name`'s body code entirely, on disk, immediately,
         then reload this Kernel's baseline synchronously --
         CELL_QUADRANT_LAYOUT_TODO.md item 2b's confirmed "zero primary
         editor means zero body code" decision. Similar overall shape to
-        `remove_element` (reload, then re-run) but NOT `_resync_stale_
-        override`: that helper's whole job is to keep a pending, unsaved
-        source_overrides entry's *body* byte-identical while only
-        regenerating its decorator -- exactly wrong here, since this
-        operation's entire point is to replace the body. Calling it
-        would silently keep the session showing (and a later Save
-        re-writing) the pre-removal body forever, even though the
-        on-disk cell is already a pass-bodied stub -- this was a real
-        bug, caught via a live browser session, not just reasoning about
-        the code: `session.source_overrides[cell_name]` must be dropped
-        entirely instead, so the freshly-reloaded `cell.source` (the new
-        stub) is what the browser is shown and what a later Save writes.
-        No `ElementInstance` to drop either -- the cell's own body is
-        what changed, not one of its elements -- so re-running it is
-        what reflects the change (a `pass`-bodied cell returns `None`,
-        same as any other cell whose body just returns nothing).
+        `remove_element` but NOT `_resync_stale_override`: that helper's
+        whole job is to keep a pending, unsaved source_overrides entry's
+        *body* byte-identical while only regenerating its decorator --
+        exactly wrong here, since this operation's entire point is to
+        replace the body. Calling it would silently keep the session
+        showing (and a later Save re-writing) the pre-removal body
+        forever, even though the on-disk cell is already a pass-bodied
+        stub -- this was a real bug, caught via a live browser session,
+        not just reasoning about the code: `session.source_overrides[cell_name]`
+        must be dropped entirely instead, so the freshly-reloaded
+        `cell.source` (the new stub) is what the browser is shown and
+        what a later Save writes.
+
+        TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        section 3: no longer re-runs the cell -- App.tsx now triggers the
+        client-side equivalent once it sees this cell's new (blank)
+        source in `PrimaryEditorRemoved`'s reply, same reasoning as
+        `remove_element`.
 
         `serialization.remove_primary_editor` itself raises
         `SaveConflictError` if `cell_name` still has a test editor (the
@@ -1616,10 +1639,9 @@ class Kernel:
 
         cell = self.deck.cells[cell_name]
         session.seed_cell_instance(cell_name, cell)
-        results = self._run_cells([cell_name], session)
-        return cell, results[cell_name]
+        return cell
 
-    def add_primary_editor(self, session: Session, cell_name: str) -> tuple[Cell, ExecutionResult]:
+    def add_primary_editor(self, session: Session, cell_name: str) -> Cell:
         """Restore `cell_name`'s body to a blank, editable starting
         point, on disk, immediately, then reload this Kernel's baseline
         synchronously -- the inverse of `remove_primary_editor`, same
@@ -1628,7 +1650,12 @@ class Kernel:
         resyncing it, same reasoning as `remove_primary_editor` above:
         the body just changed underneath whatever unsaved edit the
         override held, so there is nothing meaningful left to preserve
-        from it."""
+        from it.
+
+        TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        section 3: no longer re-runs the cell -- App.tsx now triggers the
+        client-side equivalent once it sees this cell's new source in
+        `PrimaryEditorAdded`'s reply, same reasoning as `add_element`."""
         if self.deck_path is None:
             raise ValueError("cannot add a primary editor: this Kernel was not started from a deck file")
         if cell_name not in self.deck.cells:
@@ -1645,8 +1672,7 @@ class Kernel:
 
         cell = self.deck.cells[cell_name]
         session.seed_cell_instance(cell_name, cell)
-        results = self._run_cells([cell_name], session)
-        return cell, results[cell_name]
+        return cell
 
     def reorder_elements(self, session: Session, cell_name: str, element_order: list[str]) -> Cell:
         """Reorder `cell_name`'s elements to match `element_order`, on

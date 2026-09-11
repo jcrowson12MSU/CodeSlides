@@ -1154,11 +1154,13 @@ def test_add_cell_appends_a_blank_editable_cell_to_disk(tmp_path):
     session = Session(deck=deck)
     kernel.run_all(session)
 
-    cell, result = kernel.add_cell(session)
+    # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    # section 3: add_cell no longer executes the new cell at all (see its
+    # own docstring) -- there is no more ExecutionResult to unpack.
+    cell = kernel.add_cell(session)
 
     assert cell.name == "cell_1"
     assert cell.instance == "editable"
-    assert result.status == "idle"
     assert "def cell_1():" in path.read_text()
     # the Kernel's own baseline picked up the new cell too, not just the file
     assert "cell_1" in kernel.deck.cells
@@ -1173,7 +1175,7 @@ def test_add_cell_backfills_the_requesting_sessions_instances(tmp_path):
     session = Session(deck=deck)
     kernel.run_all(session)
 
-    cell, _ = kernel.add_cell(session)
+    cell = kernel.add_cell(session)
 
     # without backfilling, the very next run_all would KeyError on
     # session.instances["cell_1"] -- confirm it doesn't
@@ -1190,8 +1192,8 @@ def test_add_cell_twice_picks_different_names(tmp_path):
     session = Session(deck=deck)
     kernel.run_all(session)
 
-    cell1, _ = kernel.add_cell(session)
-    cell2, _ = kernel.add_cell(session)
+    cell1 = kernel.add_cell(session)
+    cell2 = kernel.add_cell(session)
 
     assert cell1.name != cell2.name
     assert {cell1.name, cell2.name} == {"cell_1", "cell_2"}
@@ -1221,7 +1223,7 @@ def test_add_cell_does_not_affect_a_different_sessions_instances(tmp_path):
     kernel.run_all(session_a)
     kernel.run_all(session_b)
 
-    cell, _ = kernel.add_cell(session_a)
+    cell = kernel.add_cell(session_a)
 
     assert cell.name in session_a.instances
     assert cell.name not in session_b.instances
@@ -1702,10 +1704,12 @@ def test_add_element_updates_disk_kernel_and_session(tmp_path):
     session = Session(deck=deck)
     kernel.run_all(session)
 
-    cell, result = kernel.add_element(session, "setup", ui.slider("multiplier", min=1, max=5, default=2))
+    # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    # section 3: add_element no longer re-runs the cell (see its own
+    # docstring) -- there is no more ExecutionResult to unpack.
+    cell = kernel.add_element(session, "setup", ui.slider("multiplier", min=1, max=5, default=2))
 
     assert [e.name for e in cell.elements] == ["multiplier"]
-    assert result.status == "idle"
     assert "multiplier" in kernel.deck.cells["setup"].elements[0].name
     assert "multiplier" in session.instances["setup"].elements
     assert "ui.slider('multiplier'" in path.read_text()
@@ -1768,14 +1772,15 @@ def test_remove_element_updates_disk_kernel_and_session(tmp_path):
     session = Session(deck=deck)
     kernel.run_all(session)
 
-    cell, result = kernel.remove_element(session, "live_demo", "speed")
+    # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    # section 3: remove_element no longer re-runs the cell -- there is
+    # no more ExecutionResult to unpack, and no cell status/output left
+    # to assert on server-side (the "speed" unbound-required-param/
+    # define-not-call distinction this test used to also check is now
+    # purely a client-side (pyodideKernel.ts) concern).
+    cell = kernel.remove_element(session, "live_demo", "speed")
 
     assert cell.elements == []
-    # `speed` has no default and, with its slider gone, no matching
-    # element either -- an unbound required parameter, so the cell is
-    # safely defined-but-not-called (_has_unbound_required_param)
-    # rather than auto-called with `speed` missing entirely.
-    assert result.status == "idle"
     assert "speed" not in session.instances["live_demo"].elements
     assert "ui.slider" not in path.read_text()
 
@@ -1793,7 +1798,7 @@ def test_remove_element_raises_if_the_element_does_not_exist(tmp_path):
         kernel.remove_element(session, "live_demo", "does_not_exist")
 
 
-def test_remove_primary_editor_updates_disk_kernel_and_reruns(tmp_path):
+def test_remove_primary_editor_updates_disk_and_kernel(tmp_path):
     from codeslides.loader import load_deck
 
     path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
@@ -1802,11 +1807,13 @@ def test_remove_primary_editor_updates_disk_kernel_and_reruns(tmp_path):
     session = Session(deck=deck)
     kernel.run_all(session)
 
-    cell, result = kernel.remove_primary_editor(session, "live_demo")
+    # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    # section 3: remove_primary_editor no longer re-runs the cell -- no
+    # more ExecutionResult to unpack.
+    cell = kernel.remove_primary_editor(session, "live_demo")
 
     assert "def live_demo(speed):\n    pass" in cell.source
     assert "ui.slider('speed'" in cell.source  # element preserved
-    assert result.status == "idle"
     assert "def live_demo(speed):\n    pass" in kernel.deck.cells["live_demo"].source
     assert "result = speed * 2" not in path.read_text()
 
@@ -1825,7 +1832,7 @@ def test_remove_primary_editor_raises_if_the_cell_has_a_test_element(tmp_path):
         kernel.remove_primary_editor(session, "live_demo")
 
 
-def test_add_primary_editor_restores_a_pass_stub_and_reruns(tmp_path):
+def test_add_primary_editor_restores_a_pass_stub(tmp_path):
     from codeslides.loader import load_deck
 
     path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
@@ -1835,10 +1842,12 @@ def test_add_primary_editor_restores_a_pass_stub_and_reruns(tmp_path):
     kernel.run_all(session)
     kernel.remove_primary_editor(session, "live_demo")
 
-    cell, result = kernel.add_primary_editor(session, "live_demo")
+    # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    # section 3: add_primary_editor no longer re-runs the cell -- no
+    # more ExecutionResult to unpack.
+    cell = kernel.add_primary_editor(session, "live_demo")
 
     assert "pass" in cell.source
-    assert result.status == "idle"
 
 
 def test_remove_primary_editor_drops_a_stale_pending_source_override(tmp_path):
@@ -1871,7 +1880,7 @@ def test_remove_primary_editor_drops_a_stale_pending_source_override(tmp_path):
     )
     assert "speed * 99" in session.source_overrides["live_demo"]
 
-    cell, _ = kernel.remove_primary_editor(session, "live_demo")
+    cell = kernel.remove_primary_editor(session, "live_demo")
 
     assert "live_demo" not in session.source_overrides
     assert "pass" in cell.source
@@ -1897,7 +1906,7 @@ def test_add_primary_editor_drops_a_stale_pending_source_override(tmp_path):
     )
     assert "live_demo" in session.source_overrides
 
-    cell, _ = kernel.add_primary_editor(session, "live_demo")
+    cell = kernel.add_primary_editor(session, "live_demo")
 
     assert "live_demo" not in session.source_overrides
     assert "stale in-progress edit" not in cell.source

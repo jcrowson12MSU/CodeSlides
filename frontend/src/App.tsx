@@ -589,10 +589,41 @@ function App() {
   // ErrorMessage carry no cell_id for the message-scan loop below to key
   // an error off of the way editErrors does for cell-level actions.
   const addSlidePending = useRef(false)
+  // TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+  // section 3: cell_added/title_slide_added/element_added/element_removed/
+  // primary_editor_added/primary_editor_removed used to each also carry
+  // a server-computed cell_status/cell_output/element_output tail (the
+  // structural Kernel method's own re-run of the affected cell,
+  // immediately after the disk write) -- removed now that none of those
+  // 6 Kernel methods execute anything server-side any more (see each of
+  // their own docstrings). What every one of them still needs is the
+  // exact same "shows up immediately, not stale until an unrelated
+  // future edit happens to trigger a run" behavior the server-side
+  // re-run used to provide -- just achieved client-side now. This ref
+  // collects the cell ids these 6 message types name, for the *separate*
+  // effect below (keyed on `deck`, not `messages`) to actually run once
+  // `deck.cells` reflects the new structure -- calling runCellClientSide
+  // directly inside this effect's own `setDeck` updater isn't an option
+  // (React state updaters must be pure, and `deck` here is still the
+  // stale pre-update value until next render).
+  const cellsNeedingClientRerun = useRef<Set<string>>(new Set())
   useEffect(() => {
     const newMessages = messages.slice(processedMessageCount.current)
     processedMessageCount.current = messages.length
     if (newMessages.length === 0) return
+
+    for (const msg of newMessages) {
+      if (
+        msg.type === 'cell_added' ||
+        msg.type === 'title_slide_added' ||
+        msg.type === 'element_added' ||
+        msg.type === 'element_removed' ||
+        msg.type === 'primary_editor_added' ||
+        msg.type === 'primary_editor_removed'
+      ) {
+        cellsNeedingClientRerun.current.add(msg.cell_id)
+      }
+    }
 
     setDeck((prev) => {
       if (!prev) return prev
@@ -825,6 +856,40 @@ function App() {
       })
     }
   }, [messages])
+
+  // TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+  // section 3: drains `cellsNeedingClientRerun` (populated above,
+  // whenever cell_added/title_slide_added/element_added/element_removed/
+  // primary_editor_added/primary_editor_removed arrives) once `deck`
+  // itself has actually been updated with the new structure -- a
+  // separate effect, not inline in the one above, because `deck` there
+  // is still last render's value until this component re-renders with
+  // the `setDeck` call already applied. Each pending cell id is re-run
+  // via the exact same client-side path Shift+Enter/Run All use
+  // (runCellClientSide, currentCellInputs()) -- this is what makes a
+  // freshly-added cell/element/primary-editor show real output
+  // immediately instead of looking stale until an unrelated future edit
+  // happens to trigger a run, the same "shouldn't look conspicuously
+  // different" guarantee the removed server-side re-run used to provide.
+  useEffect(() => {
+    if (!deck) return
+    const pending = cellsNeedingClientRerun.current
+    if (pending.size === 0) return
+    cellsNeedingClientRerun.current = new Set()
+    for (const cellId of pending) {
+      if (!deck.cells[cellId]) continue
+      runCellClientSide(cellId, currentCellInputs())
+        .then(applyClientExecutionResults)
+        .catch((err: unknown) => reportClientExecutionError(cellId, err))
+    }
+    // currentCellInputs/applyClientExecutionResults/reportClientExecutionError
+    // are plain function declarations recreated every render, not
+    // memoized -- listing them would re-fire this effect on every
+    // render instead of only when `deck` itself changes, same
+    // "eslint-disable, not a real missing dependency" precedent the
+    // sessionId/deck bootstrap effect above already uses.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deck])
 
   // TODO.md #64 (element/input-binding slice): mirrors handleRunCell/
   // handleRunAll below -- the value change runs entirely client-side via
