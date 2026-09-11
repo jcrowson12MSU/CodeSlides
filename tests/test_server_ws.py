@@ -284,9 +284,112 @@ def test_websocket_shared_document_broadcasts_edits_to_other_peers():
 # above). PushCellState's own "a second push always replaces the pending
 # snapshot in place, never queues" semantics (session.py's
 # PendingCellState docstring) is the accept-gated era's closest
-# analogue, already covered at the ws_handler unit level -- no
-# integration-level replacement written here, out of scope for this
-# rework's own frontend-driving slice.
+# analogue -- see test_websocket_second_push_replaces_first_pending_push
+# below (a prior version of this comment claimed this was "already
+# covered at the ws_handler unit level"; that was wrong -- no such
+# coverage existed anywhere in the suite, hence the test added here).
+
+
+def test_websocket_second_push_replaces_first_pending_push(tmp_path):
+    """TODO.md #68/#64: session.py's PendingCellState docstring promises
+    a second push_cell_state for the same cell replaces the pending
+    snapshot outright, never queues -- this is the accept-gated era's
+    closest analogue to the old always-live last-write-wins behavior
+    (the deleted test_websocket_shared_document_concurrent_cell_edits_last_write_wins
+    above), so it gets its own direct coverage rather than only living
+    in a docstring. Alice pushes twice before anyone accepts; Bob (the
+    other peer) must see a fresh cell_state_pushed for each push, and
+    accepting afterward must apply Alice's SECOND source, never her
+    first."""
+    from codeslides.loader import load_deck
+
+    deck_path = _write_structural_deck(tmp_path)
+    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=True)) as client:
+        with (
+            client.websocket_connect("/ws?document=struct-second-push") as ws_a,
+            client.websocket_connect("/ws?document=struct-second-push") as ws_b,
+        ):
+            ws_a.receive_json()
+            ws_b.receive_json()
+            ws_a.send_json(
+                {"type": "join", "session_id": "struct-second-push", "display_name": "Alice"}
+            )
+            ws_a.receive_json()  # join_ack
+            ws_b.receive_json()  # presence_update
+
+            # push_cell_state's own broadcast (TODO.md #66-iii) is
+            # followed by a system chat message on both sockets -- read
+            # defensively until we've seen the push notification rather
+            # than assuming a fixed count, same pattern the accept test
+            # above (_read_until_chat_message) already uses for its own
+            # reply sequence.
+            def _read_until(ws, wanted_type):
+                messages = []
+                for _ in range(12):
+                    msg = ws.receive_json()
+                    messages.append(msg)
+                    if msg["type"] == wanted_type:
+                        return msg, messages
+                raise AssertionError(f"never saw {wanted_type!r} among {messages}")
+
+            ws_a.send_json(
+                {
+                    "type": "push_cell_state",
+                    "session_id": "struct-second-push",
+                    "cell_id": "cell_a",
+                    "new_cell_id": "cell_a",
+                    "source": "def cell_a():\n    a = 111\n    return a\n",
+                    "test_sources": {},
+                    "notes_sources": {},
+                    "hide_code": False,
+                    "hide_def": False,
+                }
+            )
+            first_push, _ = _read_until(ws_b, "cell_state_pushed")
+            _read_until(ws_a, "chat_message_received")  # pusher's own echo
+            _read_until(ws_b, "chat_message_received")
+
+            # Alice pushes again, same cell, before Bob accepts either one.
+            ws_a.send_json(
+                {
+                    "type": "push_cell_state",
+                    "session_id": "struct-second-push",
+                    "cell_id": "cell_a",
+                    "new_cell_id": "cell_a",
+                    "source": "def cell_a():\n    a = 222\n    return a\n",
+                    "test_sources": {},
+                    "notes_sources": {},
+                    "hide_code": False,
+                    "hide_def": False,
+                }
+            )
+            second_push, _ = _read_until(ws_b, "cell_state_pushed")
+            _read_until(ws_a, "chat_message_received")
+            _read_until(ws_b, "chat_message_received")
+            assert second_push["type"] == "cell_state_pushed"
+
+            session = client.app.state.registry.get("struct-second-push")
+            # Only one pending snapshot ever exists for this cell -- the
+            # second push replaced the first outright, it did not queue
+            # alongside it.
+            assert session.instances["cell_a"].pending_state.source == (
+                "def cell_a():\n    a = 222\n    return a\n"
+            )
+
+            ws_b.send_json(
+                {
+                    "type": "accept_cell_state",
+                    "session_id": "struct-second-push",
+                    "cell_id": "cell_a",
+                    "proposer_user_id": first_push["proposer_user_id"],
+                }
+            )
+            _, accept_replies = _read_until(ws_b, "chat_message_received")
+            source_reply = next(m for m in accept_replies if m["type"] == "cell_source_changed")
+            # The applied source is Alice's SECOND push, never her first
+            # (discarded) one.
+            assert "a = 222" in source_reply["source"]
+            assert "a = 111" not in source_reply["source"]
 
 
 # TODO.md #46g-ii/#46g-iii/#46g-vi's own
