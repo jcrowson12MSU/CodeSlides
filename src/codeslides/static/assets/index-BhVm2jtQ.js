@@ -113,35 +113,50 @@ def _kwargs_for(cell_name, fn, elements):
             kwargs[element.name] = element.config.get("default")
     return kwargs
 
+def _find_turtle_canvas(elements):
+    """kernel.py's own _find_turtle_canvas, unchanged: the cell's one
+    turtle_canvas element, if it has exactly one -- codeslides.turtle
+    calls have no way to name a target themselves (unlike cs.image/
+    cs.iframe) without breaking stdlib turtle call syntax, so zero or
+    more than one canvas is treated the same as none; turtle calls will
+    raise from turtle._state() either way."""
+    canvases = [e.name for e in elements if e.kind == "turtle_canvas"]
+    return canvases[0] if len(canvases) == 1 else None
+
 def _execute_one(cell_name, source, elements):
     """Mirrors kernel.py's execute_cell: run the cell's function against
     the shared _namespace (its real __globals__, via plain exec into
     _namespace itself -- so a global x write lands permanently, same
     guarantee _compile_cell_function documents), bind input-element
     values as kwargs (_kwargs_for), run the call inside
-    cs.execution_context() so cs.image()/cs.iframe() calls have
-    somewhere to record their writes, then -- critically -- bind the
-    call's result back into _namespace under its return-named name(s)
-    (kernel.py lines ~471-485), exactly like a bare 'return name' or
-    'return a, b' cell publishes name/a/b for any other cell to read by
-    ordinary Python name resolution. Without that step, a downstream
-    cell reading an upstream cell's returned value (not just calling its
-    function directly) would always see a NameError, regardless of run
-    order.
-
-    turtle_canvas is deliberately not handled here -- codeslides.turtle
-    calls need their own execution_context (_maybe_turtle_context in
-    kernel.py), a separate later slice; a cell with a turtle_canvas
-    element still runs fine here, its turtle.* calls just raise (same
-    as execute_cell's own behavior with no valid canvas target),
-    reported as this cell's own error like any other exception."""
+    cs.execution_context() (so cs.image()/cs.iframe() calls have
+    somewhere to record their writes) and, when the cell has exactly one
+    turtle_canvas element, also inside turtle.execution_context() (same
+    "only establish it when there's a valid target" rule as kernel.py's
+    _maybe_turtle_context -- a cell with zero or multiple canvases still
+    runs, its turtle.* calls just raise from turtle._state(), reported
+    as this cell's own error like any other exception), then --
+    critically -- bind the call's result back into _namespace under its
+    return-named name(s) (kernel.py lines ~471-485), exactly like a bare
+    'return name' or 'return a, b' cell publishes name/a/b for any other
+    cell to read by ordinary Python name resolution. Without that step,
+    a downstream cell reading an upstream cell's returned value (not
+    just calling its function directly) would always see a NameError,
+    regardless of run order."""
     stdout, stderr = io.StringIO(), io.StringIO()
+    turtle_element = _find_turtle_canvas(elements)
     try:
         return_names = _return_names_for(source)
         exec(compile(source, f"<cell:{cell_name}>", "exec"), _namespace)
         fn = _namespace[cell_name]
         kwargs = _kwargs_for(cell_name, fn, elements)
-        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), cs.execution_context() as writes:
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(contextlib.redirect_stdout(stdout))
+            stack.enter_context(contextlib.redirect_stderr(stderr))
+            writes = stack.enter_context(cs.execution_context())
+            turtle_commands = (
+                stack.enter_context(turtle.execution_context()) if turtle_element is not None else None
+            )
             value = fn(**kwargs)
         if len(return_names) == 1:
             _namespace[return_names[0]] = value
@@ -153,6 +168,17 @@ def _execute_one(cell_name, source, elements):
                 )
             for name, item in zip(return_names, values):
                 _namespace[name] = item
+        # kernel.py's own execute_cell folds the turtle write into the
+        # same writes list cs.image/cs.iframe populate (both go
+        # through the identical "validate every element name, then
+        # apply all-or-nothing" handling below) -- replicated here
+        # rather than treated as a separate append after validation, so
+        # an invalid turtle_canvas element name (impossible in practice
+        # since _find_turtle_canvas only ever returns a name that's
+        # actually in elements, but kept for exact parity) hits the
+        # same check.
+        if turtle_commands and turtle_element is not None:
+            writes.append(cs.ElementWrite(element_name=turtle_element, kind="turtle", content=turtle_commands))
         element_names = {e.name for e in elements}
         for write in writes:
             if write.element_name not in element_names:
