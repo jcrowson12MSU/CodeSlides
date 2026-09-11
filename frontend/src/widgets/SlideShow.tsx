@@ -317,6 +317,7 @@ export function SlideShow({
               // stuck collapsed here with no way to expand it back.
               collapsed={false}
               hideHeader
+              hideNotifications={headerCollapsed}
               viewerMode={viewerMode}
               reviewMode={reviewMode}
               ownUserId={ownUserId}

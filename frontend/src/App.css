@@ -1770,6 +1770,25 @@ body.cs-slides-locked {
   background: #fcefc7;
 }
 
+/* Discard (give up this cell's own local un-pushed edit) is a plain
+   `<button>` up to this point -- no visual treatment at all, unlike
+   every other notification button (Push's blue, Accept/Reject's
+   default, the proposal variant's amber). A neutral gray accent, not
+   Push's blue (this isn't the primary action) and not
+   `.cs-delete-cell-button`'s red (discarding a local, un-pushed draft
+   is reversible by just editing again -- nowhere near as destructive
+   as deleting the cell itself), reads as "the secondary, walk-away
+   option" sitting next to Push. */
+.cs-header-notification-toggle-discard {
+  border-color: #ccc;
+  background: #f4f4f4;
+  color: #555;
+}
+
+.cs-header-notification-toggle-discard:hover {
+  background: #e8e8e8;
+}
+
 /* TODO.md #68: groups a notification's own label/toggle with its
    action button(s) (Push+Discard, or Accept+Reject/Withdraw) so they
    sit together as one visual unit in the header row. */
