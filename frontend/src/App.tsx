@@ -486,13 +486,31 @@ function App() {
     }
   }, [helpOpen])
 
+  // TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+  // section 3: this used to send a `run_all` websocket message, back
+  // when the server actually executed cells and broadcast the results.
+  // The server no longer executes anything in response to any network
+  // message (kernel.py's own run_all/on_cell_edited/on_element_changed
+  // docstrings) -- sending it was already a no-op, just a pointless
+  // round trip. Calls handleRunAll() (the same client-side path the Run
+  // All button/shortcut already uses) instead, so opening a deck still
+  // runs it automatically -- the one user-visible behavior this effect
+  // exists for -- with zero server involvement. Gated on `deck` as well
+  // as `sessionId` (not just `sessionId`, the original condition):
+  // `deck` loads via its own independent `fetch('/api/deck')` effect
+  // above, with no ordering relative to the websocket handshake that
+  // produces `sessionId` -- `handleRunAll`'s own `currentCellInputs()`
+  // silently returns `{}` for a still-null `deck` (see its own
+  // docstring), which would otherwise mean "run nothing" if this effect
+  // fired before the deck fetch resolved.
   useEffect(() => {
-    if (sessionId) {
-      send({ type: 'run_all', session_id: sessionId })
+    if (sessionId && deck) {
+      handleRunAll()
     }
-    // run_all only needs to fire once per new session
+    // run_all only needs to fire once per new session, once the deck is
+    // also available -- not on every subsequent deck update thereafter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId])
+  }, [sessionId, Boolean(deck)])
 
   useEffect(() => {
     const last = messages[messages.length - 1]
