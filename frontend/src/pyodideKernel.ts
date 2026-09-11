@@ -1,13 +1,30 @@
 // TODO.md #64/PROPOSAL_pyscript_execution.md: client-side cell execution
-// via Pyodide. Loads Pyodide once per page load (from a CDN, per the
-// user's own explicit choice for this early slice -- see the
-// proposal's section 1 note on Pyodide hosting; self-hosting the ~10MB
-// runtime can be revisited once this slice is proven out), writes the
-// real, unmodified deck.py/graph.py/cs.py/output.py/turtle.py into
-// Pyodide's virtual filesystem as a real importable `codeslides`
-// package (exactly the FS layout pyscript_spike/spike2_real_modules.html
-// already proved works), and exposes functions shaped to drop straight
-// into `CellState` (deckState.ts) with zero server round trip.
+// via Pyodide. Loads Pyodide once per page load from jsdelivr's public
+// CDN, writes the real, unmodified deck.py/graph.py/cs.py/output.py/
+// turtle.py into Pyodide's virtual filesystem as a real importable
+// `codeslides` package (exactly the FS layout pyscript_spike/
+// spike2_real_modules.html already proved works), and exposes
+// functions shaped to drop straight into `CellState` (deckState.ts)
+// with zero server round trip.
+//
+// Revisited (#64-v, once the structural-ops/tests-element/loading-
+// indicator slices were all proven out): staying on the CDN rather
+// than vendoring Pyodide into this repo's own static assets.
+// PYODIDE_CDN_URL below pins an exact version (v0.29.4/full), so
+// jsdelivr already gives version stability, not a moving target. The
+// wasm runtime core alone is ~8.6MB (confirmed against the live CDN
+// URL) -- self-hosting the full distribution would mean either
+// committing tens of MB into this repo (the same "static/ bundle is
+// committed, not gitignored" convention frontend/ already uses for its
+// own build output, but at a very different scale) or standing up a
+// separate asset pipeline/CDN of this project's own, plus an ongoing
+// version-bump maintenance burden, for a widely-used, long-lived
+// public CDN with its own global edge caching (likely faster for most
+// students than anything this project could host itself) and no
+// reported reliability/security incident motivating a change. Worth
+// revisiting again only if a real problem with the CDN dependency
+// actually surfaces (an outage, a corporate/school network that blocks
+// jsdelivr, etc.) -- not proactively.
 //
 // TODO.md #64 (dependency-graph slice): mirrors kernel.py's
 // _effective_graph/on_cell_edited/run_all/_run_cells shape, using the
