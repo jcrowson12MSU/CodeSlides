@@ -1,4 +1,5 @@
 import time
+from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
@@ -273,221 +274,32 @@ def test_websocket_shared_document_broadcasts_edits_to_other_peers():
             assert peer_output["output"]["value"] == 40
 
 
-def test_websocket_shared_document_concurrent_cell_edits_last_write_wins():
-    """TODO.md #46b-i: when two peers both edit the *same* cell's source
-    on a shared document, last-write-wins -- the second `edit_cell`
-    overwrites the first's `session.source_overrides` entry outright (no
-    merge), and critically the *first* peer (whose edit was discarded)
-    still receives the winning source via broadcast, so their editor
-    reflects the actual current state rather than silently going stale.
-    This is deliberately naive (per 46b-iii: acceptable data loss for the
-    target classroom use case, not a CRDT/OT merge) -- this test locks in
-    that exact behavior, not a smarter one."""
-    with TestClient(create_app(_build_deck())) as client:
-        with (
-            client.websocket_connect("/ws?document=classroom-5") as ws_a,
-            client.websocket_connect("/ws?document=classroom-5") as ws_b,
-        ):
-            ws_a.receive_json()  # session_created
-            ws_b.receive_json()  # session_created
-
-            ws_a.send_json({"type": "run_all", "session_id": "classroom-5"})
-            for _ in range(4):
-                ws_a.receive_json()
-            for _ in range(4):
-                ws_b.receive_json()  # broadcast of ws_a's run_all
-
-            # Peer A edits live_demo first...
-            ws_a.send_json(
-                {
-                    "type": "edit_cell",
-                    "session_id": "classroom-5",
-                    "cell_id": "live_demo",
-                    "source": (
-                        "def live_demo(speed):\n    result = base * speed + 1\n    return result\n"
-                    ),
-                }
-            )
-            ws_a.receive_json()  # cell_source_changed (own reply, TODO.md #46b-i)
-            ws_a.receive_json()  # cell_status (own reply)
-            a_own_output = ws_a.receive_json()
-            assert a_own_output["output"]["value"] == 16  # 5 * 3 + 1
-            b_source_changed = ws_b.receive_json()  # broadcast cell_source_changed
-            assert b_source_changed["type"] == "cell_source_changed"
-            assert "+ 1" in b_source_changed["source"]
-            ws_b.receive_json()  # broadcast cell_status
-            ws_b.receive_json()  # broadcast cell_output (A's edit reaches B too)
-
-            # ...then peer B edits the *same* cell before anyone reconciles --
-            # B's edit must win outright, discarding A's.
-            ws_b.send_json(
-                {
-                    "type": "edit_cell",
-                    "session_id": "classroom-5",
-                    "cell_id": "live_demo",
-                    "source": (
-                        "def live_demo(speed):\n    result = base * speed + 2\n    return result\n"
-                    ),
-                }
-            )
-            ws_b.receive_json()  # cell_source_changed (own reply)
-            ws_b.receive_json()  # cell_status (own reply)
-            b_own_output = ws_b.receive_json()
-            assert b_own_output["output"]["value"] == 17  # 5 * 3 + 2 -- B's edit applied
-
-            # Peer A -- whose edit was just discarded -- must be broadcast
-            # B's winning source and result, not left showing its own stale
-            # version (TODO.md #46b-i's whole point).
-            a_peer_source_changed = ws_a.receive_json()
-            assert a_peer_source_changed["type"] == "cell_source_changed"
-            assert "+ 2" in a_peer_source_changed["source"]
-            a_peer_status = ws_a.receive_json()
-            a_peer_output = ws_a.receive_json()
-            assert a_peer_status["type"] == "cell_status"
-            assert a_peer_output["output"]["value"] == 17
-
-            # The Session's source_overrides now holds only B's source --
-            # confirms this is outright overwrite, not any kind of merge.
-            session = client.app.state.registry.get("classroom-5")
-            assert "result = base * speed + 2" in session.source_overrides["live_demo"]
-            assert "+ 1" not in session.source_overrides["live_demo"]
+# TODO.md #46b-i's own test_websocket_shared_document_concurrent_cell_edits_last_write_wins
+# is deleted as of TODO.md #64 (collaboration rework)/
+# PROPOSAL_pyscript_execution.md section 2.2: it locked in edit_cell's
+# always-live immediate-broadcast last-write-wins behavior on a shared
+# document, a state no longer reachable at all now that every
+# collaborative document is accept-gated unconditionally (edit_cell is
+# always rejected there, see test_websocket_shared_document_always_review_mode_even_with_default_review_mode_false
+# above). PushCellState's own "a second push always replaces the pending
+# snapshot in place, never queues" semantics (session.py's
+# PendingCellState docstring) is the accept-gated era's closest
+# analogue, already covered at the ws_handler unit level -- no
+# integration-level replacement written here, out of scope for this
+# rework's own frontend-driving slice.
 
 
-def test_websocket_attribution_records_last_editor_per_cell():
-    """TODO.md #46g-ii/#46g-iii/#46g-vi: EditCell records who made the
-    change on the cell's own CellInstance -- derived entirely from the
-    connection's own joined identity (never a client-supplied field, so
-    there's nothing for a malicious client to spoof), attributed
-    correctly to each of two peers editing different cells."""
-    with TestClient(create_app(_build_overlapping_deps_deck())) as client:
-        with (
-            client.websocket_connect("/ws?document=attribution-1") as ws_a,
-            client.websocket_connect("/ws?document=attribution-1") as ws_b,
-        ):
-            ws_a.receive_json()  # session_created
-            ws_b.receive_json()  # session_created
-
-            ws_a.send_json({"type": "join", "session_id": "attribution-1", "display_name": "Alice"})
-            ws_a.receive_json()  # join_ack
-            ws_b.send_json({"type": "join", "session_id": "attribution-1", "display_name": "Bob"})
-            ws_b.receive_json()  # presence_update about Alice, or join_ack (order unspecified)
-            ws_b.receive_json()
-            ws_a.receive_json()  # presence_update about Bob joining
-
-            # run_all first, so both cell_a and cell_b (and so combined,
-            # which depends on both) start from a clean, fully-defined
-            # baseline -- otherwise editing just cell_a below would also
-            # re-run combined into a NameError (b undefined), an unrelated
-            # side effect that would make the exact reply count depend on
-            # the deck's error-reporting shape instead of just this test's
-            # own scenario.
-            ws_a.send_json({"type": "run_all", "session_id": "attribution-1"})
-            for _ in range(6):
-                ws_a.receive_json()
-            for _ in range(6):
-                ws_b.receive_json()
-
-            ws_a.send_json(
-                {
-                    "type": "edit_cell",
-                    "session_id": "attribution-1",
-                    "cell_id": "cell_a",
-                    "source": "def cell_a():\n    a = 100\n    return a\n",
-                }
-            )
-            # cell_source_changed, cell_status/cell_output for cell_a,
-            # cell_status/cell_output for combined (cell_a's only dependent),
-            # and (TODO.md #46g-iv) cell_attribution_changed -- sent to
-            # sender and peers alike, same as the other five.
-            a_own_replies = [ws_a.receive_json() for _ in range(6)]
-            b_broadcast_replies = [ws_b.receive_json() for _ in range(6)]
-            a_attribution = next(m for m in a_own_replies if m["type"] == "cell_attribution_changed")
-            assert a_attribution["cell_id"] == "cell_a"
-            assert a_attribution["last_edited_by"] == "Alice"
-            b_attribution = next(m for m in b_broadcast_replies if m["type"] == "cell_attribution_changed")
-            assert b_attribution == a_attribution
-
-            ws_b.send_json(
-                {
-                    "type": "edit_cell",
-                    "session_id": "attribution-1",
-                    "cell_id": "cell_b",
-                    "source": "def cell_b():\n    b = 1000\n    return b\n",
-                }
-            )
-            for _ in range(6):
-                ws_b.receive_json()  # own reply
-            for _ in range(6):
-                ws_a.receive_json()  # broadcast of B's edit
-
-            session = client.app.state.registry.get("attribution-1")
-            assert session.instances["cell_a"].last_edited_by == "Alice"
-            assert session.instances["cell_a"].last_edited_at is not None
-            assert session.instances["cell_b"].last_edited_by == "Bob"
-            assert session.instances["cell_b"].last_edited_at is not None
-            # combined was never directly edited by either peer (it only
-            # re-ran as a side effect of cell_a/cell_b's dependency graph) --
-            # confirms attribution isn't spuriously applied to every
-            # downstream cell an edit happens to affect, only the one
-            # actually named in the EditCell message.
-            assert session.instances["combined"].last_edited_by is None
-
-
-def test_websocket_attribution_survives_last_write_wins_discard():
-    """TODO.md #46g-vi: when two peers edit the *same* cell and
-    last-write-wins (46b-i) discards the first edit, the *surviving*
-    edit's attribution must be what's recorded -- not a stale
-    attribution from the discarded edit, and not the discarded editor's
-    name winning by having been recorded first."""
-    with TestClient(create_app(_build_deck())) as client:
-        with (
-            client.websocket_connect("/ws?document=attribution-2") as ws_a,
-            client.websocket_connect("/ws?document=attribution-2") as ws_b,
-        ):
-            ws_a.receive_json()
-            ws_b.receive_json()
-            ws_a.send_json({"type": "join", "session_id": "attribution-2", "display_name": "Alice"})
-            ws_a.receive_json()
-            ws_b.send_json({"type": "join", "session_id": "attribution-2", "display_name": "Bob"})
-            ws_b.receive_json()
-            ws_b.receive_json()
-            ws_a.receive_json()
-
-            # Alice edits live_demo first...
-            ws_a.send_json(
-                {
-                    "type": "edit_cell",
-                    "session_id": "attribution-2",
-                    "cell_id": "live_demo",
-                    "source": "def live_demo(speed):\n    result = base * speed + 1\n    return result\n",
-                }
-            )
-            for _ in range(4):
-                ws_a.receive_json()
-            for _ in range(4):
-                ws_b.receive_json()
-
-            session = client.app.state.registry.get("attribution-2")
-            assert session.instances["live_demo"].last_edited_by == "Alice"
-
-            # ...then Bob edits the same cell, discarding Alice's edit
-            # (last-write-wins, TODO.md #46b-i) -- attribution must flip to
-            # Bob, the surviving editor, not stay stuck on Alice.
-            ws_b.send_json(
-                {
-                    "type": "edit_cell",
-                    "session_id": "attribution-2",
-                    "cell_id": "live_demo",
-                    "source": "def live_demo(speed):\n    result = base * speed + 2\n    return result\n",
-                }
-            )
-            b_replies = [ws_b.receive_json() for _ in range(4)]
-            for _ in range(4):
-                ws_a.receive_json()
-
-            assert session.instances["live_demo"].last_edited_by == "Bob"
-            attribution = next(m for m in b_replies if m["type"] == "cell_attribution_changed")
-            assert attribution["last_edited_by"] == "Bob"
+# TODO.md #46g-ii/#46g-iii/#46g-vi's own
+# test_websocket_attribution_records_last_editor_per_cell and
+# test_websocket_attribution_survives_last_write_wins_discard are
+# deleted as of TODO.md #64 (collaboration rework)/
+# PROPOSAL_pyscript_execution.md section 2.2, same reasoning as the
+# deleted concurrent-edits test above: both drove attribution through
+# edit_cell on a shared document, a path always rejected now. Attribution
+# via the accept-gated path -- crediting the proposer, not whoever
+# clicked Accept -- is already covered by
+# test_websocket_accept_cell_state_applies_source_hide_and_rename_and_attributes_to_proposer
+# below.
 
 
 def test_websocket_solo_connection_edits_never_get_attributed():
@@ -515,103 +327,20 @@ def test_websocket_solo_connection_edits_never_get_attributed():
             assert session.instances["live_demo"].last_edited_by is None
 
 
-def test_websocket_shared_document_overlapping_edits_from_two_peers_never_corrupt_state():
-    """TODO.md #46c-iv: two peers editing *different* upstream cells that
-    both feed a shared downstream cell (overlapping rerun sets) must
-    queue and apply cleanly -- no torn/partial state in the shared
-    namespace, and the final downstream value reflects both edits.
-
-    Per TODO.md #46c-i/46c-iii's documented findings: this isn't actually
-    testing for a race (there isn't one -- kernel.py/ws_handler.py have
-    no `await` points, so one connection's full edit-then-rerun pass
-    always finishes before the event loop can read the next message from
-    *any* connection; there's no "mid-run" window for interleaving). This
-    test instead locks in the resulting behavior: back-to-back edits from
-    different peers each run to completion in arrival order (46c-ii's
-    "queue everything, no coalescing" policy), and the shared
-    `session.namespace`/`session.instances` never end up with a value
-    from only one of the two edits applied halfway."""
-    with TestClient(create_app(_build_overlapping_deps_deck())) as client:
-        with (
-            client.websocket_connect("/ws?document=race-1") as ws_a,
-            client.websocket_connect("/ws?document=race-1") as ws_b,
-        ):
-            ws_a.receive_json()  # session_created
-            ws_b.receive_json()  # session_created
-
-            ws_a.send_json({"type": "run_all", "session_id": "race-1"})
-            for _ in range(6):
-                ws_a.receive_json()
-            for _ in range(6):
-                ws_b.receive_json()  # broadcast of ws_a's run_all
-
-            # Peer A edits cell_a, peer B edits cell_b -- different cells,
-            # but both feed `combined`, so their rerun sets overlap on it.
-            ws_a.send_json(
-                {
-                    "type": "edit_cell",
-                    "session_id": "race-1",
-                    "cell_id": "cell_a",
-                    "source": "def cell_a():\n    a = 100\n    return a\n",
-                }
-            )
-            ws_b.send_json(
-                {
-                    "type": "edit_cell",
-                    "session_id": "race-1",
-                    "cell_id": "cell_b",
-                    "source": "def cell_b():\n    b = 1000\n    return b\n",
-                }
-            )
-
-            # Each edit_cell produces exactly 5 messages (cell_source_changed
-            # + cell_status/cell_output for the edited cell + cell_status/
-            # cell_output for combined), sent to sender and peer alike (10
-            # total per edit, sender + peer). Both connections must see both
-            # edits' full message sequences, in full, with no message from
-            # one edit's rerun interleaved with the other's -- collect all 20
-            # and check the *sets* of (cell_id, type) pairs group cleanly by
-            # edit rather than asserting a specific interleave order, since
-            # which of the two queued messages the server happened to read
-            # first is legitimately unspecified (46c-ii: FIFO by arrival,
-            # not by which peer "should" go first).
-            a_messages = [ws_a.receive_json() for _ in range(10)]
-            b_messages = [ws_b.receive_json() for _ in range(10)]
-
-            # Both connections must have received every message from both
-            # edits (broadcast means sender-and-peer both see everything).
-            # Whichever peer's edit_cell the server happens to read first is
-            # unspecified (46c-ii: FIFO by arrival, not by peer), so
-            # `combined`'s two re-run values are one of exactly two valid
-            # sequences depending on that arrival order -- either is
-            # correct, but nothing else is: a torn state combining new `a`
-            # with stale `b` (or vice versa) would show up as a *third*,
-            # wrong, intermediate value (e.g. 101 or 1001) that belongs to
-            # neither valid ordering.
-            valid_combined_sequences = ({110, 1100}, {1001, 1100})
-            combined_outputs_a = {
-                m["output"]["value"]
-                for m in a_messages
-                if m["type"] == "cell_output" and m["cell_id"] == "combined"
-            }
-            combined_outputs_b = {
-                m["output"]["value"]
-                for m in b_messages
-                if m["type"] == "cell_output" and m["cell_id"] == "combined"
-            }
-            assert combined_outputs_a in valid_combined_sequences
-            # Both connections are broadcasts of the same underlying event
-            # sequence -- they must agree on which ordering actually
-            # happened, not just each independently land on *some* valid one.
-            assert combined_outputs_a == combined_outputs_b
-
-            # Final namespace state, from either connection's Session
-            # reference, reflects both edits applied in full -- not a
-            # mid-edit torn combination of the two.
-            session = client.app.state.registry.get("race-1")
-            assert session.namespace["a"] == 100
-            assert session.namespace["b"] == 1000
-            assert session.namespace["total"] == 1100
+# TODO.md #46c-iv's own
+# test_websocket_shared_document_overlapping_edits_from_two_peers_never_corrupt_state
+# is deleted as of TODO.md #64 (collaboration rework)/
+# PROPOSAL_pyscript_execution.md section 2.2, same reasoning as the two
+# deletions above: it drove overlapping reruns through edit_cell on a
+# shared document, a path always rejected now. The no-torn-state
+# property it verified (kernel.py/ws_handler.py have no `await` points,
+# so one connection's full edit-then-rerun pass always finishes before
+# the next message is read) is still true of the server's execution
+# code, still exercisable via PushCellState+AcceptCellState (whose own
+# replay-through-handle_message still calls EditCell internally, review_
+# mode temporarily flipped off -- see AcceptCellState's handler) -- no
+# rewritten integration-level test written here, out of scope for this
+# rework's own frontend-driving slice.
 
 
 def test_websocket_shared_document_survives_reconnect_within_grace_period():
@@ -634,22 +363,24 @@ def test_websocket_shared_document_survives_reconnect_within_grace_period():
             for _ in range(4):
                 ws.receive_json()
 
-            ws.send_json(
-                {
-                    "type": "edit_cell",
-                    "session_id": "classroom-3",
-                    "cell_id": "live_demo",
-                    "source": (
-                        "def live_demo(speed):\n"
-                        "    result = base * speed + 1000\n"
-                        "    return result\n"
-                    ),
-                }
+            # TODO.md #64 (collaboration rework): edit_cell is always
+            # rejected on a shared document now (every collaborative
+            # document is accept-gated -- see
+            # test_websocket_shared_document_always_review_mode_even_with_default_review_mode_false
+            # above), so this test's own actual point -- a Session's
+            # accepted source surviving a reconnect within the grace
+            # period, not the source-editing mechanism itself -- is
+            # exercised by mutating source_overrides directly, the same
+            # server-side state edit_cell used to produce as its
+            # end effect.
+            session = client.app.state.registry.get("classroom-3")
+            session.source_overrides["live_demo"] = (
+                "def live_demo(speed):\n    result = base * speed + 1000\n    return result\n"
             )
-            ws.receive_json()  # cell_source_changed (TODO.md #46b-i)
-            ws.receive_json()  # cell_status
-            edited_output = ws.receive_json()
-            assert edited_output["output"]["value"] == 1015
+            ws.send_json({"type": "run_all", "session_id": "classroom-3"})
+            received = [ws.receive_json() for _ in range(4)]
+            outputs = {m["cell_id"]: m["output"]["value"] for m in received if m["type"] == "cell_output"}
+            assert outputs["live_demo"] == 1015
         # connection closed here; Session should be kept warm, not discarded
 
         with client.websocket_connect("/ws?document=classroom-3") as ws:
@@ -684,21 +415,17 @@ def test_websocket_shared_document_discarded_after_grace_period_expires():
             for _ in range(4):
                 ws.receive_json()
 
-            ws.send_json(
-                {
-                    "type": "edit_cell",
-                    "session_id": "classroom-4",
-                    "cell_id": "live_demo",
-                    "source": (
-                        "def live_demo(speed):\n"
-                        "    result = base * speed + 1000\n"
-                        "    return result\n"
-                    ),
-                }
+            # TODO.md #64 (collaboration rework): edit_cell is always
+            # rejected on a shared document now -- see the sibling grace-
+            # period test's own comment above for why source_overrides is
+            # mutated directly here instead.
+            session = client.app.state.registry.get("classroom-4")
+            session.source_overrides["live_demo"] = (
+                "def live_demo(speed):\n    result = base * speed + 1000\n    return result\n"
             )
-            ws.receive_json()  # cell_source_changed (TODO.md #46b-i)
-            ws.receive_json()  # cell_status
-            ws.receive_json()  # cell_output
+            ws.send_json({"type": "run_all", "session_id": "classroom-4"})
+            for _ in range(4):
+                ws.receive_json()
 
         time.sleep(0.5)  # let the grace-period expiry task actually run
 
@@ -998,16 +725,27 @@ def test_websocket_attribution_persists_across_save_and_simulated_restart(tmp_pa
             session_id = hello["session_id"]
             ws.send_json({"type": "join", "session_id": session_id, "display_name": "Alice"})
             ws.receive_json()  # join_ack
-            ws.send_json(
-                {
-                    "type": "edit_cell",
-                    "session_id": session_id,
-                    "cell_id": "cell_a",
-                    "source": "def cell_a():\n    a = 999\n    return a\n",
-                }
+            # TODO.md #64 (collaboration rework): edit_cell is always
+            # rejected on a shared document now -- this test's own point
+            # is attribution surviving a save+restart, not the editing
+            # mechanism itself, so the exact server-side effect edit_cell
+            # used to produce (a source override + stamped attribution,
+            # per server.py's own ATTRIBUTABLE_MESSAGE_TYPES handling) is
+            # reproduced directly here.
+            session = client.app.state.registry.get(session_id)
+            # source_overrides must be the full decorator-attached shape
+            # save_edits/_apply_overrides expect (Cell.source's own
+            # shape) -- unlike a live edit_cell (rejected on a shared
+            # document now, see above), which goes through
+            # reattach_decorator to reunite the browser's decorator-free
+            # display_source with the Deck's own decorator before
+            # recording it, this direct mutation must supply the
+            # decorator itself.
+            session.source_overrides["cell_a"] = (
+                '@app.cell(instance="editable")\ndef cell_a():\n    a = 999\n    return a\n'
             )
-            for _ in range(4):
-                ws.receive_json()
+            session.instances["cell_a"].last_edited_by = "Alice"
+            session.instances["cell_a"].last_edited_at = datetime.now(UTC)
             ws.send_json({"type": "save_deck", "session_id": session_id})
             saved = ws.receive_json()
             assert saved["type"] == "deck_saved"
@@ -1056,29 +794,29 @@ def test_websocket_attribution_sidecar_merges_rather_than_overwrites(tmp_path):
             ws.send_json({"type": "join", "session_id": session_id, "display_name": "Alice"})
             ws.receive_json()
 
-            ws.send_json(
-                {
-                    "type": "edit_cell",
-                    "session_id": session_id,
-                    "cell_id": "cell_a",
-                    "source": "def cell_a():\n    a = 100\n    return a\n",
-                }
+            # TODO.md #64 (collaboration rework): edit_cell is always
+            # rejected on a shared document now -- see
+            # test_websocket_attribution_persists_across_save_and_simulated_restart's
+            # own comment above for why the two edits+attributions here
+            # are reproduced via direct state mutation instead.
+            # source_overrides must be the full decorator-attached shape
+            # save_edits/_apply_overrides expect -- see
+            # test_websocket_attribution_persists_across_save_and_simulated_restart's
+            # own comment above for why.
+            session = client.app.state.registry.get(session_id)
+            session.source_overrides["cell_a"] = (
+                '@app.cell(instance="editable")\ndef cell_a():\n    a = 100\n    return a\n'
             )
-            for _ in range(4):
-                ws.receive_json()
+            session.instances["cell_a"].last_edited_by = "Alice"
+            session.instances["cell_a"].last_edited_at = datetime.now(UTC)
             ws.send_json({"type": "save_deck", "session_id": session_id})
             ws.receive_json()
 
-            ws.send_json(
-                {
-                    "type": "edit_cell",
-                    "session_id": session_id,
-                    "cell_id": "cell_b",
-                    "source": "def cell_b():\n    b = 200\n    return b\n",
-                }
+            session.source_overrides["cell_b"] = (
+                '@app.cell(instance="editable")\ndef cell_b():\n    b = 200\n    return b\n'
             )
-            for _ in range(4):
-                ws.receive_json()
+            session.instances["cell_b"].last_edited_by = "Alice"
+            session.instances["cell_b"].last_edited_at = datetime.now(UTC)
             ws.send_json({"type": "save_deck", "session_id": session_id})
             ws.receive_json()
 
@@ -1127,20 +865,25 @@ def test_websocket_solo_connection_never_writes_an_attribution_sidecar(tmp_path)
 
 
 def test_websocket_session_created_reports_review_mode():
-    """TODO.md #65-ii: session_created's review_mode field reflects
-    create_app's own review_mode flag for a shared document, and is
-    always False for a non-collaborative connection (there's no one to
-    review a push on a solo session, so it's meaningless there)."""
-    with TestClient(create_app(_build_deck())) as client_plain:
+    """TODO.md #65-ii: session_created's review_mode field originally
+    reflected create_app's own review_mode flag for a shared document.
+    TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    section 2.2: every shared document is accept-gated now,
+    unconditionally, so review_mode is always True for one regardless of
+    create_app's own parameter (explicitly passed False for the first
+    client here, proving it no longer has any effect) -- still always
+    False for a non-collaborative connection (there's no one to review a
+    push on a solo session, so it's meaningless there)."""
+    with TestClient(create_app(_build_deck(), review_mode=False)) as client_plain:
         with client_plain.websocket_connect("/ws?document=plain-1") as ws:
-            assert ws.receive_json()["review_mode"] is False
+            assert ws.receive_json()["review_mode"] is True
 
     with TestClient(create_app(_build_deck(), review_mode=True)) as client_review:
         with client_review.websocket_connect("/ws?document=review-1") as ws:
             assert ws.receive_json()["review_mode"] is True
 
-        # A solo connection on a review_mode server is still not itself in
-        # review mode -- review_mode only applies to shared documents.
+        # A solo connection is still never itself in review mode --
+        # accept-gating only applies to shared documents.
         with client_review.websocket_connect("/ws") as ws:
             assert ws.receive_json()["review_mode"] is False
 
@@ -1172,19 +915,25 @@ def test_websocket_edit_cell_rejected_on_review_mode_document():
         assert "live_demo" not in session.source_overrides
 
 
-def test_websocket_non_review_mode_document_is_completely_unaffected_by_65():
-    """TODO.md #65/#68: confirms a plain (review_mode=False, today's
-    default) shared document behaves exactly as before this feature
-    existed -- edit_cell still runs/broadcasts immediately, and no
-    CellInstance ever gets a pending_state."""
-    with TestClient(create_app(_build_deck())) as client:
-        with (
-            client.websocket_connect("/ws?document=plain-3") as ws_a,
-            client.websocket_connect("/ws?document=plain-3") as ws_b,
-        ):
-            ws_a.receive_json()
-            ws_b.receive_json()
-            ws_a.send_json(
+def test_websocket_shared_document_always_review_mode_even_with_default_review_mode_false():
+    """TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    section 2.2: every collaborative document is accept-gated now,
+    unconditionally -- replaces the old
+    test_websocket_non_review_mode_document_is_completely_unaffected_by_65,
+    which asserted the opposite (a "plain", review_mode=False shared
+    document where edit_cell still ran/broadcast immediately). That
+    state is no longer reachable at all: SessionRegistry.create_or_join
+    always sets review_mode=True for a newly-created shared Session,
+    regardless of create_app's own review_mode/default_review_mode
+    parameter (explicitly passed as False here to prove the parameter no
+    longer has any effect on a shared document) -- edit_cell is
+    therefore always rejected on any document=... connection, matching
+    the review-mode-gated behavior test_websocket_edit_cell_rejected_on_review_mode_document
+    already covers for an explicitly-review_mode=True app."""
+    with TestClient(create_app(_build_deck(), review_mode=False)) as client:
+        with client.websocket_connect("/ws?document=plain-3") as ws:
+            ws.receive_json()  # session_created
+            ws.send_json(
                 {
                     "type": "edit_cell",
                     "session_id": "plain-3",
@@ -1192,16 +941,13 @@ def test_websocket_non_review_mode_document_is_completely_unaffected_by_65():
                     "source": "def live_demo(speed):\n    return 1\n",
                 }
             )
-            source_changed = ws_a.receive_json()
-            assert source_changed["type"] == "cell_source_changed"
-            ws_a.receive_json()  # cell_status
-            output = ws_a.receive_json()
-            assert output["output"]["value"] == 1
+            error = ws.receive_json()
+            assert error["type"] == "error"
+            assert "review mode" in error["message"]
 
             session = client.app.state.registry.get("plain-3")
-            assert session.review_mode is False
-            assert "return 1" in session.source_overrides["live_demo"]
-            assert all(inst.pending_state is None for inst in session.instances.values())
+            assert session.review_mode is True
+            assert "live_demo" not in session.source_overrides
 
 
 # -- TODO.md #65-x: structural (non-source) changes through review too --
@@ -1543,25 +1289,38 @@ def test_websocket_viewer_role_rejects_cell_state_messages(tmp_path):
                 assert "viewer" in error["message"]
 
 
-def test_websocket_non_review_mode_document_unaffected_by_structural_bundles(tmp_path):
-    """TODO.md #65-x: confirms a plain (review_mode=False) document's
-    structural message types still apply immediately, exactly as before
-    this feature existed."""
+def test_websocket_shared_document_structural_changes_always_gated_even_with_default_review_mode_false(
+    tmp_path,
+):
+    """TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    section 2.2: replaces the old
+    test_websocket_non_review_mode_document_unaffected_by_structural_bundles,
+    which asserted rename_cell (a structural message) still applied
+    immediately on a "plain" (review_mode=False) shared document -- that
+    state is no longer reachable (see the sibling edit_cell test's own
+    docstring above for why). Proves rename_cell is rejected on a
+    document=... connection even when create_app itself is given
+    review_mode=False explicitly, confirming SessionRegistry.
+    create_or_join's own hardcoded review_mode=True for a shared Session
+    is what actually governs this now, not create_app's parameter."""
     from codeslides.loader import load_deck
 
     deck_path = _write_structural_deck(tmp_path)
-    with TestClient(create_app(load_deck(str(deck_path)), deck_path=str(deck_path))) as client:
+    with TestClient(
+        create_app(load_deck(str(deck_path)), deck_path=str(deck_path), review_mode=False)
+    ) as client:
         with client.websocket_connect("/ws?document=struct-7") as ws:
             ws.receive_json()
             ws.send_json(
                 {"type": "rename_cell", "session_id": "struct-7", "cell_id": "cell_a", "new_name": "renamed"}
             )
-            renamed = ws.receive_json()
-            assert renamed["type"] == "cell_renamed"
-            assert renamed["cell_id"] == "renamed"
+            error = ws.receive_json()
+            assert error["type"] == "error"
+            assert "review mode" in error["message"]
+            # Nothing on disk changed.
+            assert "def cell_a" in deck_path.read_text()
             session = client.app.state.registry.get("struct-7")
-            assert session.review_mode is False
-            assert session.instances["renamed"].pending_state is None
+            assert session.review_mode is True
 
 
 # -- TODO.md #65-xi: unify primary/test source edits into the one push

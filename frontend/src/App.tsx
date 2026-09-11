@@ -257,11 +257,29 @@ function App() {
   // separate, much larger client-side-execution work that would make
   // that interaction actually meaningful instead of a silent no-op.
   const isViewer = role === 'viewer'
-  const { sessionId, reviewMode, messages, send } = useCodeSlidesSocket(
+  // TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+  // section 2.2: every collaborative document is now accept-gated --
+  // the server's own `reviewMode` (session_created's `review_mode`,
+  // tied to cli.py's `--review-mode` flag) is no longer what decides
+  // this on the frontend, since always-live mode is retired entirely,
+  // not just made optional. `documentId` (set only for a `--collaborative`
+  // connection -- see documentIdFromUrl above) is the correct condition
+  // now: a solo connection has no peer to push to at all, so it always
+  // runs directly (handleRunCell, no staging); any collaborative
+  // connection always stages+pushes, regardless of what the server
+  // reports. useCodeSlidesSocket still returns the server's own
+  // reviewMode (server.py/session.py's own review_mode field is
+  // untouched by this frontend-only slice, see
+  // PROPOSAL_pyscript_execution.md section 7's still-open "what happens
+  // to review_mode as a stored field" question) -- no longer
+  // destructured here at all, since nothing in this file reads it any
+  // more.
+  const { sessionId, messages, send } = useCodeSlidesSocket(
     documentId
       ? `/ws?document=${encodeURIComponent(documentId)}${role === 'viewer' ? '&role=viewer' : ''}`
       : undefined,
   )
+  const acceptGated = Boolean(documentId)
   const cellState = useDeckState(messages)
   const presenceState = usePresenceState(messages)
   const chatMessages = useChatState(messages)
@@ -894,12 +912,16 @@ function App() {
       .catch((err: unknown) => reportClientExecutionError(cellId, err))
   }
 
-  // TODO.md #65/#68: the review_mode analogue of handleRunCell above --
-  // used instead of edit_cell whenever this document is in review mode
-  // (Cell.tsx picks between the two based on the reviewMode prop it is
-  // given). Remembers the source locally (`primarySourceDrafts`, read
-  // back by handlePushCellState below) and marks the cell dirty --
-  // EditCell itself is never sent while review_mode is on.
+  // TODO.md #65/#68/#64 (collaboration rework): the accept-gated
+  // analogue of handleRunCell above -- used instead of running directly
+  // whenever this is a collaborative document (Cell.tsx picks between
+  // the two based on the reviewMode prop it is given, now driven by
+  // acceptGated -- see this file's own documentId/acceptGated comment
+  // above). Remembers the source locally (`primarySourceDrafts`, read
+  // back by handlePushCellState below) and marks the cell dirty -- no
+  // execution happens at all until the local Run/Run All the accepting
+  // side eventually takes, per PROPOSAL_pyscript_execution.md section
+  // 2.4's "no auto-rerun on incoming sync" rule.
   function handleStagePrimaryEdit(cellId: string, source: string) {
     if (!sessionId) return
     setPrimarySourceDrafts((prev) => ({ ...prev, [cellId]: source }))
@@ -1135,16 +1157,19 @@ function App() {
   }
 
   // TODO.md #68: the single interception point every one of the
-  // review-mode-gated structural handlers below routes through -- on a
-  // review_mode document, mark `cellId` dirty instead of sending
-  // `message` immediately; otherwise send it right away exactly as
-  // before this feature existed. Unlike #65's stageOrSend, `message`
+  // accept-gated structural handlers below routes through -- on any
+  // collaborative document (acceptGated -- TODO.md #64/
+  // PROPOSAL_pyscript_execution.md section 2.2: every collaborative
+  // document is accept-gated now, not just review_mode ones), mark
+  // `cellId` dirty instead of sending `message` immediately; otherwise
+  // (a solo connection, no peer to push to) send it right away exactly
+  // as before this feature existed. Unlike #65's stageOrSend, `message`
   // itself is never kept -- rename/hide toggles are read fresh from
   // `deck.cells[cellId]`'s own current fields at push time (below),
   // same as every other pushed field.
   function stageOrSend(cellId: string, message: Record<string, unknown>) {
     if (!sessionId) return
-    if (reviewMode) {
+    if (acceptGated) {
       setDirtyCells((prev) => (prev.has(cellId) ? prev : new Set(prev).add(cellId)))
       return
     }
@@ -1227,12 +1252,12 @@ function App() {
 
   // TODO.md #68: rename is part of the source+test+notes+hide+rename
   // push scope, so it stages (marks dirty + remembers the target name
-  // in renameDrafts) rather than sending rename_cell immediately on a
-  // review_mode document.
+  // in renameDrafts) rather than sending rename_cell immediately on any
+  // collaborative (acceptGated) document.
   function handleRenameCell(cellId: string, newName: string) {
     if (!sessionId) return
     clearEditError(cellId)
-    if (reviewMode) {
+    if (acceptGated) {
       setRenameDrafts((prev) => ({ ...prev, [cellId]: newName }))
       setDirtyCells((prev) => (prev.has(cellId) ? prev : new Set(prev).add(cellId)))
       return
@@ -1690,7 +1715,7 @@ function App() {
               onLayoutChange={(layout) => handleLayoutChange(cellId, layout)}
               editError={editErrors[cellId]}
               viewerMode={isViewer}
-              reviewMode={reviewMode}
+              reviewMode={acceptGated}
               ownUserId={ownIdentity?.userId ?? null}
               onStagePrimaryEdit={(source) => handleStagePrimaryEdit(cellId, source)}
               onStageTestEdit={(elementId, source) => handleStageTestEdit(cellId, elementId, source)}
@@ -1754,7 +1779,7 @@ function App() {
           onLayoutChange={handleLayoutChange}
           editErrors={editErrors}
           viewerMode={isViewer}
-          reviewMode={reviewMode}
+          reviewMode={acceptGated}
           ownUserId={ownIdentity?.userId ?? null}
           onStagePrimaryEdit={handleStagePrimaryEdit}
           onStageTestEdit={handleStageTestEdit}

@@ -305,7 +305,22 @@ class SessionRegistry:
         existing = self.sessions.get(document_id)
         if existing is not None:
             return existing
-        session = Session(deck=self.kernel.deck, session_id=document_id, review_mode=self.default_review_mode)
+        # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        # section 2.2: every collaborative document is accept-gated now,
+        # unconditionally -- `self.default_review_mode` (cli.py's
+        # `--review-mode` flag) no longer decides this; a shared document
+        # always gets `review_mode=True` regardless of that flag, so that
+        # EditCell/PushCellState's own existing review_mode gates (still
+        # untouched -- this frontend-driving slice deliberately leaves
+        # the server's execution/broadcast machinery alone, see
+        # PROPOSAL_pyscript_execution.md section 7) agree with the
+        # frontend's own acceptGated = Boolean(documentId) condition
+        # (App.tsx), rather than a --collaborative-without---review-mode
+        # session silently rejecting the push_cell_state the frontend now
+        # always sends. `--review-mode` itself becomes a no-op flag as of
+        # this change (kept, not removed, per the chosen frontend-only
+        # scope -- see cli.py's own note).
+        session = Session(deck=self.kernel.deck, session_id=document_id, review_mode=True)
         self._seed_persisted_attribution(session)
         self.sessions[session.session_id] = session
         return session

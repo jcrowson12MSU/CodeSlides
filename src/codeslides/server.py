@@ -91,13 +91,18 @@ def create_app(
     (TODO.md #46a-iii) -- exposed as a parameter purely so tests can use a
     short window instead of the real production default.
 
-    `review_mode` (TODO.md #65) is this server process's document-level
-    default for the propose/review/accept workflow instead of always-live
-    editing -- `cli.py`'s `--review-mode` flag, off by default. Only
-    affects a *newly created* shared document (`SessionRegistry.
-    create_or_join`'s first call for a given id); a solo (non-
-    collaborative) Session ignores it entirely, since review-mode only
-    makes sense where there's someone else to review a push."""
+    `review_mode` (TODO.md #65) was originally this server process's
+    document-level default for the propose/review/accept workflow
+    instead of always-live editing -- `cli.py`'s `--review-mode` flag.
+    TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    section 2.2: every collaborative document is accept-gated now,
+    unconditionally -- `SessionRegistry.create_or_join` always sets a
+    newly-created shared Session's own `review_mode=True` regardless of
+    this parameter, so it no longer has any effect (kept as a real
+    parameter, not removed, per this rework's deliberately frontend-only
+    scope; a solo (non-collaborative) Session still ignores it entirely,
+    same as before, since accept-gating only makes sense where there's
+    someone else to accept a push)."""
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

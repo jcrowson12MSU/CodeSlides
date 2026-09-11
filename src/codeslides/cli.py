@@ -88,23 +88,28 @@ def main() -> None:
                 "(TODO.md #46a/#46e), instead of the default solo session"
             ),
         )
-        # TODO.md #65/PROPOSAL_review_workflow.md: opts a collaborative
-        # document into the propose/review/accept workflow (`PushCell`/
-        # `AcceptProposal`) instead of today's always-live editing, where
-        # every keystroke's edit is immediately broadcast to every peer.
-        # Meaningless without `--collaborative` (there's no one to review
-        # a push on a solo session) but not rejected as a combination
-        # error -- it's simply never consulted, same "harmless if unused"
-        # precedent `--collaborative`'s own document_id already sets for
-        # a non-collaborative run.
+        # TODO.md #65/PROPOSAL_review_workflow.md: originally opted a
+        # collaborative document into the propose/review/accept workflow
+        # instead of always-live editing. TODO.md #64 (collaboration
+        # rework)/PROPOSAL_pyscript_execution.md section 2.2: every
+        # collaborative document is accept-gated now, unconditionally
+        # (SessionRegistry.create_or_join always sets review_mode=True
+        # for a shared document, regardless of this flag) -- always-live
+        # mode no longer exists as an option, so this flag is now a
+        # no-op, kept only so an existing script/README passing it
+        # doesn't hard-error. Left as a real flag (not deleted) per the
+        # frontend-only scope this rework was deliberately kept to; a
+        # follow-up slice may remove it outright once the server-side
+        # execution/broadcast machinery it also used to gate is cleaned
+        # up too (PROPOSAL_pyscript_execution.md section 7).
         sub.add_argument(
             "--review-mode",
             action="store_true",
             default=False,
             help=(
-                "On a --collaborative document, require an explicit Push + Accept "
-                "for cell edits to become visible to other peers (TODO.md #65), "
-                "instead of broadcasting every edit immediately"
+                "No-op as of TODO.md #64: every --collaborative document now always "
+                "requires Push + Accept for cell edits to become visible to other "
+                "peers, regardless of this flag"
             ),
         )
 
@@ -143,8 +148,11 @@ def main() -> None:
         print("Collaborative mode: share one of these links --")
         print(f"  Editor (can make changes): {url}")
         print(f"  Viewer (read-only):        {viewer_url}")
-        if args.review_mode:
-            print("Review mode: cell edits are pushed as proposals, not broadcast immediately.")
+        # TODO.md #64 (collaboration rework): every collaborative
+        # document is accept-gated now, unconditionally -- no longer
+        # gated on args.review_mode (a no-op flag as of this change, see
+        # this file's own --review-mode help text).
+        print("Cell edits are pushed as proposals, not broadcast immediately.")
 
     if args.open_browser:
         webbrowser.open(url)
