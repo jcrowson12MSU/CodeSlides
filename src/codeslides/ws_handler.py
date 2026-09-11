@@ -14,6 +14,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from codeslides.deck import Deck
 from codeslides.kernel import ExecutionResult, Kernel
 from codeslides.output import resolve_output, wire_safe_value
 from codeslides.protocol import (
@@ -472,7 +473,9 @@ def _results_to_messages(session_id: str, results: dict[str, ExecutionResult]) -
     return messages
 
 
-def _element_output_messages(session: Session, results: dict[str, ExecutionResult]) -> list[ServerMessage]:
+def _element_output_messages(
+    session: Session, results: dict[str, ExecutionResult], deck: Deck
+) -> list[ServerMessage]:
     """Emit element_output for viewer elements a re-run cell actually wrote
     to via cs.image()/cs.iframe(), or via codeslides.turtle calls
     (ARCHITECTURE.md section 3a/7) -- each write already names its target
@@ -480,6 +483,26 @@ def _element_output_messages(session: Session, results: dict[str, ExecutionResul
     viewer element on the cell (broadcasting was the placeholder behavior
     this replaces, and it was wrong for any cell with more than one viewer
     element).
+
+    `deck` is the CALLER's current, live view of the deck's structure
+    (almost always `registry.kernel.deck`) -- deliberately NOT
+    `session.deck`, which `Session`'s own docstring documents as a
+    snapshot frozen at Session-creation time. This matters here
+    specifically: a structural handler that adds/removes/reconfigures an
+    element (AddElement, SetElementConfig, etc.) calls
+    `Kernel.reload_deck` and THEN builds this very message list in the
+    same request/response cycle -- reading `session.deck` here would see
+    the element list from *before* that same request's own change, so
+    the "static src=/notes docstring without any write" fallback below
+    would silently never fire for a just-added element (confirmed
+    directly: after an AddElement call, `session.deck.cells[cell_id]
+    .elements` was still empty while `registry.kernel.deck.cells[cell_id]
+    .elements` already had the new element). This is a narrower, more
+    immediate case than the documented `session.deck` staleness (an
+    external CLI file-watcher reload during an already-open,
+    long-lived session, `Session`'s own docstring) -- there, a session's
+    stale view is expected to eventually reconnect; here, the very same
+    call that changed the deck must see its own change immediately.
 
     `notes` and `tests` elements are handled separately: neither is
     written to via a `cs.*` call, so both need a fallback that surfaces
@@ -501,9 +524,9 @@ def _element_output_messages(session: Session, results: dict[str, ExecutionResul
     that `src=` at construction time, but that's pure Python state --
     the browser only ever learns about content through an explicit
     `ElementOutput` message, so without this, a freshly-created Session
-    (a page (re)load, or a `set_element_config` upload followed by
-    `run_all` re-running everything) would show "no image yet" even
-    though the Session's own state already has the right content.
+    (a page (re)load, or a `set_element_config` upload) would show "no
+    image yet" even though the Session's own state already has the
+    right content.
 
     A cell's `turtle_canvas` needs a *forced* resend (not skipped just
     because `result.element_writes` already includes it), but only when
@@ -521,7 +544,7 @@ def _element_output_messages(session: Session, results: dict[str, ExecutionResul
     identical message every run."""
     messages: list[ServerMessage] = []
     for cell_id, result in results.items():
-        cell = session.deck.cells.get(cell_id)
+        cell = deck.cells.get(cell_id)
         has_tests_element = cell is not None and any(e.kind == "tests" for e in cell.elements)
         for write in result.element_writes:
             if write.kind == "turtle" and has_tests_element:
@@ -827,13 +850,26 @@ def handle_message(
         ]
 
     if isinstance(message, RunAll):
+        # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        # section 3: this handler no longer calls Kernel.run_all (which
+        # itself still exists -- see its own docstring for why: it's
+        # still real, working test/fixture setup for other, untouched
+        # structural methods, just no longer reachable from any browser).
+        # The server never executes cell code in response to a network
+        # message any more (every browser runs its own Pyodide instance
+        # against its own local view of the deck's sources;
+        # pyodideKernel.ts's runAllClientSide is the real replacement, and
+        # nothing in the shipped frontend sends this message at all any
+        # more). Kept as a reachable, harmless no-op (an empty reply, not
+        # an error) rather than deleted outright, matching the "kept but
+        # neutered" precedent cli.py's own --review-mode flag already set
+        # for this same rework -- a stray client that still sends it
+        # (an old cached bundle, a hand-written script) gets no crash and
+        # no server-side execution, just nothing happens.
         session = registry.get(message.session_id)
         if session is None:
             return [ErrorMessage(message="unknown session", session_id=message.session_id)]
-        results = registry.kernel.run_all(session)
-        return _results_to_messages(message.session_id, results) + _element_output_messages(
-            session, results
-        )
+        return []
 
     if isinstance(message, EditCell):
         session = registry.get(message.session_id)
@@ -890,7 +926,7 @@ def handle_message(
                 )
             ]
             + _results_to_messages(message.session_id, results)
-            + _element_output_messages(session, results)
+            + _element_output_messages(session, results, registry.kernel.deck)
         )
 
     if isinstance(message, PushCellState):
@@ -1197,7 +1233,7 @@ def handle_message(
             message.cell_id, message.element_id, message.value, session
         )
         return _results_to_messages(message.session_id, results) + _element_output_messages(
-            session, results
+            session, results, registry.kernel.deck
         )
 
     if isinstance(message, SetUiState):
@@ -1526,7 +1562,7 @@ def handle_message(
                 layout=cell.layout,
             ),
             *_results_to_messages(message.session_id, results),
-            *_element_output_messages(session, results),
+            *_element_output_messages(session, results, registry.kernel.deck),
         ]
 
     if isinstance(message, AddSlide):
@@ -1599,7 +1635,7 @@ def handle_message(
                 slides=slides_payload,
             ),
             *_results_to_messages(message.session_id, results),
-            *_element_output_messages(session, results),
+            *_element_output_messages(session, results, registry.kernel.deck),
         ]
 
     if isinstance(message, SetSlideOrder):
@@ -1824,7 +1860,7 @@ def handle_message(
                 layout=cell.layout,
             ),
             *_results_to_messages(message.session_id, results),
-            *_element_output_messages(session, results),
+            *_element_output_messages(session, results, registry.kernel.deck),
         ]
 
     if isinstance(message, RemoveElement):
@@ -1850,7 +1886,7 @@ def handle_message(
                 layout=cell.layout,
             ),
             *_results_to_messages(message.session_id, results),
-            *_element_output_messages(session, results),
+            *_element_output_messages(session, results, registry.kernel.deck),
         ]
 
     if isinstance(message, RemovePrimaryEditor):
@@ -1876,7 +1912,7 @@ def handle_message(
                 layout=cell.layout,
             ),
             *_results_to_messages(message.session_id, results),
-            *_element_output_messages(session, results),
+            *_element_output_messages(session, results, registry.kernel.deck),
         ]
 
     if isinstance(message, AddPrimaryEditor):
@@ -1902,7 +1938,7 @@ def handle_message(
                 layout=cell.layout,
             ),
             *_results_to_messages(message.session_id, results),
-            *_element_output_messages(session, results),
+            *_element_output_messages(session, results, registry.kernel.deck),
         ]
 
     if isinstance(message, ReorderElements):

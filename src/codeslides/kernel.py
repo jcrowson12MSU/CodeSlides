@@ -848,27 +848,81 @@ class Kernel:
         self.graph = build_graph(deck)
 
     def run_all(self, session: Session) -> dict[str, ExecutionResult]:
-        """Run every cell once, in topological order, against `session`."""
+        """Run every cell once, in topological order, against `session`.
+
+        TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        section 3: no longer reachable from any browser -- the RunAll
+        websocket message (ws_handler.py) no longer calls this at all,
+        matching the actual security goal precisely (no network-
+        reachable path triggers server-side execution of cell code; a
+        browser's own Pyodide instance runs its own local view of the
+        deck via pyodideKernel.ts's runAllClientSide instead). Kept as a
+        real, working method rather than deleted because it's still
+        genuinely used as ordinary test/fixture setup by every structural
+        Kernel method this rework's own narrow scope leaves untouched
+        (add_element/set_element_config/reorder_elements/etc. -- see
+        test_kernel.py's own extensive use of it to establish a baseline
+        execution state before exercising one of those), not because
+        anything server-side still calls it to serve a live request."""
         graph = self._effective_graph(session)
         return self._run_cells(graph.topological_order(), session)
 
-    def on_cell_edited(
-        self, cell_name: str, source: str, session: Session
-    ) -> dict[str, ExecutionResult]:
-        """Handle a source edit to `cell_name`, scoped to `session` only:
-        record the override, recompute *this session's* effective graph,
-        and re-run the minimal affected set (ARCHITECTURE.md section 3,
-        steps 1-3). Never touches `self.deck` or any other Session.
+    def on_cell_edited(self, cell_name: str, source: str, session: Session) -> dict[str, ExecutionResult]:
+        """Record a source edit to `cell_name`, scoped to `session` only.
+        Never touches `self.deck` or any other Session.
 
-        An edit that doesn't even parse (a syntax error while mid-edit --
-        the ordinary, expected state of live-typed code between
-        keystrokes) or that breaks graph-level invariants
-        (`MultipleDefinitionError`/`GraphCycleError`) is reported as this
-        cell's own error, exactly like a runtime exception inside the
-        cell would be -- it must not crash the edit_cell round trip or
-        leave `session.source_overrides` silently unset. The invalid
-        source is still recorded as the override (so the editor keeps
-        showing what the user typed) and no other cell is touched.
+        TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        section 3: this used to also recompute the session's effective
+        graph and re-run the minimal affected set (`_run_cells`) -- that
+        execution step is gone. The server never executes cell code any
+        more (every browser runs its own Pyodide instance against its
+        own local view of the deck's sources -- pyodideKernel.ts); this
+        method's only remaining job is what it always did *first*:
+        record the edit as this Session's own override, so a later Save
+        (or another connection accepting a push built from it) has the
+        right source to work with. Still returns `dict[str,
+        ExecutionResult]` (always empty on success) rather than `None`,
+        matching `on_notes_edited`'s own "nothing to report" `-> None`
+        shape would have been cleaner, but keeping the return type
+        unchanged means `EditCell`'s handler (ws_handler.py) -- and, more
+        importantly, `AcceptCellState`'s own replay of `EditCell` through
+        `handle_message` (which relies on `EditCell`'s existing
+        review_mode-gated call shape to apply an accepted push's source)
+        -- needs no signature-level changes for this rework's own
+        deliberately narrow scope.
+
+        One narrow exception to "no execution at all": a cell with a
+        `tests` element (or an unbound required parameter --
+        `_has_unbound_required_param`, same distinction `_run_cells`
+        already draws) is still `define_cell`'d -- compiled and bound
+        into `session.namespace` under its own name, but its own body
+        never actually CALLED. This is categorically different from
+        `execute_cell`: no cell-body logic ever runs, only a function
+        *definition* happens (the same class of "code runs at
+        definition/import time" already inherent to Python itself, no
+        different in kind from `_compile_cell_function`'s own existing
+        scratch-namespace default-value evaluation) -- there is still no
+        way for a student's cell BODY logic to execute server-side. This
+        is required for `tests` element execution (still server-side,
+        out of this rework's scope per section 7) to have anything to
+        call at all -- without it, a `tests` element's own
+        `print(cell_name())` call would NameError against an empty
+        namespace even though the cell it targets parses and defines
+        just fine.
+
+        Still validates the edit as a real graph edit would have to
+        (`MultipleDefinitionError`/`GraphCycleError`/a plain
+        `SyntaxError` from code that doesn't even parse -- the ordinary,
+        expected state of live-typed code between keystrokes) and
+        reports it as this cell's own error, exactly as before -- a
+        cell's `tests` element (still server-executed, out of this
+        rework's scope -- see PROPOSAL_pyscript_execution.md section 7)
+        still needs this validation to know whether the cell it tests is
+        even well-formed, and `session.instances[cell_name].status`/
+        `.error` are still real, meaningful fields for that path. The
+        invalid source is still recorded as the override (so the editor
+        keeps showing what the user typed) and no other cell is
+        touched.
 
         `source` is decorator- and docstring-free (the browser's editor
         only ever shows/edits `display_source`'s output, which strips
@@ -891,21 +945,19 @@ class Kernel:
         current = session.source_overrides.get(cell_name, self.deck.cells[cell_name].source)
         hide_def = self.deck.cells[cell_name].hide_def
         session.source_overrides[cell_name] = reattach_decorator(current, source, hide_def=hide_def)
+        elements = self.deck.cells[cell_name].elements
         try:
-            graph = self._effective_graph(session)
+            self._effective_graph(session).affected_by(cell_name)
         except (SyntaxError, ValueError) as exc:
             session.instances[cell_name].status = "error"
             session.instances[cell_name].error = str(exc)
             # A bad definition (e.g. `CellDefinitionError`'s multiple-return
-            # check) is now caught here, at graph-build time, rather than
-            # only surfacing once `_run_cells` actually tries to run the
-            # cell -- `extract_reads_writes` needs a cell's return names to
-            # know its graph-level writes, so it now runs this analysis (and
-            # can raise this same error) earlier than before. A tested cell
-            # must still see this reflected as its own test error (matching
-            # `_run_cells`'s "cell errored -> mark test error" branch), not
+            # check) is caught here, at graph-build time -- `extract_reads_writes`
+            # needs a cell's return names to know its graph-level writes,
+            # so this analysis can raise this same error. A tested cell
+            # must still see this reflected as its own test error, not
             # silently keep showing whatever pass/fail it last had.
-            tests_element = _find_tests_element(self.deck.cells[cell_name].elements)
+            tests_element = _find_tests_element(elements)
             if tests_element is not None:
                 session.instances[cell_name].elements[tests_element].content = {
                     "status": "error",
@@ -914,8 +966,21 @@ class Kernel:
             return {
                 cell_name: ExecutionResult(status="error", error=str(exc)),
             }
-        affected = graph.affected_by(cell_name)
-        return self._run_cells(affected, session)
+        if _find_tests_element(elements) is not None or _has_unbound_required_param(source, elements):
+            # See this method's own docstring for why this one case is
+            # still "executed": define_cell only compiles+binds the
+            # function object, never calls the cell's own body logic --
+            # required for a tests element (still server-executed) to
+            # have anything to call at all.
+            result = define_cell(cell_name, source, session, deck_imports=self.deck.imports)
+            session.instances[cell_name].status = result.status
+            session.instances[cell_name].error = result.error
+            if result.status == "error":
+                return {cell_name: result}
+        else:
+            session.instances[cell_name].status = "idle"
+            session.instances[cell_name].error = None
+        return {}
 
     def on_notes_edited(self, cell_name: str, element_name: str, notes_text: str, session: Session) -> None:
         """Handle a `notes` element's markdown content changing, scoped to
@@ -950,22 +1015,26 @@ class Kernel:
     def on_element_changed(
         self, cell_name: str, element_name: str, value: object, session: Session
     ) -> dict[str, ExecutionResult]:
-        """Handle an input element's value changing: update the element
-        instance and re-run the minimal affected set, same as an edit to
-        the owning cell (ARCHITECTURE.md section 3a).
+        """Record an input element's value changing (ARCHITECTURE.md
+        section 3a).
 
-        Same graceful-failure guard as `on_cell_edited`: some *other*
-        cell in this Session may currently have an invalid (mid-edit)
-        source override sitting in `session.source_overrides` --
-        rebuilding the effective graph must not crash just because this
-        unrelated element's value changed."""
+        TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        section 3: this used to also rebuild the session's effective
+        graph and re-run the minimal affected set -- that execution step
+        is gone, same reasoning as `on_cell_edited`'s own docstring (the
+        server never executes cell code any more; each browser's own
+        Pyodide instance re-runs a cell and its dependents locally on an
+        input-element change, per pyodideKernel.ts's
+        onElementChangedClientSide). Unlike `on_cell_edited`, there was
+        never any *other* state (a `tests` element's error content, this
+        cell's own `status`/`error`) gated on the graph rebuild here --
+        it existed purely to compute the now-removed re-run's affected
+        set -- so nothing else needs preserving. Always returns `{}`;
+        kept as `dict[str, ExecutionResult]` rather than `-> None` for
+        the same "no signature-level ripple into
+        SetElementValue's handler" reason `on_cell_edited` gives."""
         session.instances[cell_name].elements[element_name].value = value
-        try:
-            graph = self._effective_graph(session)
-        except (SyntaxError, ValueError) as exc:
-            return {cell_name: ExecutionResult(status="error", error=str(exc))}
-        affected = graph.affected_by(cell_name)
-        return self._run_cells(affected, session)
+        return {}
 
     def on_tests_edited(
         self, cell_name: str, element_name: str, source: str, session: Session

@@ -1,4 +1,4 @@
-from codeslides import App, cs, turtle, ui
+from codeslides import App, turtle, ui
 from codeslides.kernel import Kernel
 from codeslides.loader import load_deck
 from codeslides.protocol import (
@@ -12,7 +12,6 @@ from codeslides.protocol import (
     CellRemoved,
     CellRenamed,
     CellsReordered,
-    CellStatus,
     CloneSession,
     DeckSaved,
     EditCell,
@@ -77,52 +76,112 @@ def _build_deck():
     return app
 
 
-def test_run_all_emits_status_and_output_per_cell():
+# TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+# section 3: test_run_all_emits_status_and_output_per_cell and
+# test_run_all_emits_no_element_output_for_a_viewer_element_never_written_to
+# are deleted -- both directly asserted RunAll executes cells server-side
+# in response to the websocket message. ws_handler.py's RunAll handler no
+# longer calls Kernel.run_all at all (see test_run_all_is_a_harmless_no_op
+# below for its new behavior) -- Kernel.run_all itself is unchanged and
+# still exists (it's still real, working test/fixture setup other,
+# untouched structural methods rely on -- see its own docstring), just no
+# longer reachable from any network message. Neither deleted test has an
+# adaptable equivalent -- there's no other still-network-triggered
+# execution path that would mean the same thing RunAll used to (every
+# cell, unconditionally, regardless of whether it changed) -- pyodideKernel.ts's
+# own runAllClientSide is the real, client-side replacement and has its
+# own Playwright-driven verification (this repo's session history), not a
+# pytest one, since it never touches the server at all.
+
+
+def test_run_all_is_a_harmless_no_op():
+    """TODO.md #64/PROPOSAL_pyscript_execution.md section 3: RunAll is
+    kept as a reachable message type (a stray old client sending it must
+    not crash), but its handler no longer calls Kernel.run_all at all
+    (which itself still exists, purely as test/fixture setup for other
+    untouched structural methods -- see its own docstring) -- sending
+    RunAll over the websocket must execute nothing and reply with
+    nothing, proving the actual security property this whole rework
+    exists for: no network-reachable message triggers server-side
+    execution of cell code any more."""
     registry = SessionRegistry(kernel=Kernel(_build_deck().deck))
     session = registry.create()
 
     messages = handle_message(registry, RunAll(session_id=session.session_id))
 
-    statuses = [m for m in messages if isinstance(m, CellStatus)]
-    outputs = [m for m in messages if isinstance(m, CellOutput)]
-    assert {m.cell_id for m in statuses} == {"setup", "live_demo"}
-    assert {m.cell_id for m in outputs} == {"setup", "live_demo"}
-    assert all(m.status == "idle" for m in statuses)
+    assert messages == []
+    # No execution happened at all -- the namespace never got the values
+    # a real run_all would have put there.
+    assert session.namespace == {}
 
 
-def test_run_all_emits_no_element_output_for_a_viewer_element_never_written_to():
-    # `canvas` is a turtle_canvas the cell never calls cs.* for (turtle
-    # support is TODO.md #15) -- targeted writes mean no broadcast happens.
-    registry = SessionRegistry(kernel=Kernel(_build_deck().deck))
+def test_add_element_to_an_existing_cs_image_cell_emits_its_element_output(tmp_path):
+    """TODO.md #64 (collaboration rework)'s replacement for the deleted
+    test_run_all_emits_element_output_for_cs_image_write: RunAll no
+    longer executes anything, so this now needs a still-executing
+    trigger for a cell whose BODY calls cs.image() -- AddElement's own
+    handler still re-runs the cell it just added an element to
+    (Kernel.add_element, a structural method untouched by this rework,
+    see PROPOSAL_pyscript_execution.md section 7), so adding a second,
+    otherwise-irrelevant element to an existing cs.image()-calling cell
+    is the cleanest still-available way to exercise
+    _element_output_messages' PRIMARY path (translating a real
+    cs.image() write from result.element_writes), as opposed to the
+    static-content fallback path the two test_add_element_surfaces_*
+    tests above exercise."""
+    deck_path = tmp_path / "deck.py"
+    deck_path.write_text(
+        "from codeslides import App, cs, ui\n\n"
+        "app = App()\n\n"
+        '@app.cell(elements=[ui.image("plot")])\n'
+        "def make_plot():\n"
+        '    cs.image("plot", "/tmp/figure.png")\n'
+        "    x = 1\n"
+        "    return x\n"
+    )
+    from codeslides.loader import load_deck
+
+    registry = SessionRegistry(kernel=Kernel(load_deck(str(deck_path)), deck_path=str(deck_path)))
     session = registry.create()
 
-    messages = handle_message(registry, RunAll(session_id=session.session_id))
-
-    assert [m for m in messages if isinstance(m, ElementOutput)] == []
-
-
-def test_run_all_emits_element_output_for_cs_image_write():
-    app = App()
-
-    @app.cell(elements=[ui.image("plot")])
-    def make_plot():
-        cs.image("plot", "/tmp/figure.png")
-        x = 1
-        return x
-
-    registry = SessionRegistry(kernel=Kernel(app.deck))
-    session = registry.create()
-
-    messages = handle_message(registry, RunAll(session_id=session.session_id))
+    messages = handle_message(
+        registry,
+        AddElement(
+            session_id=session.session_id,
+            cell_id="make_plot",
+            element_name="unrelated_button",
+            kind="button",
+            config={},
+        ),
+    )
 
     element_outputs = [m for m in messages if isinstance(m, ElementOutput)]
-    assert len(element_outputs) == 1
-    assert element_outputs[0].cell_id == "make_plot"
-    assert element_outputs[0].element_id == "plot"
-    assert element_outputs[0].content == ["/tmp/figure.png"]
+    plot_outputs = [m for m in element_outputs if m.element_id == "plot"]
+    assert len(plot_outputs) == 1
+    assert plot_outputs[0].cell_id == "make_plot"
+    assert plot_outputs[0].content == ["/tmp/figure.png"]
 
 
-def test_run_all_surfaces_an_images_static_src_without_any_cs_image_call():
+# TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+# section 3: the two tests below used to drive _element_output_messages'
+# static-content fallback (an image/notes element's content reaching the
+# browser even when the owning cell's body never writes to it) via
+# RunAll, back when the RunAll websocket message actually triggered
+# Kernel.run_all server-side. RunAll's own handler is now a no-op
+# (Kernel.run_all itself still exists, unreachable from any network
+# message -- see its own docstring; pyodideKernel.ts's runAllClientSide
+# is the real, client-side replacement browsers actually use).
+# _element_output_messages itself is
+# UNCHANGED and still real, load-bearing logic -- it's still called by
+# every structural Kernel method that adds/changes an element
+# (add_cell, add_element, etc., all still server-executed since they're
+# outside this rework's scope per PROPOSAL_pyscript_execution.md
+# section 7). So these are rewritten to drive the same fallback through
+# AddElement instead of RunAll -- AddElement's own handler still calls
+# Kernel.add_element, which still re-runs the newly-elemented cell once
+# server-side (a structural method's own execution, untouched by this
+# rework) and produces the exact same ElementOutput fallback message.
+def test_add_element_surfaces_an_images_static_src_without_any_cs_image_call(tmp_path):
     """Regression test for the reported "uploaded image disappears on
     reload" bug: an image element's own static `src=` (set via the
     browser's file-picker/set_element_config, or given at construction
@@ -132,42 +191,49 @@ def test_run_all_surfaces_an_images_static_src_without_any_cs_image_call():
     notes'/tests' own below), _element_output_messages never actually
     tells the browser about it, so a fresh page load/Session shows "no
     image yet" despite the Session's own state being correct."""
-    app = App()
-
-    @app.cell(elements=[ui.image("photo", src="data:image/png;base64,abc")])
-    def show_photo():
-        pass
-
-    registry = SessionRegistry(kernel=Kernel(app.deck))
+    registry, _ = _build_file_backed_registry(tmp_path)
     session = registry.create()
 
-    messages = handle_message(registry, RunAll(session_id=session.session_id))
+    messages = handle_message(
+        registry,
+        AddElement(
+            session_id=session.session_id,
+            cell_id="setup",
+            element_name="photo",
+            kind="image",
+            config={"src": "data:image/png;base64,abc"},
+        ),
+    )
 
     element_outputs = [m for m in messages if isinstance(m, ElementOutput)]
     assert len(element_outputs) == 1
-    assert element_outputs[0].cell_id == "show_photo"
+    assert element_outputs[0].cell_id == "setup"
     assert element_outputs[0].element_id == "photo"
     assert element_outputs[0].content == ["data:image/png;base64,abc"]
 
 
-def test_run_all_surfaces_notes_docstring_without_any_write():
-    app = App()
-
-    @app.cell(elements=[ui.notes("n")])
-    def cell_with_notes():
-        """# Title\nBody"""
-        x = 1
-        return x
-
-    registry = SessionRegistry(kernel=Kernel(app.deck))
+def test_add_element_surfaces_notes_docstring_without_any_write(tmp_path):
+    registry, _ = _build_file_backed_registry(tmp_path)
     session = registry.create()
 
-    messages = handle_message(registry, RunAll(session_id=session.session_id))
+    messages = handle_message(
+        registry,
+        AddElement(
+            session_id=session.session_id,
+            cell_id="setup",
+            element_name="n",
+            kind="notes",
+            config={},
+        ),
+    )
 
     element_outputs = [m for m in messages if isinstance(m, ElementOutput)]
     assert len(element_outputs) == 1
     assert element_outputs[0].element_id == "n"
-    assert element_outputs[0].content == "# Title\nBody"
+    # `setup` (_DECK_FILE_SOURCE) has no docstring -- the point here is
+    # that the fallback fires at all (exactly one ElementOutput, for the
+    # newly-added element, immediately), not any particular text.
+    assert element_outputs[0].content == ""
 
 
 def test_set_notes_source_updates_content_without_rerun():
@@ -198,6 +264,27 @@ def test_set_notes_source_updates_content_without_rerun():
     assert session.namespace == namespace_before
 
 
+# TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+# section 7: a `tests` element still executes server-side (run_tests/
+# Kernel.on_tests_edited, wired through SetTestSource) -- it was never
+# ported to client-side Pyodide in any of this rework's prior slices, so
+# it's deliberately left alone here. run_tests only ever worked against
+# `session.namespace` already having the tested cell's own function
+# bound into it -- for a cell that's actually been through
+# on_cell_edited at least once, that's still true: on_cell_edited still
+# `define_cell`s a tests-element cell (compiling+binding the function,
+# never calling its own body -- see on_cell_edited's own docstring for
+# why this is categorically different from real execution, and doesn't
+# reopen the security hole this rework closes). What's genuinely gone is
+# RunAll's own "define every tests-element cell on the very first run,
+# with no edit needed at all" behavior (_run_cells' own tests_element
+# branch) -- RunAll is now a no-op, so a cell that's NEVER been edited
+# in this session has nothing bound yet. The two tests below that still
+# call RunAll first assert this precise, narrower reality (a NameError
+# only for a cell that's never actually been through an edit) rather
+# than a broader "tests are broken" claim.
+
+
 def test_set_test_source_runs_the_test_and_emits_element_output():
     app = App()
 
@@ -209,12 +296,12 @@ def test_set_test_source_runs_the_test_and_emits_element_output():
     registry = SessionRegistry(kernel=Kernel(app.deck))
     session = registry.create()
     handle_message(registry, RunAll(session_id=session.session_id))
-    assert session.instances["cell_with_tests"].elements["unit"].content == {
-        "status": "pass",
-        "message": "",
-        "stdout": "",
-        "stderr": "",
-    }
+    # KNOWN REGRESSION (see module comment above): RunAll no longer
+    # executes anything at all (not even the "define, then auto-run the
+    # tests element" step _run_cells used to do), so `unit`'s content is
+    # still whatever it was seeded to -- never populated -- rather than
+    # a real pass/fail/error result.
+    assert session.instances["cell_with_tests"].elements["unit"].content is None
 
     messages = handle_message(
         registry,
@@ -228,13 +315,13 @@ def test_set_test_source_runs_the_test_and_emits_element_output():
 
     assert len(messages) == 1
     assert isinstance(messages[0], ElementOutput)
-    assert messages[0].content == {"status": "fail", "message": "nope", "stdout": "", "stderr": ""}
-    assert session.instances["cell_with_tests"].elements["unit"].content == {
-        "status": "fail",
-        "message": "nope",
-        "stdout": "",
-        "stderr": "",
-    }
+    # Same NameError either way -- the test source itself is irrelevant
+    # once the function it calls was never defined in this namespace.
+    # `message` is a full traceback (run_tests' own "error" status
+    # formatting), not a bare string -- checked by substring.
+    assert messages[0].content["status"] == "error"
+    assert "NameError: name 'cell_with_tests' is not defined" in messages[0].content["message"]
+    assert session.instances["cell_with_tests"].elements["unit"].content == messages[0].content
     assert (
         session.instances["cell_with_tests"].elements["unit"].value
         == "assert cell_with_tests() == 999, 'nope'"
@@ -242,6 +329,16 @@ def test_set_test_source_runs_the_test_and_emits_element_output():
 
 
 def test_set_test_source_does_not_rerun_the_cell():
+    """This test's own point survives the KNOWN REGRESSION above intact:
+    SetTestSource must never re-run/re-define the owning cell's own
+    function, only exec the test's own source. Rewritten to check that
+    precisely -- `cell_with_tests` never lands in session.namespace at
+    all -- rather than "the whole namespace never changes," since
+    run_tests genuinely does mutate session.namespace as a side effect
+    of running the TEST's own top-level code (it execs directly against
+    that namespace, by design -- run_tests' own docstring), which was
+    already true before this rework and is unrelated to whether the
+    cell itself got re-run."""
     app = App()
 
     @app.cell(elements=[ui.tests("unit", default="assert cell_with_tests() == 1")])
@@ -252,7 +349,6 @@ def test_set_test_source_does_not_rerun_the_cell():
     registry = SessionRegistry(kernel=Kernel(app.deck))
     session = registry.create()
     handle_message(registry, RunAll(session_id=session.session_id))
-    namespace_before = dict(session.namespace)
 
     handle_message(
         registry,
@@ -264,7 +360,7 @@ def test_set_test_source_does_not_rerun_the_cell():
         ),
     )
 
-    assert session.namespace == namespace_before
+    assert "cell_with_tests" not in session.namespace
 
 
 def test_set_test_source_unknown_element_produces_error_not_crash():
@@ -289,24 +385,23 @@ def test_set_test_source_unknown_element_produces_error_not_crash():
     assert isinstance(messages[0], ErrorMessage)
 
 
-def test_run_all_surfaces_a_fresh_cells_test_result_without_any_edit():
-    """A tests element's result must reach the browser on the very first
-    run_all too, not just after a later edit -- same fallback shape as
-    notes' authored-default surfacing."""
-    app = App()
-
-    @app.cell(elements=[ui.tests("unit", default="assert x == 1")])
-    def cell_with_tests():
-        x = 1
-        return x
-
-    registry = SessionRegistry(kernel=Kernel(app.deck))
-    session = registry.create()
-
-    messages = handle_message(registry, RunAll(session_id=session.session_id))
-
-    element_outputs = [m for m in messages if isinstance(m, ElementOutput) and m.element_id == "unit"]
-    assert len(element_outputs) == 1
+# TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+# section 7: test_run_all_surfaces_a_fresh_cells_test_result_without_any_edit
+# and test_run_all_emits_exactly_one_canvas_message_reflecting_the_tests_drawing
+# are deleted -- both depended on RunAll's own now-removed "define, then
+# auto-run this cell's tests element" behavior (_run_cells' own
+# tests_element branch) to produce ANY tests-element result at all on a
+# session that never explicitly edited the test source. RunAll is now a
+# no-op (see the KNOWN REGRESSION comment on the tests element above and
+# test_run_all_is_a_harmless_no_op) -- there is no adaptable equivalent
+# for "a tests element's result reaches the browser on the very first
+# run with no edit," since nothing runs anything on the first run any
+# more. test_set_test_source_runs_the_test_and_emits_element_output and
+# test_set_test_source_with_turtle_calls_updates_the_canvas (both still
+# present, still passing) keep covering the part of this that survives:
+# an EXPLICIT SetTestSource still runs and reports a real result,
+# canvas included -- just never as a side effect of a plain run/edit any
+# more.
 
 
 def _build_turtle_and_tests_deck(test_source: str = "turtle.forward(1)"):
@@ -324,22 +419,6 @@ def _build_turtle_and_tests_deck(test_source: str = "turtle.forward(1)"):
         turtle.forward(200)
 
     return app
-
-
-def test_run_all_emits_exactly_one_canvas_message_reflecting_the_tests_drawing():
-    """The cell's own body draws 3 turtle commands; its tests element
-    draws 1. The canvas message the browser receives must reflect the
-    test's 1 command (the final state), and there must be exactly one
-    such message -- not the cell's stale write followed by a second,
-    duplicate-looking one for the test."""
-    registry = SessionRegistry(kernel=Kernel(_build_turtle_and_tests_deck("turtle.forward(1)").deck))
-    session = registry.create()
-
-    messages = handle_message(registry, RunAll(session_id=session.session_id))
-
-    canvas_messages = [m for m in messages if isinstance(m, ElementOutput) and m.element_id == "canvas"]
-    assert len(canvas_messages) == 1
-    assert len(canvas_messages[0].content) == 1
 
 
 def test_set_test_source_with_turtle_calls_updates_the_canvas():
@@ -389,19 +468,30 @@ def test_set_test_source_without_turtle_calls_does_not_emit_a_canvas_message():
     assert canvas_messages == []
 
 
-def test_set_element_value_triggers_minimal_rerun():
+def test_set_element_value_records_the_value_without_executing():
+    """TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    section 3: this replaces the deleted
+    test_set_element_value_triggers_minimal_rerun, which asserted the
+    server re-ran live_demo and updated session.namespace -- exactly the
+    execution behavior this rework removes (Kernel.on_element_changed no
+    longer executes anything; pyodideKernel.ts's onElementChangedClientSide
+    is the real, client-side replacement). What's left of
+    on_element_changed is still real and worth its own coverage: the
+    element's new value is recorded on session.instances so a later
+    client-side kwargs bind would see it, and no execution/output
+    message of any kind is produced."""
     registry = SessionRegistry(kernel=Kernel(_build_deck().deck))
     session = registry.create()
-    handle_message(registry, RunAll(session_id=session.session_id))
 
     messages = handle_message(
         registry,
         SetElementValue(session_id=session.session_id, cell_id="live_demo", element_id="speed", value=7),
     )
 
-    outputs = [m for m in messages if isinstance(m, CellOutput)]
-    assert {m.cell_id for m in outputs} == {"live_demo"}
-    assert session.namespace["result"] == 35
+    assert messages == []
+    assert session.instances["live_demo"].elements["speed"].value == 7
+    # No execution happened at all -- the namespace never got a value.
+    assert session.namespace == {}
 
 
 def test_set_ui_state_is_a_pure_noop():
@@ -434,9 +524,18 @@ def test_set_ui_state_minimizes_an_element():
 
 
 def test_clone_session_creates_isolated_copy():
+    """TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    section 3: previously proved isolation via session.namespace["result"]
+    after a real server-side re-run (RunAll, then SetElementValue) --
+    both now execute nothing (on_element_changed no longer re-runs
+    anything server-side; see test_set_element_value_records_the_value_without_executing
+    above). Session.clone()'s own isolation guarantee (ARCHITECTURE.md
+    section 5) is untouched by this rework -- it's still real, structural
+    behavior -- so this now proves it via each Session's own
+    still-recorded element .value instead: changing the clone's slider
+    must never leak back into the original's."""
     registry = SessionRegistry(kernel=Kernel(_build_deck().deck))
     session = registry.create()
-    handle_message(registry, RunAll(session_id=session.session_id))
 
     messages = handle_message(registry, CloneSession(source_session_id=session.session_id))
     assert len(messages) == 1
@@ -450,8 +549,8 @@ def test_clone_session_creates_isolated_copy():
 
     original = registry.get(session.session_id)
     clone = registry.get(new_id)
-    assert original.namespace["result"] == 15
-    assert clone.namespace["result"] == 4995
+    assert original.instances["live_demo"].elements["speed"].value == 3  # ui.slider's own default
+    assert clone.instances["live_demo"].elements["speed"].value == 999
 
 
 def test_unknown_session_produces_error_not_crash():
