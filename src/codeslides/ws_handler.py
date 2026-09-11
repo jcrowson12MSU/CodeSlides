@@ -1,11 +1,16 @@
 """Websocket message dispatch. See ARCHITECTURE.md section 5.
 
 Wraps a Kernel with a session registry and translates protocol.py
-messages into Kernel calls, then translates the resulting
-kernel.ExecutionResult / Session state back into outgoing messages. Has
-no dependency on FastAPI/websockets -- `handle_message` takes and returns
-plain message dataclasses, so it can be tested standalone and reused by
-any transport.
+messages into Kernel calls, then translates the resulting Session state
+back into outgoing messages. TODO.md #64 (collaboration rework)/
+PROPOSAL_pyscript_execution.md: the server never executes cell/test code
+any more (every Kernel method that used to run something now only
+validates and records state -- see each of their own docstrings), so
+there is no more kernel.ExecutionResult translation step here at all --
+every browser computes and shows its own execution results locally via
+pyodideKernel.ts. Has no dependency on FastAPI/websockets --
+`handle_message` takes and returns plain message dataclasses, so it can
+be tested standalone and reused by any transport.
 """
 
 from __future__ import annotations
@@ -14,8 +19,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from codeslides.kernel import ExecutionResult, Kernel
-from codeslides.output import resolve_output, wire_safe_value
+from codeslides.kernel import Kernel
 from codeslides.protocol import (
     AcceptCellState,
     AddCell,
@@ -25,7 +29,6 @@ from codeslides.protocol import (
     AddTitleSlide,
     CellAdded,
     CellAttributionChanged,
-    CellOutput,
     CellRemoved,
     CellRenamed,
     CellSourceChanged,
@@ -34,7 +37,6 @@ from codeslides.protocol import (
     CellStatePushed,
     CellStateRejected,
     CellStateWithdrawn,
-    CellStatus,
     ChatMessageReceived,
     ClientMessage,
     CloneSession,
@@ -234,17 +236,6 @@ class SessionRegistry:
     kernel: Kernel
     sessions: dict[str, Session] = field(default_factory=dict)
     connections: dict[str, dict[ConnectionId, Peer]] = field(default_factory=dict)
-    # TODO.md #65: whether a *newly created* shared document defaults to
-    # `Session.review_mode=True` -- set once, from `cli.py`'s
-    # `--review-mode` flag, for this registry's whole lifetime (one CLI
-    # process serves one deck/document today, same "one collaborative
-    # link per process" scope `--collaborative` itself already has).
-    # Only consulted by `create_or_join` at the moment it actually
-    # constructs a brand-new Session; joining an *existing* one always
-    # uses that Session's own already-decided `review_mode`, since the
-    # mode is fixed per-document, not per-registry-default, the instant
-    # a document exists.
-    default_review_mode: bool = False
 
     def _seed_persisted_attribution(self, session: Session) -> None:
         """TODO.md #46g-v: load a deck's sidecar attribution file (if the
@@ -305,7 +296,18 @@ class SessionRegistry:
         existing = self.sessions.get(document_id)
         if existing is not None:
             return existing
-        session = Session(deck=self.kernel.deck, session_id=document_id, review_mode=self.default_review_mode)
+        # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        # section 2.2: every collaborative document is accept-gated now,
+        # unconditionally -- a shared document always gets
+        # `review_mode=True`, unconfigurable (the `--review-mode` CLI
+        # flag/`create_app`'s own `review_mode` parameter/this registry's
+        # own former `default_review_mode` field that used to let this
+        # vary are all removed entirely -- see cli.py/server.py's own
+        # docstrings), so EditCell/PushCellState's own existing
+        # review_mode gates agree with the frontend's own
+        # acceptGated = Boolean(documentId) condition (App.tsx) on every
+        # shared document, with no way to make them disagree any more.
+        session = Session(deck=self.kernel.deck, session_id=document_id, review_mode=True)
         self._seed_persisted_attribution(session)
         self.sessions[session.session_id] = session
         return session
@@ -430,114 +432,25 @@ def _effective_display_source(session: Session, cell) -> str:
     return display_source(override if override is not None else cell.source, hide_def=cell.hide_def)
 
 
-def _results_to_messages(session_id: str, results: dict[str, ExecutionResult]) -> list[ServerMessage]:
-    """Translate a Kernel run's per-cell ExecutionResults into the
-    cell_status/cell_output messages ARCHITECTURE.md section 5 defines.
-    `output.kind`/`output.data` carry the tagged output union from section
-    6, resolved from the cell's raw returned value (skipped for a cell
-    that errored -- there's no meaningful value to classify)."""
-    messages: list[ServerMessage] = []
-    for cell_id, result in results.items():
-        messages.append(CellStatus(session_id=session_id, cell_id=cell_id, status=result.status))
-        resolved = resolve_output(result.value) if result.status == "idle" else None
-        messages.append(
-            CellOutput(
-                session_id=session_id,
-                cell_id=cell_id,
-                output={
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                    "value": wire_safe_value(result.value),
-                    "kind": resolved.kind if resolved else None,
-                    "data": resolved.data if resolved else None,
-                },
-                error=result.error,
-            )
-        )
-    return messages
-
-
-def _element_output_messages(session: Session, results: dict[str, ExecutionResult]) -> list[ServerMessage]:
-    """Emit element_output for viewer elements a re-run cell actually wrote
-    to via cs.image()/cs.iframe(), or via codeslides.turtle calls
-    (ARCHITECTURE.md section 3a/7) -- each write already names its target
-    element, so this is a direct translation, not a broadcast to every
-    viewer element on the cell (broadcasting was the placeholder behavior
-    this replaces, and it was wrong for any cell with more than one viewer
-    element).
-
-    `notes` and `tests` elements are handled separately: neither is
-    written to via a `cs.*` call, so both need a fallback that surfaces
-    their current `content` directly. `notes` is authored content --
-    the owning cell's own docstring (`Cell.docstring`, `deck.py`) -- that's
-    never "computed" at all; `tests`
-    (ARCHITECTURE.md section 3b) *is* computed, but by `_run_cells`
-    calling `kernel.run_tests` directly and storing the result straight
-    onto `ElementInstance.content` -- not through the `cs.execution_context`
-    write-collection path every other viewer output goes through -- so
-    without this fallback a freshly-run cell's test result would never
-    reach the browser at all.
-
-    An `image`/`iframe` element with a static `src=` and a cell body
-    that never calls `cs.image(...)`/`cs.iframe(...)` at all (e.g. an
-    image meant only to be uploaded once and displayed, no code driving
-    it) needs the exact same fallback: `session.py`'s
-    `seed_cell_instance` already seeds `ElementInstance.content` from
-    that `src=` at construction time, but that's pure Python state --
-    the browser only ever learns about content through an explicit
-    `ElementOutput` message, so without this, a freshly-created Session
-    (a page (re)load, or a `set_element_config` upload followed by
-    `run_all` re-running everything) would show "no image yet" even
-    though the Session's own state already has the right content.
-
-    A cell's `turtle_canvas` needs a *forced* resend (not skipped just
-    because `result.element_writes` already includes it), but only when
-    the cell has a `tests` element: a test's own turtle drawing
-    (ARCHITECTURE.md section 3b) is written into that same canvas
-    element *after* `execute_cell` already captured
-    `result.element_writes` -- so on a cell with a test, the canvas's
-    final `content` may differ from what those writes captured (the
-    test may have overwritten the cell's own drawing, or the cell may
-    have had no turtle calls of its own at all), and a message built
-    from `element_writes` alone would silently show the browser stale
-    content. A turtle-drawing cell with no `tests` element is
-    unaffected -- `element_writes` alone is already correct there, so
-    this forced resend is skipped for it rather than duplicating an
-    identical message every run."""
-    messages: list[ServerMessage] = []
-    for cell_id, result in results.items():
-        cell = session.deck.cells.get(cell_id)
-        has_tests_element = cell is not None and any(e.kind == "tests" for e in cell.elements)
-        for write in result.element_writes:
-            if write.kind == "turtle" and has_tests_element:
-                continue  # forced resend below carries the post-test content instead
-            messages.append(
-                ElementOutput(
-                    session_id=session.session_id,
-                    cell_id=cell_id,
-                    element_id=write.element_name,
-                    content=write.content,
-                )
-            )
-
-        if cell is None:
-            continue
-        written_names = {w.element_name for w in result.element_writes}
-        for element in cell.elements:
-            is_static_content_fallback = (
-                element.kind in ("notes", "tests", "image", "iframe") and element.name not in written_names
-            )
-            is_forced_turtle_resend = element.kind == "turtle_canvas" and has_tests_element
-            if is_static_content_fallback or is_forced_turtle_resend:
-                messages.append(
-                    ElementOutput(
-                        session_id=session.session_id,
-                        cell_id=cell_id,
-                        element_id=element.name,
-                        content=session.instances[cell_id].elements[element.name].content,
-                    )
-                )
-    return messages
+# TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+# section 3+7: _results_to_messages/_element_output_messages (the
+# ExecutionResult -> cell_status/cell_output/element_output translation
+# ARCHITECTURE.md section 5/3a used to route every re-run result
+# through) are removed. Their last 2 real callers -- EditCell's own
+# handler (on_cell_edited) and SetElementValue's (on_element_changed)
+# -- always passed an empty results dict by the time this was removed:
+# both Kernel methods stopped executing anything server-side in an
+# earlier slice of this same rework (see each of their own
+# docstrings), and this rework's tests-element slice removed
+# SetTestSource's own separate call into a real execution path (the
+# only other place _element_output_messages' notes/tests fallback
+# branch could ever fire with real data). Flagged as a known follow-up
+# when that tests-element slice landed; this is that follow-up. Every
+# browser now learns a cell/element's output entirely client-side
+# (pyodideKernel.ts's runCellClientSide/runAllClientSide/
+# onElementChangedClientSide/runTestClientSide, wired into App.tsx) --
+# no server-side request shape ever needs to build one of these
+# messages again.
 
 
 # TODO.md #46e-ii: the only message types a "viewer" role connection may
@@ -812,13 +725,26 @@ def handle_message(
         ]
 
     if isinstance(message, RunAll):
+        # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        # section 3: this handler no longer calls Kernel.run_all (which
+        # itself still exists -- see its own docstring for why: it's
+        # still real, working test/fixture setup for other, untouched
+        # structural methods, just no longer reachable from any browser).
+        # The server never executes cell code in response to a network
+        # message any more (every browser runs its own Pyodide instance
+        # against its own local view of the deck's sources;
+        # pyodideKernel.ts's runAllClientSide is the real replacement, and
+        # nothing in the shipped frontend sends this message at all any
+        # more). Kept as a reachable, harmless no-op (an empty reply, not
+        # an error) rather than deleted outright, matching the "kept but
+        # neutered" precedent cli.py's own --review-mode flag already set
+        # for this same rework -- a stray client that still sends it
+        # (an old cached bundle, a hand-written script) gets no crash and
+        # no server-side execution, just nothing happens.
         session = registry.get(message.session_id)
         if session is None:
             return [ErrorMessage(message="unknown session", session_id=message.session_id)]
-        results = registry.kernel.run_all(session)
-        return _results_to_messages(message.session_id, results) + _element_output_messages(
-            session, results
-        )
+        return []
 
     if isinstance(message, EditCell):
         session = registry.get(message.session_id)
@@ -849,7 +775,12 @@ def handle_message(
                     message="unknown cell", session_id=message.session_id, cell_id=message.cell_id
                 )
             ]
-        results = registry.kernel.on_cell_edited(message.cell_id, message.source, session)
+        # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        # section 3: on_cell_edited always returns {} now (see its own
+        # docstring) -- no more _results_to_messages/_element_output_messages
+        # tail translating a (now permanently empty) results dict into
+        # cell_status/cell_output/element_output messages.
+        registry.kernel.on_cell_edited(message.cell_id, message.source, session)
         # TODO.md #46b-i: on a shared document, every *other* connection
         # needs to learn the cell's new source, not just its re-run
         # output -- cell_status/cell_output alone say "this cell changed
@@ -866,17 +797,13 @@ def handle_message(
         # incoming source already matches the live doc), so this is
         # unconditional rather than needing a sender/peer split in
         # handle_message's contract.
-        return (
-            [
-                CellSourceChanged(
-                    session_id=message.session_id,
-                    cell_id=message.cell_id,
-                    source=message.source,
-                )
-            ]
-            + _results_to_messages(message.session_id, results)
-            + _element_output_messages(session, results)
-        )
+        return [
+            CellSourceChanged(
+                session_id=message.session_id,
+                cell_id=message.cell_id,
+                source=message.source,
+            )
+        ]
 
     if isinstance(message, PushCellState):
         session = registry.get(message.session_id)
@@ -1178,12 +1105,13 @@ def handle_message(
                     cell_id=message.cell_id,
                 )
             ]
-        results = registry.kernel.on_element_changed(
-            message.cell_id, message.element_id, message.value, session
-        )
-        return _results_to_messages(message.session_id, results) + _element_output_messages(
-            session, results
-        )
+        # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        # section 3: on_element_changed always returns {} now (see its
+        # own docstring) -- no more _results_to_messages/
+        # _element_output_messages tail; App.tsx's onElementChangedClientSide
+        # is what actually re-runs the affected cells client-side now.
+        registry.kernel.on_element_changed(message.cell_id, message.element_id, message.value, session)
+        return []
 
     if isinstance(message, SetUiState):
         session = registry.get(message.session_id)
@@ -1246,35 +1174,15 @@ def handle_message(
                     cell_id=message.cell_id,
                 )
             ]
-        result = registry.kernel.on_tests_edited(
-            message.cell_id, message.element_id, message.source, session
-        )
-        messages: list[ServerMessage] = [
-            ElementOutput(
-                session_id=message.session_id,
-                cell_id=message.cell_id,
-                element_id=message.element_id,
-                content=result,
-            )
-        ]
-        # If the cell has a turtle_canvas, the test's own turtle drawing
-        # (kernel.py's _run_and_apply_test) already replaced that canvas
-        # element's content -- surface it too, same as the test's own
-        # result, so the browser actually sees the redrawn canvas rather
-        # than needing a separate cell re-run to pick it up.
-        cell = session.deck.cells.get(message.cell_id)
-        if cell is not None:
-            canvases = [e.name for e in cell.elements if e.kind == "turtle_canvas"]
-            if len(canvases) == 1:
-                messages.append(
-                    ElementOutput(
-                        session_id=message.session_id,
-                        cell_id=message.cell_id,
-                        element_id=canvases[0],
-                        content=instance.elements[canvases[0]].content,
-                    )
-                )
-        return messages
+        # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        # section 7: no more ElementOutput/turtle-resend reply tail --
+        # Kernel.on_tests_edited no longer runs the test at all (see its
+        # own docstring). App.tsx triggers the client-side equivalent
+        # (pyodideKernel.ts's runTestClientSide) once it sees this same
+        # edit's TestSourceChanged reply below, including the turtle-
+        # canvas forced-resend behavior this used to compute here.
+        registry.kernel.on_tests_edited(message.cell_id, message.element_id, message.source, session)
+        return []
 
     if isinstance(message, SetNotesSource):
         session = registry.get(message.session_id)
@@ -1495,10 +1403,15 @@ def handle_message(
                 )
             ]
         try:
-            cell, result = registry.kernel.add_cell(session)
+            cell = registry.kernel.add_cell(session)
         except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
             return [ErrorMessage(message=str(exc), session_id=message.session_id)]
-        results = {cell.name: result}
+        # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        # section 3: no more _results_to_messages/_element_output_messages
+        # tail -- Kernel.add_cell no longer executes anything server-side
+        # (see its own docstring). App.tsx triggers the client-side
+        # equivalent (pyodideKernel.ts's runCellClientSide) once it sees
+        # this new cell in CellAdded's own reply below.
         return [
             CellAdded(
                 session_id=message.session_id,
@@ -1510,8 +1423,6 @@ def handle_message(
                 ],
                 layout=cell.layout,
             ),
-            *_results_to_messages(message.session_id, results),
-            *_element_output_messages(session, results),
         ]
 
     if isinstance(message, AddSlide):
@@ -1558,10 +1469,11 @@ def handle_message(
                 )
             ]
         try:
-            cell, _slide, result = registry.kernel.add_title_slide(session)
+            cell, _slide = registry.kernel.add_title_slide(session)
         except (InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
             return [ErrorMessage(message=str(exc), session_id=message.session_id)]
-        results = {cell.name: result}
+        # TODO.md #64 (collaboration rework): no more execution tail --
+        # see Kernel.add_title_slide's own docstring.
         slides_payload = [
             {
                 "title": s.title,
@@ -1583,8 +1495,6 @@ def handle_message(
                 layout=cell.layout,
                 slides=slides_payload,
             ),
-            *_results_to_messages(message.session_id, results),
-            *_element_output_messages(session, results),
         ]
 
     if isinstance(message, SetSlideOrder):
@@ -1793,10 +1703,11 @@ def handle_message(
 
         try:
             element = Element(name=message.element_name, kind=message.kind, config=message.config)
-            cell, result = registry.kernel.add_element(session, message.cell_id, element)
+            cell = registry.kernel.add_element(session, message.cell_id, element)
         except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
             return [ErrorMessage(message=str(exc), session_id=message.session_id, cell_id=message.cell_id)]
-        results = {cell.name: result}
+        # TODO.md #64 (collaboration rework): no more execution tail --
+        # see Kernel.add_element's own docstring.
         return [
             ElementAdded(
                 session_id=message.session_id,
@@ -1808,8 +1719,6 @@ def handle_message(
                 ],
                 layout=cell.layout,
             ),
-            *_results_to_messages(message.session_id, results),
-            *_element_output_messages(session, results),
         ]
 
     if isinstance(message, RemoveElement):
@@ -1819,10 +1728,11 @@ def handle_message(
         # TODO.md #68: NOT gated by review_mode -- see SetMainCell's own
         # comment above for why.
         try:
-            cell, result = registry.kernel.remove_element(session, message.cell_id, message.element_name)
+            cell = registry.kernel.remove_element(session, message.cell_id, message.element_name)
         except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
             return [ErrorMessage(message=str(exc), session_id=message.session_id, cell_id=message.cell_id)]
-        results = {cell.name: result}
+        # TODO.md #64 (collaboration rework): no more execution tail --
+        # see Kernel.remove_element's own docstring.
         return [
             ElementRemoved(
                 session_id=message.session_id,
@@ -1834,8 +1744,6 @@ def handle_message(
                 ],
                 layout=cell.layout,
             ),
-            *_results_to_messages(message.session_id, results),
-            *_element_output_messages(session, results),
         ]
 
     if isinstance(message, RemovePrimaryEditor):
@@ -1845,10 +1753,11 @@ def handle_message(
         # TODO.md #68: NOT gated by review_mode -- see SetMainCell's own
         # comment above for why.
         try:
-            cell, result = registry.kernel.remove_primary_editor(session, message.cell_id)
+            cell = registry.kernel.remove_primary_editor(session, message.cell_id)
         except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
             return [ErrorMessage(message=str(exc), session_id=message.session_id, cell_id=message.cell_id)]
-        results = {cell.name: result}
+        # TODO.md #64 (collaboration rework): no more execution tail --
+        # see Kernel.remove_primary_editor's own docstring.
         return [
             PrimaryEditorRemoved(
                 session_id=message.session_id,
@@ -1860,8 +1769,6 @@ def handle_message(
                 ],
                 layout=cell.layout,
             ),
-            *_results_to_messages(message.session_id, results),
-            *_element_output_messages(session, results),
         ]
 
     if isinstance(message, AddPrimaryEditor):
@@ -1871,10 +1778,11 @@ def handle_message(
         # TODO.md #68: NOT gated by review_mode -- see SetMainCell's own
         # comment above for why.
         try:
-            cell, result = registry.kernel.add_primary_editor(session, message.cell_id)
+            cell = registry.kernel.add_primary_editor(session, message.cell_id)
         except (SaveConflictError, InvalidSourceError, OSError, ValueError, SyntaxError) as exc:
             return [ErrorMessage(message=str(exc), session_id=message.session_id, cell_id=message.cell_id)]
-        results = {cell.name: result}
+        # TODO.md #64 (collaboration rework): no more execution tail --
+        # see Kernel.add_primary_editor's own docstring.
         return [
             PrimaryEditorAdded(
                 session_id=message.session_id,
@@ -1886,8 +1794,6 @@ def handle_message(
                 ],
                 layout=cell.layout,
             ),
-            *_results_to_messages(message.session_id, results),
-            *_element_output_messages(session, results),
         ]
 
     if isinstance(message, ReorderElements):

@@ -88,25 +88,16 @@ def main() -> None:
                 "(TODO.md #46a/#46e), instead of the default solo session"
             ),
         )
-        # TODO.md #65/PROPOSAL_review_workflow.md: opts a collaborative
-        # document into the propose/review/accept workflow (`PushCell`/
-        # `AcceptProposal`) instead of today's always-live editing, where
-        # every keystroke's edit is immediately broadcast to every peer.
-        # Meaningless without `--collaborative` (there's no one to review
-        # a push on a solo session) but not rejected as a combination
-        # error -- it's simply never consulted, same "harmless if unused"
-        # precedent `--collaborative`'s own document_id already sets for
-        # a non-collaborative run.
-        sub.add_argument(
-            "--review-mode",
-            action="store_true",
-            default=False,
-            help=(
-                "On a --collaborative document, require an explicit Push + Accept "
-                "for cell edits to become visible to other peers (TODO.md #65), "
-                "instead of broadcasting every edit immediately"
-            ),
-        )
+        # TODO.md #65/PROPOSAL_review_workflow.md: originally opted a
+        # collaborative document into the propose/review/accept workflow
+        # instead of always-live editing, via a `--review-mode` flag.
+        # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        # section 2.2/7: every collaborative document is accept-gated
+        # now, unconditionally (SessionRegistry.create_or_join always
+        # sets review_mode=True for a shared document) -- always-live
+        # mode no longer exists as an option at all, so the flag is
+        # removed outright rather than kept as a no-op: there is no
+        # longer any document-level choice left for it to (not) affect.
 
     args = parser.parse_args()
 
@@ -116,7 +107,7 @@ def main() -> None:
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(1) from None
 
-    app = create_app(deck, deck_path=args.path, review_mode=args.review_mode)
+    app = create_app(deck, deck_path=args.path)
     base_url = f"http://{args.host}:{args.port}/"
 
     print(f"codeslides {args.command}: {args.path}")
@@ -143,8 +134,10 @@ def main() -> None:
         print("Collaborative mode: share one of these links --")
         print(f"  Editor (can make changes): {url}")
         print(f"  Viewer (read-only):        {viewer_url}")
-        if args.review_mode:
-            print("Review mode: cell edits are pushed as proposals, not broadcast immediately.")
+        # TODO.md #64 (collaboration rework): every collaborative
+        # document is accept-gated now, unconditionally -- there is no
+        # flag left that could make this print something else.
+        print("Cell edits are pushed as proposals, not broadcast immediately.")
 
     if args.open_browser:
         webbrowser.open(url)

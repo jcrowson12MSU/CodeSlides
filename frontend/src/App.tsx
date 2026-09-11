@@ -3,6 +3,18 @@ import './App.css'
 import { useChatState } from './chatState'
 import { useDeckState } from './deckState'
 import { usePresenceState } from './presenceState'
+import {
+  getPyodideStatus,
+  onElementChangedClientSide,
+  runAllClientSide,
+  runCellClientSide,
+  runTestClientSide,
+  subscribePyodideStatus,
+  type PyodideCellInput,
+  type PyodideCellResult,
+  type PyodideStatus,
+  type PyodideTestResult,
+} from './pyodideKernel'
 import type { CellLayout, ServerMessage } from './protocol'
 import { useCodeSlidesSocket } from './useCodeSlidesSocket'
 import { Cell, type CellMeta } from './widgets/Cell'
@@ -69,6 +81,22 @@ function roleFromUrl(): 'editor' | 'viewer' {
 // and how.
 function App() {
   const [deck, setDeck] = useState<DeckSummary | null>(null)
+  // TODO.md #64/PROPOSAL_pyscript_execution.md: cold-start loading
+  // state -- Pyodide's first-ever load on a page (the CDN script fetch,
+  // loadPyodide() itself, and writing/importing the codeslides package
+  // into its virtual filesystem) genuinely takes several seconds, and
+  // until now nothing in the UI reflected that at all: the page just
+  // looked frozen/broken from the moment "open a deck, run it
+  // automatically" (below) kicks off runAllClientSide until the first
+  // cell's status finally appears. Mirrors pyodideKernel.ts's own
+  // module-level status into React state via subscribePyodideStatus --
+  // that module deliberately has no framework dependency of its own
+  // (see its own comment), so this is the one place the two meet.
+  // Initialized from getPyodideStatus() (not a hardcoded 'idle') so a
+  // fast-refresh/remount after Pyodide has already loaded doesn't
+  // flash a loading indicator for state that's actually already ready.
+  const [pyodideStatus, setPyodideStatus] = useState<PyodideStatus>(getPyodideStatus())
+  useEffect(() => subscribePyodideStatus(setPyodideStatus), [])
   const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode)
   // Slides-view-only: collapses the entire header (title row + the
   // Prev/Next/Reveal-code toolbar rendered inside SlideShow) down to just
@@ -160,6 +188,33 @@ function App() {
   const [testSourceOverrides, setTestSourceOverrides] = useState<Record<string, Record<string, string>>>(
     {},
   )
+  // TODO.md #64/PROPOSAL_pyscript_execution.md: a cell's own most recent
+  // client-side (Pyodide) execution result -- this first implementation
+  // slice's whole point. Unlike every other override above, this is not
+  // an echo of something the server also knows about: the server never
+  // executes anything and never sees this at all (the proposal's
+  // section 2.1 axiom -- no execution result crosses a browser
+  // boundary), so this is the ONLY source of a cell's status/output/
+  // error now. Merged into mergedCellState below, same pattern as
+  // notesOverrides, but replacing rather than layering onto
+  // `cellState[cellId]` (there is no server-side execution state left
+  // to layer on top of).
+  const [clientExecutionState, setClientExecutionState] = useState<Record<string, PyodideCellResult>>({})
+  // TODO.md #64/PROPOSAL_pyscript_execution.md section 7: a tests
+  // element's own most recent client-side (Pyodide) result -- same role
+  // clientExecutionState plays for a cell's own run, but keyed by
+  // cellId+elementId (cellId -> elementId -> PyodideTestResult) since a
+  // cell can only ever have one clientExecutionState entry but could in
+  // principle have more than one tests element (ARCHITECTURE.md section
+  // 3b's own "exactly one" rule is enforced by the editor UI, not the
+  // data model). Merged into mergedCellState.elementContent below,
+  // replacing whatever the server-derived value was there (there is no
+  // server-side test result left to layer on top of, same "the ONLY
+  // source of truth now" reasoning clientExecutionState's own comment
+  // gives for cell execution).
+  const [clientTestResults, setClientTestResults] = useState<Record<string, Record<string, PyodideTestResult>>>(
+    {},
+  )
   // Collapse (ARCHITECTURE.md section 8): pure UI state, kept client-side
   // for the same reason notesOverrides/testSourceOverrides above are --
   // set_ui_state produces no server reply to sync from.
@@ -238,11 +293,29 @@ function App() {
   // separate, much larger client-side-execution work that would make
   // that interaction actually meaningful instead of a silent no-op.
   const isViewer = role === 'viewer'
-  const { sessionId, reviewMode, messages, send } = useCodeSlidesSocket(
+  // TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+  // section 2.2: every collaborative document is now accept-gated --
+  // the server's own `reviewMode` (session_created's `review_mode`,
+  // tied to cli.py's `--review-mode` flag) is no longer what decides
+  // this on the frontend, since always-live mode is retired entirely,
+  // not just made optional. `documentId` (set only for a `--collaborative`
+  // connection -- see documentIdFromUrl above) is the correct condition
+  // now: a solo connection has no peer to push to at all, so it always
+  // runs directly (handleRunCell, no staging); any collaborative
+  // connection always stages+pushes, regardless of what the server
+  // reports. useCodeSlidesSocket still returns the server's own
+  // reviewMode (server.py/session.py's own review_mode field is
+  // untouched by this frontend-only slice, see
+  // PROPOSAL_pyscript_execution.md section 7's still-open "what happens
+  // to review_mode as a stored field" question) -- no longer
+  // destructured here at all, since nothing in this file reads it any
+  // more.
+  const { sessionId, messages, send } = useCodeSlidesSocket(
     documentId
       ? `/ws?document=${encodeURIComponent(documentId)}${role === 'viewer' ? '&role=viewer' : ''}`
       : undefined,
   )
+  const acceptGated = Boolean(documentId)
   const cellState = useDeckState(messages)
   const presenceState = usePresenceState(messages)
   const chatMessages = useChatState(messages)
@@ -449,13 +522,31 @@ function App() {
     }
   }, [helpOpen])
 
+  // TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+  // section 3: this used to send a `run_all` websocket message, back
+  // when the server actually executed cells and broadcast the results.
+  // The server no longer executes anything in response to any network
+  // message (kernel.py's own run_all/on_cell_edited/on_element_changed
+  // docstrings) -- sending it was already a no-op, just a pointless
+  // round trip. Calls handleRunAll() (the same client-side path the Run
+  // All button/shortcut already uses) instead, so opening a deck still
+  // runs it automatically -- the one user-visible behavior this effect
+  // exists for -- with zero server involvement. Gated on `deck` as well
+  // as `sessionId` (not just `sessionId`, the original condition):
+  // `deck` loads via its own independent `fetch('/api/deck')` effect
+  // above, with no ordering relative to the websocket handshake that
+  // produces `sessionId` -- `handleRunAll`'s own `currentCellInputs()`
+  // silently returns `{}` for a still-null `deck` (see its own
+  // docstring), which would otherwise mean "run nothing" if this effect
+  // fired before the deck fetch resolved.
   useEffect(() => {
-    if (sessionId) {
-      send({ type: 'run_all', session_id: sessionId })
+    if (sessionId && deck) {
+      handleRunAll()
     }
-    // run_all only needs to fire once per new session
+    // run_all only needs to fire once per new session, once the deck is
+    // also available -- not on every subsequent deck update thereafter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId])
+  }, [sessionId, Boolean(deck)])
 
   useEffect(() => {
     const last = messages[messages.length - 1]
@@ -534,10 +625,41 @@ function App() {
   // ErrorMessage carry no cell_id for the message-scan loop below to key
   // an error off of the way editErrors does for cell-level actions.
   const addSlidePending = useRef(false)
+  // TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+  // section 3: cell_added/title_slide_added/element_added/element_removed/
+  // primary_editor_added/primary_editor_removed used to each also carry
+  // a server-computed cell_status/cell_output/element_output tail (the
+  // structural Kernel method's own re-run of the affected cell,
+  // immediately after the disk write) -- removed now that none of those
+  // 6 Kernel methods execute anything server-side any more (see each of
+  // their own docstrings). What every one of them still needs is the
+  // exact same "shows up immediately, not stale until an unrelated
+  // future edit happens to trigger a run" behavior the server-side
+  // re-run used to provide -- just achieved client-side now. This ref
+  // collects the cell ids these 6 message types name, for the *separate*
+  // effect below (keyed on `deck`, not `messages`) to actually run once
+  // `deck.cells` reflects the new structure -- calling runCellClientSide
+  // directly inside this effect's own `setDeck` updater isn't an option
+  // (React state updaters must be pure, and `deck` here is still the
+  // stale pre-update value until next render).
+  const cellsNeedingClientRerun = useRef<Set<string>>(new Set())
   useEffect(() => {
     const newMessages = messages.slice(processedMessageCount.current)
     processedMessageCount.current = messages.length
     if (newMessages.length === 0) return
+
+    for (const msg of newMessages) {
+      if (
+        msg.type === 'cell_added' ||
+        msg.type === 'title_slide_added' ||
+        msg.type === 'element_added' ||
+        msg.type === 'element_removed' ||
+        msg.type === 'primary_editor_added' ||
+        msg.type === 'primary_editor_removed'
+      ) {
+        cellsNeedingClientRerun.current.add(msg.cell_id)
+      }
+    }
 
     setDeck((prev) => {
       if (!prev) return prev
@@ -736,9 +858,10 @@ function App() {
     // mode path -- without this, every connection's test editor
     // (including the accepter's own) would keep showing pre-accept text
     // forever after an AcceptCellState applies a pushed test-source
-    // field, having no other path that ever refreshes it (SetTestSource's
-    // own reply is only ever the resulting ElementOutput result, never
-    // an echo of the source itself).
+    // field, having no other path that ever refreshes it (TODO.md #64
+    // section 7: SetTestSource's own reply no longer runs the test at
+    // all any more, so this is also the ONLY signal any connection gets
+    // that an accepted test needs re-running client-side).
     const acceptedTestSources = newMessages.filter(
       (m): m is Extract<ServerMessage, { type: 'test_source_changed' }> => m.type === 'test_source_changed',
     )
@@ -750,6 +873,71 @@ function App() {
         }
         return next
       })
+      // TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+      // section 7: every connection (including the accepter's own) runs
+      // the newly-accepted test source in its own Pyodide instance now,
+      // matching handleChangeTestSource's own direct-edit path -- an
+      // AcceptCellState on one connection must not leave every OTHER
+      // connection's test badge showing a stale pre-accept result
+      // forever. Deliberately inline here (not routed through the
+      // cellsNeedingClientRerun/[deck]-effect pattern the 6 structural
+      // message types use above) since a test re-run never depends on
+      // `deck.cells` reflecting new structure first -- the cell this
+      // message names already exists, unchanged, in the current deck.
+      for (const m of acceptedTestSources) {
+        runTestClientSide(m.cell_id, m.source, currentCellInputs())
+          .then((result) => {
+            setClientTestResults((prev) => ({
+              ...prev,
+              [m.cell_id]: { ...prev[m.cell_id], [m.element_id]: result },
+            }))
+            // Same turtle-canvas forced-resend as handleChangeTestSource's
+            // own direct-edit path (this effect's own comment above for
+            // why the synthesized-entry fallback below is needed).
+            if (result.turtleCommands === null) return
+            const cellMeta = deck?.cells[m.cell_id]
+            const canvasElement = cellMeta?.elements.find((e) => e.kind === 'turtle_canvas')
+            if (!canvasElement) return
+            setClientExecutionState((prev) => {
+              const existing = prev[m.cell_id] ?? {
+                status: 'idle' as const,
+                value: null,
+                kind: null,
+                data: null,
+                error: null,
+                stdout: '',
+                stderr: '',
+                elementWrites: [],
+              }
+              const otherWrites = existing.elementWrites.filter((w) => w.elementName !== canvasElement.name)
+              return {
+                ...prev,
+                [m.cell_id]: {
+                  ...existing,
+                  elementWrites: [
+                    ...otherWrites,
+                    { elementName: canvasElement.name, kind: 'turtle', content: result.turtleCommands },
+                  ],
+                },
+              }
+            })
+          })
+          .catch((err: unknown) => {
+            setClientTestResults((prev) => ({
+              ...prev,
+              [m.cell_id]: {
+                ...prev[m.cell_id],
+                [m.element_id]: {
+                  status: 'error',
+                  message: err instanceof Error ? err.message : String(err),
+                  stdout: '',
+                  stderr: '',
+                  turtleCommands: null,
+                },
+              },
+            }))
+          })
+      }
     }
 
     // TODO.md #65-xiii/#68: same reasoning as acceptedTestSources above,
@@ -769,28 +957,166 @@ function App() {
         return next
       })
     }
+    // deck/currentCellInputs are read only inside the acceptedTestSources
+    // branch's client-side test re-run above, needed to know each
+    // pending test's own cell (for the turtle-canvas lookup) and to
+    // build the Pyodide call's own current-sources snapshot -- neither
+    // should re-fire this whole message-scanning effect on every
+    // unrelated render, same "eslint-disable, not a real missing
+    // dependency" precedent the deck-keyed effect (and this file's
+    // sessionId/deck bootstrap effect) already use for the same reason:
+    // this effect must only run when NEW messages actually arrive.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages])
 
+  // TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+  // section 3: drains `cellsNeedingClientRerun` (populated above,
+  // whenever cell_added/title_slide_added/element_added/element_removed/
+  // primary_editor_added/primary_editor_removed arrives) once `deck`
+  // itself has actually been updated with the new structure -- a
+  // separate effect, not inline in the one above, because `deck` there
+  // is still last render's value until this component re-renders with
+  // the `setDeck` call already applied. Each pending cell id is re-run
+  // via the exact same client-side path Shift+Enter/Run All use
+  // (runCellClientSide, currentCellInputs()) -- this is what makes a
+  // freshly-added cell/element/primary-editor show real output
+  // immediately instead of looking stale until an unrelated future edit
+  // happens to trigger a run, the same "shouldn't look conspicuously
+  // different" guarantee the removed server-side re-run used to provide.
+  useEffect(() => {
+    if (!deck) return
+    const pending = cellsNeedingClientRerun.current
+    if (pending.size === 0) return
+    cellsNeedingClientRerun.current = new Set()
+    for (const cellId of pending) {
+      if (!deck.cells[cellId]) continue
+      runCellClientSide(cellId, currentCellInputs())
+        .then(applyClientExecutionResults)
+        .catch((err: unknown) => reportClientExecutionError(cellId, err))
+    }
+    // currentCellInputs/applyClientExecutionResults/reportClientExecutionError
+    // are plain function declarations recreated every render, not
+    // memoized -- listing them would re-fire this effect on every
+    // render instead of only when `deck` itself changes, same
+    // "eslint-disable, not a real missing dependency" precedent the
+    // sessionId/deck bootstrap effect above already uses.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deck])
+
+  // TODO.md #64 (element/input-binding slice): mirrors handleRunCell/
+  // handleRunAll below -- the value change runs entirely client-side via
+  // Pyodide now (Kernel.on_element_changed's own re-run semantics,
+  // replicated in pyodideKernel.ts's on_element_changed_b64), so the
+  // set_element_value websocket message this used to send is dropped
+  // entirely, same "no server round trip for execution" rule those two
+  // already follow (PROPOSAL_pyscript_execution.md section 2.1 -- the
+  // server never executes anything and never sees this value at all).
+  // `elementValues` (local React state) stays the source of truth for
+  // "what is this slider currently set to" exactly as it already was --
+  // only the round-trip-to-server part is gone, not the local echo.
   function handleSetElementValue(cellId: string, elementId: string, value: unknown) {
-    if (!sessionId) return
     setElementValues((prev) => ({
       ...prev,
       [cellId]: { ...prev[cellId], [elementId]: value },
     }))
-    send({ type: 'set_element_value', session_id: sessionId, cell_id: cellId, element_id: elementId, value })
+    onElementChangedClientSide(cellId, elementId, value, currentCellInputs())
+      .then(applyClientExecutionResults)
+      .catch((err: unknown) => reportClientExecutionError(cellId, err))
   }
 
+  // TODO.md #64/PROPOSAL_pyscript_execution.md: this tab's full current
+  // view of the deck -- deck.cells' own last-known source/elements for
+  // every OTHER cell, with `overrideCellId`'s own entry's source
+  // overridden by whatever fresh source the caller was just given
+  // (deck.cells[cellId].source only updates via server messages, which
+  // no longer fire for a client-side-only edit -- see App.tsx's own
+  // mergedCellState comment on why execution state is no longer
+  // server-derived at all). This is the exact shape
+  // runCellClientSide/runAllClientSide/onElementChangedClientSide need
+  // to rebuild the dependency graph AND bind input-element kwargs fresh
+  // on every call (there is no persistent client-side Deck object to
+  // keep in sync incrementally -- see pyodideKernel.ts's own header
+  // comment). `elements` always comes from `deck.cells[id].elements`
+  // itself (name/kind/config, ElementMeta's own shape -- never
+  // overridden per-call, since only source changes live-edit to live-
+  // edit within this slice's scope), not `elementValues` -- those are a
+  // SEPARATE per-tab value the Pyodide runner's own _element_values
+  // dict tracks (see on_element_changed_b64), matching how
+  // session.instances[cell].elements[el].value is a Session-side
+  // concern kernel.py never threads through Cell/Deck either.
+  function currentCellInputs(overrideCellId?: string, overrideSource?: string): Record<string, PyodideCellInput> {
+    if (!deck) return {}
+    const cells: Record<string, PyodideCellInput> = {}
+    for (const [id, meta] of Object.entries(deck.cells)) {
+      cells[id] = {
+        source: id === overrideCellId && overrideSource !== undefined ? overrideSource : meta.source,
+        elements: meta.elements,
+      }
+    }
+    return cells
+  }
+
+  function applyClientExecutionResults(results: Record<string, PyodideCellResult>) {
+    setClientExecutionState((prev) => ({ ...prev, ...results }))
+  }
+
+  function reportClientExecutionError(cellId: string, err: unknown) {
+    setClientExecutionState((prev) => ({
+      ...prev,
+      [cellId]: {
+        status: 'error',
+        value: null,
+        kind: null,
+        data: null,
+        error: err instanceof Error ? err.message : String(err),
+        stdout: '',
+        stderr: '',
+        elementWrites: [],
+      },
+    }))
+  }
+
+  // TODO.md #64/PROPOSAL_pyscript_execution.md section 6: Shift+Enter
+  // runs entirely client-side via Pyodide -- no edit_cell websocket
+  // message at all. Marked "queued" immediately (so the UI shows
+  // something changed right away, matching the old send-then-wait-for-
+  // cell_status-broadcast feel) then replaced with the real result(s)
+  // once Pyodide finishes -- `results` covers `cellId` itself plus
+  // every dependent cell the graph says is affected (graph.py's own
+  // `affected_by`), not just the one cell that was edited. Errors
+  // thrown by runCellClientSide itself (Pyodide failed to load, a fetch
+  // for one of the codeslides_pyscript/ files 404'd, etc.) are surfaced
+  // as this cell's own error, same "never silently do nothing" rule the
+  // rest of this file follows for a failed send.
   function handleRunCell(cellId: string, source: string) {
-    if (!sessionId) return
-    send({ type: 'edit_cell', session_id: sessionId, cell_id: cellId, source })
+    setClientExecutionState((prev) => ({
+      ...prev,
+      [cellId]: {
+        status: 'idle',
+        value: prev[cellId]?.value ?? null,
+        kind: prev[cellId]?.kind ?? null,
+        data: prev[cellId]?.data ?? null,
+        error: null,
+        stdout: '',
+        stderr: '',
+        elementWrites: prev[cellId]?.elementWrites ?? [],
+      },
+    }))
+    runCellClientSide(cellId, currentCellInputs(cellId, source))
+      .then(applyClientExecutionResults)
+      .catch((err: unknown) => reportClientExecutionError(cellId, err))
   }
 
-  // TODO.md #65/#68: the review_mode analogue of handleRunCell above --
-  // used instead of edit_cell whenever this document is in review mode
-  // (Cell.tsx picks between the two based on the reviewMode prop it is
-  // given). Remembers the source locally (`primarySourceDrafts`, read
-  // back by handlePushCellState below) and marks the cell dirty --
-  // EditCell itself is never sent while review_mode is on.
+  // TODO.md #65/#68/#64 (collaboration rework): the accept-gated
+  // analogue of handleRunCell above -- used instead of running directly
+  // whenever this is a collaborative document (Cell.tsx picks between
+  // the two based on the reviewMode prop it is given, now driven by
+  // acceptGated -- see this file's own documentId/acceptGated comment
+  // above). Remembers the source locally (`primarySourceDrafts`, read
+  // back by handlePushCellState below) and marks the cell dirty -- no
+  // execution happens at all until the local Run/Run All the accepting
+  // side eventually takes, per PROPOSAL_pyscript_execution.md section
+  // 2.4's "no auto-rerun on incoming sync" rule.
   function handleStagePrimaryEdit(cellId: string, source: string) {
     if (!sessionId) return
     setPrimarySourceDrafts((prev) => ({ ...prev, [cellId]: source }))
@@ -813,9 +1139,17 @@ function App() {
     setDirtyCells((prev) => (prev.has(cellId) ? prev : new Set(prev).add(cellId)))
   }
 
+  // TODO.md #64 (dependency-graph slice): Run All's client-side
+  // equivalent -- every cell, full topological order, matching
+  // Kernel.run_all's own unfiltered semantics (PROPOSAL_pyscript_execution.md
+  // section 2.4) -- no more run_all websocket message at all.
   function handleRunAll() {
-    if (!sessionId) return
-    send({ type: 'run_all', session_id: sessionId })
+    runAllClientSide(currentCellInputs())
+      .then(applyClientExecutionResults)
+      .catch((err: unknown) => {
+        if (!deck) return
+        for (const cellId of Object.keys(deck.cells)) reportClientExecutionError(cellId, err)
+      })
   }
 
   // TODO.md #46d-i/#46d-iv: which cell (if any) this connection's own
@@ -1018,16 +1352,19 @@ function App() {
   }
 
   // TODO.md #68: the single interception point every one of the
-  // review-mode-gated structural handlers below routes through -- on a
-  // review_mode document, mark `cellId` dirty instead of sending
-  // `message` immediately; otherwise send it right away exactly as
-  // before this feature existed. Unlike #65's stageOrSend, `message`
+  // accept-gated structural handlers below routes through -- on any
+  // collaborative document (acceptGated -- TODO.md #64/
+  // PROPOSAL_pyscript_execution.md section 2.2: every collaborative
+  // document is accept-gated now, not just review_mode ones), mark
+  // `cellId` dirty instead of sending `message` immediately; otherwise
+  // (a solo connection, no peer to push to) send it right away exactly
+  // as before this feature existed. Unlike #65's stageOrSend, `message`
   // itself is never kept -- rename/hide toggles are read fresh from
   // `deck.cells[cellId]`'s own current fields at push time (below),
   // same as every other pushed field.
   function stageOrSend(cellId: string, message: Record<string, unknown>) {
     if (!sessionId) return
-    if (reviewMode) {
+    if (acceptGated) {
       setDirtyCells((prev) => (prev.has(cellId) ? prev : new Set(prev).add(cellId)))
       return
     }
@@ -1110,12 +1447,12 @@ function App() {
 
   // TODO.md #68: rename is part of the source+test+notes+hide+rename
   // push scope, so it stages (marks dirty + remembers the target name
-  // in renameDrafts) rather than sending rename_cell immediately on a
-  // review_mode document.
+  // in renameDrafts) rather than sending rename_cell immediately on any
+  // collaborative (acceptGated) document.
   function handleRenameCell(cellId: string, newName: string) {
     if (!sessionId) return
     clearEditError(cellId)
-    if (reviewMode) {
+    if (acceptGated) {
       setRenameDrafts((prev) => ({ ...prev, [cellId]: newName }))
       setDirtyCells((prev) => (prev.has(cellId) ? prev : new Set(prev).add(cellId)))
       return
@@ -1239,12 +1576,84 @@ function App() {
     setDirtyCells((prev) => (prev.has(cellId) ? prev : new Set(prev).add(cellId)))
   }
 
+  // TODO.md #64/PROPOSAL_pyscript_execution.md section 7: runs the test
+  // entirely client-side via Pyodide -- SetTestSource is still sent (so
+  // the source itself is recorded into session.source_overrides/
+  // set_tests_default for Save, exactly like before), but its reply no
+  // longer carries any execution result (Kernel.on_tests_edited's own
+  // docstring); this is what actually produces the pass/fail/error the
+  // TestsElementWidget badge shows now. A turtle-drawing test's own
+  // canvas resend (this cell's turtle_canvas element, if it has one) is
+  // folded into clientExecutionState as a synthetic elementWrite rather
+  // than a separate piece of state, reusing mergedCellState's existing
+  // elementWrites -> elementContent merge instead of adding a third
+  // parallel path for what's ultimately the same "this element's
+  // content changed" concern cs.image/cs.iframe writes already are.
   function handleChangeTestSource(cellId: string, elementId: string, source: string) {
     if (!sessionId) return
     setTestSourceOverrides((prev) => ({
       ...prev,
       [cellId]: { ...prev[cellId], [elementId]: source },
     }))
+    runTestClientSide(cellId, source, currentCellInputs())
+      .then((result) => {
+        setClientTestResults((prev) => ({
+          ...prev,
+          [cellId]: { ...prev[cellId], [elementId]: result },
+        }))
+        if (result.turtleCommands === null || !deck) return
+        const canvasElement = deck.cells[cellId]?.elements.find((e) => e.kind === 'turtle_canvas')
+        if (!canvasElement) return
+        setClientExecutionState((prev) => {
+          // A cell with only a turtle_canvas + tests element (no turtle
+          // calls of its own) may never have gone through
+          // runCellClientSide at all by the time its FIRST test run
+          // happens -- run_test_b64 (pyodideKernel.ts) still executes
+          // it once internally (so the test's own namespace/kwargs are
+          // valid), but that internal run's own result never reaches
+          // applyClientExecutionResults. Synthesize a bare "idle, no
+          // output of its own yet" entry in that case, same default
+          // shape reportClientExecutionError already establishes for
+          // its own error case, so the canvas write below always has
+          // somewhere real to land rather than silently no-op'ing.
+          const existing = prev[cellId] ?? {
+            status: 'idle' as const,
+            value: null,
+            kind: null,
+            data: null,
+            error: null,
+            stdout: '',
+            stderr: '',
+            elementWrites: [],
+          }
+          const otherWrites = existing.elementWrites.filter((w) => w.elementName !== canvasElement.name)
+          return {
+            ...prev,
+            [cellId]: {
+              ...existing,
+              elementWrites: [
+                ...otherWrites,
+                { elementName: canvasElement.name, kind: 'turtle', content: result.turtleCommands },
+              ],
+            },
+          }
+        })
+      })
+      .catch((err: unknown) => {
+        setClientTestResults((prev) => ({
+          ...prev,
+          [cellId]: {
+            ...prev[cellId],
+            [elementId]: {
+              status: 'error',
+              message: err instanceof Error ? err.message : String(err),
+              stdout: '',
+              stderr: '',
+              turtleCommands: null,
+            },
+          },
+        }))
+      })
     send({
       type: 'set_test_source',
       session_id: sessionId,
@@ -1262,15 +1671,62 @@ function App() {
     }
   }
 
-  // Merge notes overrides into cell state once, shared by both views.
+  // Merge notes overrides and this cell's own client-side execution
+  // result into cell state once, shared by both views. TODO.md #64: the
+  // execution fields (status/value/kind/data/error) come ONLY from
+  // clientExecutionState now -- cellState[cellId] (reduced from server
+  // messages) never carries them any more, since the server never
+  // executes anything (PROPOSAL_pyscript_execution.md section 2.1).
+  // TODO.md #64 (element/input-binding slice): a run's elementWrites
+  // (cs.image()/cs.iframe() calls, mirroring kernel.py's own
+  // element_writes -> element_output translation, ws_handler.py's
+  // _element_output_messages) are folded into elementContent here, the
+  // same role that function plays server-side -- notes falls through to
+  // the server-derived value unchanged (static authored content, never
+  // re-computed by any run). TODO.md #64 (tests-element slice): a
+  // cell's tests-element result(s) (clientTestResults) are folded in
+  // the same way, unconditionally (not gated on `execution` existing --
+  // a tests element can have a real result even for a cell this tab has
+  // never run standalone, e.g. one whose only "run" happened inside
+  // run_test_b64's own internal execute-if-needed step), matching
+  // _element_output_messages' own former "notes/tests need a fallback,
+  // viewer writes don't" split minus the now-removed server-tests half.
   const mergedCellState: Record<string, ReturnType<typeof useDeckState>[string] | undefined> = {}
   if (deck) {
     for (const cellId of Object.keys(deck.cells)) {
       const overrides = notesOverrides[cellId]
+      const testResults = clientTestResults[cellId]
       const state = cellState[cellId]
-      mergedCellState[cellId] = overrides
+      const execution = clientExecutionState[cellId]
+      const withNotes = overrides
         ? { ...state, elementContent: { ...state?.elementContent, ...overrides } }
         : state
+      const withTestResults = testResults
+        ? { ...withNotes, elementContent: { ...withNotes?.elementContent, ...testResults } }
+        : withNotes
+      const withElementWrites =
+        execution && execution.elementWrites.length > 0
+          ? {
+              elementContent: {
+                ...withTestResults?.elementContent,
+                ...Object.fromEntries(execution.elementWrites.map((w) => [w.elementName, w.content])),
+              },
+            }
+          : null
+      mergedCellState[cellId] = execution
+        ? {
+            ...withTestResults,
+            status: execution.status,
+            value: execution.value,
+            kind: execution.kind,
+            data: execution.data,
+            error: execution.error,
+            elementContent: withElementWrites?.elementContent ?? withTestResults?.elementContent ?? {},
+            lastEditedBy: withTestResults?.lastEditedBy ?? null,
+            lastEditedAt: withTestResults?.lastEditedAt ?? null,
+            pendingPush: withTestResults?.pendingPush ?? null,
+          }
+        : withTestResults
     }
   }
 
@@ -1293,6 +1749,17 @@ function App() {
         slidesHeaderExpanded ? 'cs-slides-header-expanded' : ''
       } ${documentId && chatExpanded ? 'cs-chat-is-open' : ''}`}
     >
+      {pyodideStatus === 'loading' && (
+        <div className="cs-pyodide-loading-banner" role="status">
+          <span className="cs-pyodide-loading-spinner" aria-hidden="true" />
+          Starting Python runtime&hellip;
+        </div>
+      )}
+      {pyodideStatus === 'error' && (
+        <div className="cs-pyodide-loading-banner cs-pyodide-loading-banner-error" role="alert">
+          Couldn&rsquo;t start the Python runtime. Check your connection and reload the page.
+        </div>
+      )}
       {slidesHeaderCollapsed && (
         <div className="cs-app-header cs-app-header-collapsed">
           <button
@@ -1534,7 +2001,7 @@ function App() {
               onLayoutChange={(layout) => handleLayoutChange(cellId, layout)}
               editError={editErrors[cellId]}
               viewerMode={isViewer}
-              reviewMode={reviewMode}
+              reviewMode={acceptGated}
               ownUserId={ownIdentity?.userId ?? null}
               onStagePrimaryEdit={(source) => handleStagePrimaryEdit(cellId, source)}
               onStageTestEdit={(elementId, source) => handleStageTestEdit(cellId, elementId, source)}
@@ -1598,7 +2065,7 @@ function App() {
           onLayoutChange={handleLayoutChange}
           editErrors={editErrors}
           viewerMode={isViewer}
-          reviewMode={reviewMode}
+          reviewMode={acceptGated}
           ownUserId={ownIdentity?.userId ?? null}
           onStagePrimaryEdit={handleStagePrimaryEdit}
           onStageTestEdit={handleStageTestEdit}

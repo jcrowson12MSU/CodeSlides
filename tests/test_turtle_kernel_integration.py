@@ -87,23 +87,16 @@ def test_cell_with_multiple_turtle_canvases_errors_on_turtle_call():
     assert session.instances["draw_ambiguous"].status == "error"
 
 
-def test_editing_turtle_cell_redraws_with_new_commands():
-    app = _square_deck()
-    kernel = Kernel(app.deck)
-    session = Session(deck=app.deck)
-    kernel.run_all(session)
-    original_commands = session.instances["draw_square"].elements["canvas"].content
-
-    kernel.on_cell_edited(
-        "draw_square",
-        "def draw_square():\n    turtle.forward(10)\n    done = True\n    return done\n",
-        session,
-    )
-
-    new_commands = session.instances["draw_square"].elements["canvas"].content
-    assert new_commands != original_commands
-    assert len(new_commands) == 1
-    assert new_commands[0]["x"] == 10
+# TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+# section 3: test_editing_turtle_cell_redraws_with_new_commands is
+# deleted -- it asserted on_cell_edited re-runs a turtle-drawing cell
+# server-side and updates its canvas content, exactly the execution
+# behavior this rework removes (see on_cell_edited's own docstring). The
+# turtle canvas rendering path is entirely client-side now
+# (pyodideKernel.ts's turtle.execution_context() wiring, an earlier
+# slice of this same rework), with its own Playwright-driven, screenshot-
+# verified coverage (this repo's session history), not a pytest one,
+# since it never touches the server at all.
 
 
 def test_turtle_object_constructed_in_one_cell_draws_on_the_calling_cells_canvas():

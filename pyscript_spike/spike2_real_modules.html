@@ -1,0 +1,97 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>CodeSlides / Pyodide real-module spike</title>
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js"></script>
+  <style>
+    body { font-family: monospace; margin: 2rem; }
+    #output { white-space: pre-wrap; background: #f4f4f4; padding: 1rem; border-radius: 6px; }
+    .ok { color: green; }
+    .err { color: crimson; }
+  </style>
+</head>
+<body>
+  <h1>Spike 2 — import the REAL codeslides.cs/output/turtle modules unmodified</h1>
+  <p>Fetches the actual source files from this repo and imports them as
+     real modules inside Pyodide's virtual filesystem, then exercises
+     <code>cs.execution_context()</code> and <code>turtle.forward()</code>
+     exactly as a real cell body would call them.</p>
+  <div id="status">Loading Pyodide…</div>
+  <pre id="output"></pre>
+
+  <script type="module">
+    const outputEl = document.getElementById('output');
+    const statusEl = document.getElementById('status');
+
+    async function fetchText(path) {
+      const res = await fetch(path);
+      if (!res.ok) throw new Error(`fetch ${path} failed: ${res.status}`);
+      return res.text();
+    }
+
+    async function main() {
+      const pyodide = await loadPyodide();
+      statusEl.textContent = 'Pyodide loaded. Fetching real source files…';
+
+      const [csSource, outputSource, turtleSource] = await Promise.all([
+        fetchText('../src/codeslides/cs.py'),
+        fetchText('../src/codeslides/output.py'),
+        fetchText('../src/codeslides/turtle.py'),
+      ]);
+
+      // Write the REAL, unmodified files into Pyodide's virtual FS as a
+      // real `codeslides` package, then import them exactly as
+      // kernel.py's own `from codeslides import cs, turtle` does.
+      pyodide.FS.mkdirTree('/codeslides_pkg/codeslides');
+      pyodide.FS.writeFile('/codeslides_pkg/codeslides/__init__.py', '');
+      pyodide.FS.writeFile('/codeslides_pkg/codeslides/cs.py', csSource);
+      pyodide.FS.writeFile('/codeslides_pkg/codeslides/output.py', outputSource);
+      pyodide.FS.writeFile('/codeslides_pkg/codeslides/turtle.py', turtleSource);
+
+      statusEl.textContent = 'Files written to Pyodide FS. Running spike…';
+
+      const pySource = `
+import sys
+sys.path.insert(0, "/codeslides_pkg")
+
+from codeslides import cs, turtle
+
+# Exercise cs.execution_context() + cs.image() exactly as a real cell
+# body + kernel.py's own execute_cell wrapping would use them.
+with cs.execution_context() as writes:
+    cs.image("preview", "data:image/png;base64,AAAA")
+cs_result = [(w.element_name, w.kind, w.content) for w in writes]
+
+# Exercise the turtle reimplementation's own contextvar-based API --
+# no tkinter, no _tkinter import anywhere, exactly per turtle.py's own
+# module docstring.
+with turtle.execution_context() as commands:
+    turtle.forward(100)
+    turtle.right(90)
+    turtle.forward(50)
+turtle_command_count = len(commands)
+
+import json
+json.dumps({
+    "cs_result": cs_result,
+    "turtle_command_count": turtle_command_count,
+})
+`;
+
+      let resultJson;
+      try {
+        resultJson = await pyodide.runPythonAsync(pySource);
+      } catch (err) {
+        statusEl.innerHTML = '<span class="err">Spike failed: ' + err + '</span>';
+        outputEl.textContent = String(err) + '\n\n' + (err.stack || '');
+        return;
+      }
+      statusEl.innerHTML = '<span class="ok">Real modules imported and ran successfully.</span>';
+      outputEl.textContent = resultJson;
+    }
+
+    main();
+  </script>
+</body>
+</html>

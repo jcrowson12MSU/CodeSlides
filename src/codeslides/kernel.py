@@ -848,27 +848,81 @@ class Kernel:
         self.graph = build_graph(deck)
 
     def run_all(self, session: Session) -> dict[str, ExecutionResult]:
-        """Run every cell once, in topological order, against `session`."""
+        """Run every cell once, in topological order, against `session`.
+
+        TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        section 3: no longer reachable from any browser -- the RunAll
+        websocket message (ws_handler.py) no longer calls this at all,
+        matching the actual security goal precisely (no network-
+        reachable path triggers server-side execution of cell code; a
+        browser's own Pyodide instance runs its own local view of the
+        deck via pyodideKernel.ts's runAllClientSide instead). Kept as a
+        real, working method rather than deleted because it's still
+        genuinely used as ordinary test/fixture setup by every structural
+        Kernel method this rework's own narrow scope leaves untouched
+        (add_element/set_element_config/reorder_elements/etc. -- see
+        test_kernel.py's own extensive use of it to establish a baseline
+        execution state before exercising one of those), not because
+        anything server-side still calls it to serve a live request."""
         graph = self._effective_graph(session)
         return self._run_cells(graph.topological_order(), session)
 
-    def on_cell_edited(
-        self, cell_name: str, source: str, session: Session
-    ) -> dict[str, ExecutionResult]:
-        """Handle a source edit to `cell_name`, scoped to `session` only:
-        record the override, recompute *this session's* effective graph,
-        and re-run the minimal affected set (ARCHITECTURE.md section 3,
-        steps 1-3). Never touches `self.deck` or any other Session.
+    def on_cell_edited(self, cell_name: str, source: str, session: Session) -> dict[str, ExecutionResult]:
+        """Record a source edit to `cell_name`, scoped to `session` only.
+        Never touches `self.deck` or any other Session.
 
-        An edit that doesn't even parse (a syntax error while mid-edit --
-        the ordinary, expected state of live-typed code between
-        keystrokes) or that breaks graph-level invariants
-        (`MultipleDefinitionError`/`GraphCycleError`) is reported as this
-        cell's own error, exactly like a runtime exception inside the
-        cell would be -- it must not crash the edit_cell round trip or
-        leave `session.source_overrides` silently unset. The invalid
-        source is still recorded as the override (so the editor keeps
-        showing what the user typed) and no other cell is touched.
+        TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        section 3: this used to also recompute the session's effective
+        graph and re-run the minimal affected set (`_run_cells`) -- that
+        execution step is gone. The server never executes cell code any
+        more (every browser runs its own Pyodide instance against its
+        own local view of the deck's sources -- pyodideKernel.ts); this
+        method's only remaining job is what it always did *first*:
+        record the edit as this Session's own override, so a later Save
+        (or another connection accepting a push built from it) has the
+        right source to work with. Still returns `dict[str,
+        ExecutionResult]` (always empty on success) rather than `None`,
+        matching `on_notes_edited`'s own "nothing to report" `-> None`
+        shape would have been cleaner, but keeping the return type
+        unchanged means `EditCell`'s handler (ws_handler.py) -- and, more
+        importantly, `AcceptCellState`'s own replay of `EditCell` through
+        `handle_message` (which relies on `EditCell`'s existing
+        review_mode-gated call shape to apply an accepted push's source)
+        -- needs no signature-level changes for this rework's own
+        deliberately narrow scope.
+
+        One narrow exception to "no execution at all": a cell with a
+        `tests` element (or an unbound required parameter --
+        `_has_unbound_required_param`, same distinction `_run_cells`
+        already draws) is still `define_cell`'d -- compiled and bound
+        into `session.namespace` under its own name, but its own body
+        never actually CALLED. This is categorically different from
+        `execute_cell`: no cell-body logic ever runs, only a function
+        *definition* happens (the same class of "code runs at
+        definition/import time" already inherent to Python itself, no
+        different in kind from `_compile_cell_function`'s own existing
+        scratch-namespace default-value evaluation) -- there is still no
+        way for a student's cell BODY logic to execute server-side. This
+        is required for `tests` element execution (still server-side,
+        out of this rework's scope per section 7) to have anything to
+        call at all -- without it, a `tests` element's own
+        `print(cell_name())` call would NameError against an empty
+        namespace even though the cell it targets parses and defines
+        just fine.
+
+        Still validates the edit as a real graph edit would have to
+        (`MultipleDefinitionError`/`GraphCycleError`/a plain
+        `SyntaxError` from code that doesn't even parse -- the ordinary,
+        expected state of live-typed code between keystrokes) and
+        reports it as this cell's own error, exactly as before -- a
+        cell's `tests` element (still server-executed, out of this
+        rework's scope -- see PROPOSAL_pyscript_execution.md section 7)
+        still needs this validation to know whether the cell it tests is
+        even well-formed, and `session.instances[cell_name].status`/
+        `.error` are still real, meaningful fields for that path. The
+        invalid source is still recorded as the override (so the editor
+        keeps showing what the user typed) and no other cell is
+        touched.
 
         `source` is decorator- and docstring-free (the browser's editor
         only ever shows/edits `display_source`'s output, which strips
@@ -891,21 +945,19 @@ class Kernel:
         current = session.source_overrides.get(cell_name, self.deck.cells[cell_name].source)
         hide_def = self.deck.cells[cell_name].hide_def
         session.source_overrides[cell_name] = reattach_decorator(current, source, hide_def=hide_def)
+        elements = self.deck.cells[cell_name].elements
         try:
-            graph = self._effective_graph(session)
+            self._effective_graph(session).affected_by(cell_name)
         except (SyntaxError, ValueError) as exc:
             session.instances[cell_name].status = "error"
             session.instances[cell_name].error = str(exc)
             # A bad definition (e.g. `CellDefinitionError`'s multiple-return
-            # check) is now caught here, at graph-build time, rather than
-            # only surfacing once `_run_cells` actually tries to run the
-            # cell -- `extract_reads_writes` needs a cell's return names to
-            # know its graph-level writes, so it now runs this analysis (and
-            # can raise this same error) earlier than before. A tested cell
-            # must still see this reflected as its own test error (matching
-            # `_run_cells`'s "cell errored -> mark test error" branch), not
+            # check) is caught here, at graph-build time -- `extract_reads_writes`
+            # needs a cell's return names to know its graph-level writes,
+            # so this analysis can raise this same error. A tested cell
+            # must still see this reflected as its own test error, not
             # silently keep showing whatever pass/fail it last had.
-            tests_element = _find_tests_element(self.deck.cells[cell_name].elements)
+            tests_element = _find_tests_element(elements)
             if tests_element is not None:
                 session.instances[cell_name].elements[tests_element].content = {
                     "status": "error",
@@ -914,8 +966,21 @@ class Kernel:
             return {
                 cell_name: ExecutionResult(status="error", error=str(exc)),
             }
-        affected = graph.affected_by(cell_name)
-        return self._run_cells(affected, session)
+        if _find_tests_element(elements) is not None or _has_unbound_required_param(source, elements):
+            # See this method's own docstring for why this one case is
+            # still "executed": define_cell only compiles+binds the
+            # function object, never calls the cell's own body logic --
+            # required for a tests element (still server-executed) to
+            # have anything to call at all.
+            result = define_cell(cell_name, source, session, deck_imports=self.deck.imports)
+            session.instances[cell_name].status = result.status
+            session.instances[cell_name].error = result.error
+            if result.status == "error":
+                return {cell_name: result}
+        else:
+            session.instances[cell_name].status = "idle"
+            session.instances[cell_name].error = None
+        return {}
 
     def on_notes_edited(self, cell_name: str, element_name: str, notes_text: str, session: Session) -> None:
         """Handle a `notes` element's markdown content changing, scoped to
@@ -950,22 +1015,26 @@ class Kernel:
     def on_element_changed(
         self, cell_name: str, element_name: str, value: object, session: Session
     ) -> dict[str, ExecutionResult]:
-        """Handle an input element's value changing: update the element
-        instance and re-run the minimal affected set, same as an edit to
-        the owning cell (ARCHITECTURE.md section 3a).
+        """Record an input element's value changing (ARCHITECTURE.md
+        section 3a).
 
-        Same graceful-failure guard as `on_cell_edited`: some *other*
-        cell in this Session may currently have an invalid (mid-edit)
-        source override sitting in `session.source_overrides` --
-        rebuilding the effective graph must not crash just because this
-        unrelated element's value changed."""
+        TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        section 3: this used to also rebuild the session's effective
+        graph and re-run the minimal affected set -- that execution step
+        is gone, same reasoning as `on_cell_edited`'s own docstring (the
+        server never executes cell code any more; each browser's own
+        Pyodide instance re-runs a cell and its dependents locally on an
+        input-element change, per pyodideKernel.ts's
+        onElementChangedClientSide). Unlike `on_cell_edited`, there was
+        never any *other* state (a `tests` element's error content, this
+        cell's own `status`/`error`) gated on the graph rebuild here --
+        it existed purely to compute the now-removed re-run's affected
+        set -- so nothing else needs preserving. Always returns `{}`;
+        kept as `dict[str, ExecutionResult]` rather than `-> None` for
+        the same "no signature-level ripple into
+        SetElementValue's handler" reason `on_cell_edited` gives."""
         session.instances[cell_name].elements[element_name].value = value
-        try:
-            graph = self._effective_graph(session)
-        except (SyntaxError, ValueError) as exc:
-            return {cell_name: ExecutionResult(status="error", error=str(exc))}
-        affected = graph.affected_by(cell_name)
-        return self._run_cells(affected, session)
+        return {}
 
     def on_tests_edited(
         self, cell_name: str, element_name: str, source: str, session: Session
@@ -1004,28 +1073,46 @@ class Kernel:
         with invalid syntax elsewhere in the same session) means there's
         nowhere reliable to update the decorator -- silently skip
         updating `source_overrides` in that case; the in-memory
-        `instance.value`/test-run result above still always happens
-        regardless, so the editor never appears to reject or lose what
-        was typed."""
+        `instance.value` update above still always happens regardless,
+        so the editor never appears to reject or lose what was typed.
+
+        TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        section 7: no longer runs the test (`run_tests`/
+        `_run_and_apply_test`) at all -- this used to execute the test's
+        own body immediately against `session.namespace` so a pass/fail/
+        print result could be sent straight back. That's the last
+        network-reachable path that ran a student's Python server-side;
+        pyodideKernel.ts's runTestClientSide is what App.tsx now calls
+        once it sees this edit's own `TestSourceChanged` reply (or,
+        for a review_mode document, once `AcceptCellState`'s replay of
+        this same message lands), against that one browser's own
+        Pyodide namespace -- exactly the same "no execution result ever
+        crosses a browser boundary" rule the 6 structural methods and
+        RunAll/EditCell/SetElementValue already established. Always
+        returns an empty dict now (nothing left to report) rather than
+        the pass/fail/stdout/stderr shape `SetTestSource`'s handler used
+        to relay -- kept as `dict[str, str]` rather than `-> None` for
+        the same "no signature-level ripple" reason `on_cell_edited`/
+        `on_element_changed` give for their own now-always-empty return
+        values.
+
+        `run_tests`/`_run_and_apply_test` are NOT deleted -- both are
+        still real, working functions with their own direct test
+        coverage (test_kernel.py exercises them as a plain Python API),
+        kept for the same reason `_run_cells`/`run_all` were kept: not
+        because anything server-side still calls them to serve a live
+        request, but because deleting genuinely-correct, independently
+        useful code isn't this rework's goal."""
         instance = session.instances[cell_name]
-        elements = self.deck.cells[cell_name].elements
         instance.elements[element_name].value = source
-        result = _run_and_apply_test(
-            instance, element_name, session.namespace, elements, deck_imports=self.deck.imports
-        )
         current = session.source_overrides.get(cell_name, self.deck.cells[cell_name].source)
         try:
             session.source_overrides[cell_name] = set_tests_default(current, element_name, source)
         except (SyntaxError, ValueError):
             pass
-        return {
-            "status": result["status"],
-            "message": result["message"],
-            "stdout": result["stdout"],
-            "stderr": result["stderr"],
-        }
+        return {}
 
-    def add_cell(self, session: Session) -> tuple[Cell, ExecutionResult]:
+    def add_cell(self, session: Session) -> Cell:
         """Add a brand-new, blank `instance="editable"` cell (TODO.md
         #21) -- appended to the deck's `.py` file on disk immediately
         (not staged behind the Save button, unlike an edit to an
@@ -1044,14 +1131,22 @@ class Kernel:
         most of this test suite).
 
         Backfills `session`'s own `instances` for the new cell via
-        `Session.seed_cell_instance` -- without this, the very next
-        `run_all`/`on_cell_edited` in *this* session would `KeyError`
-        on `session.instances[new_name]`, since every such lookup
-        assumes every cell in the graph already has an instance. Then
-        runs the new cell once (its body is just `pass`, so this mostly
-        exists for consistency -- every other cell is running-state by
-        the time an author sees it, a blank cell shouldn't look
-        conspicuously different)."""
+        `Session.seed_cell_instance` -- without this, a later
+        `on_cell_edited`/`on_element_changed` in *this* session would
+        `KeyError` on `session.instances[new_name]`, since every such
+        lookup assumes every cell in the graph already has an instance.
+
+        TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        section 3: no longer runs the new cell at all -- this used to
+        call `_run_cells([name], session)` purely "for consistency"
+        (its own former docstring's words: a blank `pass`-bodied cell
+        produces nothing meaningful to show, unlike `add_title_slide`'s
+        own real content). The server never executes cell code any more
+        (every browser runs its own Pyodide instance against its own
+        local view of the deck's sources); pyodideKernel.ts's own
+        runCellClientSide is what App.tsx now calls once it sees this
+        new cell in a `CellAdded` reply, matching every other
+        structural-change reply's same pattern."""
         if self.deck_path is None:
             raise ValueError("cannot add a cell: this Kernel was not started from a deck file")
 
@@ -1066,8 +1161,7 @@ class Kernel:
 
         cell = self.deck.cells[name]
         session.seed_cell_instance(name, cell)
-        results = self._run_cells([name], session)
-        return cell, results[name]
+        return cell
 
     def add_slide(
         self, title: str, cell_names: list[str], reveal_code: bool = False
@@ -1125,7 +1219,7 @@ class Kernel:
 
         self.reload_deck(load_deck(self.deck_path))
 
-    def add_title_slide(self, session: Session) -> tuple[Cell, Slide, ExecutionResult]:
+    def add_title_slide(self, session: Session) -> tuple[Cell, Slide]:
         """Create a title slide (TODO.md #61): a new `cs.md(...)` cell
         holding the deck's own title, a one-line summary placeholder, and
         a generated table of contents of the deck's other slides,
@@ -1139,11 +1233,14 @@ class Kernel:
 
         Backfills `session`'s own `instances` for the new cell (same
         reason as `add_cell`: every existing lookup assumes
-        `session.instances[cell_name]` always exists) and runs it once,
-        for the same "shouldn't look conspicuously unlike every other
-        cell by the time the author sees it" consistency `add_cell`
-        already established -- unlike a blank cell's `pass` body, this
-        one actually has real content to show immediately.
+        `session.instances[cell_name]` always exists).
+
+        TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        section 3: no longer runs the new cell -- unlike a blank
+        `add_cell` cell, this one has real `cs.md(...)` content, so the
+        client-side re-run App.tsx triggers off `TitleSlideAdded`
+        (mirroring `CellAdded`'s own pattern) is what makes it show up
+        immediately, not a server-side one.
 
         Requires `self.deck_path` (raises `ValueError` without one, same
         as `add_cell`/`add_slide`)."""
@@ -1161,9 +1258,8 @@ class Kernel:
 
         cell = self.deck.cells[cell_name]
         session.seed_cell_instance(cell_name, cell)
-        results = self._run_cells([cell_name], session)
         slide = next(s for s in self.deck.slides if s.title == slide_title)
-        return cell, slide, results[cell_name]
+        return cell, slide
 
     def rename_cell(self, session: Session, old_name: str, new_name: str) -> Cell:
         """Rename a cell's identity (TODO.md #22 -- the edit button's
@@ -1435,21 +1531,29 @@ class Kernel:
 
         self.reload_deck(load_deck(self.deck_path))
 
-    def add_element(self, session: Session, cell_name: str, element: Element) -> tuple[Cell, ExecutionResult]:
+    def add_element(self, session: Session, cell_name: str, element: Element) -> Cell:
         """Add `element` to `cell_name`'s `elements=[...]` list, on disk,
         immediately (TODO.md #22's element picker), then reload this
         Kernel's baseline synchronously, same pattern as `add_cell`.
 
         Backfills `session`'s own instance for the new element (via
         `Session.seed_cell_instance`, safe to call again for an
-        already-seeded cell -- it only fills in what's missing) and
-        re-runs the cell once so its status/output reflect the change
-        immediately, same as a freshly-added cell does.
+        already-seeded cell -- it only fills in what's missing).
 
         Also resyncs any pending, unsaved `session.source_overrides`
         entry for this cell (`_resync_stale_override`) -- otherwise a
         later Save would splice that override's now-stale `elements=[...]`
-        decorator back onto the file, silently reverting this add."""
+        decorator back onto the file, silently reverting this add.
+
+        TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        section 3: no longer re-runs the cell -- this used to be required
+        for a newly-added viewer element (e.g. `ui.image`) to show
+        anything at all (its `cs.image(...)` call has nowhere to write
+        until the cell actually runs). App.tsx now triggers the
+        equivalent client-side re-run (pyodideKernel.ts's
+        runCellClientSide) once it sees this cell's new element list in
+        `ElementAdded`'s reply, so the same "shows up immediately"
+        behavior holds without any server-side execution."""
         if self.deck_path is None:
             raise ValueError("cannot add an element: this Kernel was not started from a deck file")
         if cell_name not in self.deck.cells:
@@ -1466,10 +1570,9 @@ class Kernel:
 
         cell = self.deck.cells[cell_name]
         session.seed_cell_instance(cell_name, cell)
-        results = self._run_cells([cell_name], session)
-        return cell, results[cell_name]
+        return cell
 
-    def remove_element(self, session: Session, cell_name: str, element_name: str) -> tuple[Cell, ExecutionResult]:
+    def remove_element(self, session: Session, cell_name: str, element_name: str) -> Cell:
         """Remove the element named `element_name` from `cell_name`, on
         disk, immediately, then reload this Kernel's baseline
         synchronously -- the inverse of `add_element`.
@@ -1477,11 +1580,17 @@ class Kernel:
         Drops the element's now-stale `ElementInstance` from `session`'s
         own instance for this cell (a removed element's leftover value/
         content would otherwise linger in memory even though it's gone
-        from the Deck) and re-runs the cell once.
+        from the Deck).
 
         Also resyncs any pending, unsaved `session.source_overrides`
         entry for this cell (`_resync_stale_override`), same reasoning
-        as `add_element`."""
+        as `add_element`.
+
+        TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        section 3: no longer re-runs the cell -- App.tsx now triggers the
+        client-side equivalent (pyodideKernel.ts's runCellClientSide)
+        once it sees this cell's new (shorter) element list in
+        `ElementRemoved`'s reply, same reasoning as `add_element`."""
         if self.deck_path is None:
             raise ValueError("cannot remove an element: this Kernel was not started from a deck file")
         if cell_name not in self.deck.cells:
@@ -1500,30 +1609,31 @@ class Kernel:
         if cell_name in session.instances:
             session.instances[cell_name].elements.pop(element_name, None)
         session.seed_cell_instance(cell_name, cell)
-        results = self._run_cells([cell_name], session)
-        return cell, results[cell_name]
+        return cell
 
-    def remove_primary_editor(self, session: Session, cell_name: str) -> tuple[Cell, ExecutionResult]:
+    def remove_primary_editor(self, session: Session, cell_name: str) -> Cell:
         """Delete `cell_name`'s body code entirely, on disk, immediately,
         then reload this Kernel's baseline synchronously --
         CELL_QUADRANT_LAYOUT_TODO.md item 2b's confirmed "zero primary
         editor means zero body code" decision. Similar overall shape to
-        `remove_element` (reload, then re-run) but NOT `_resync_stale_
-        override`: that helper's whole job is to keep a pending, unsaved
-        source_overrides entry's *body* byte-identical while only
-        regenerating its decorator -- exactly wrong here, since this
-        operation's entire point is to replace the body. Calling it
-        would silently keep the session showing (and a later Save
-        re-writing) the pre-removal body forever, even though the
-        on-disk cell is already a pass-bodied stub -- this was a real
-        bug, caught via a live browser session, not just reasoning about
-        the code: `session.source_overrides[cell_name]` must be dropped
-        entirely instead, so the freshly-reloaded `cell.source` (the new
-        stub) is what the browser is shown and what a later Save writes.
-        No `ElementInstance` to drop either -- the cell's own body is
-        what changed, not one of its elements -- so re-running it is
-        what reflects the change (a `pass`-bodied cell returns `None`,
-        same as any other cell whose body just returns nothing).
+        `remove_element` but NOT `_resync_stale_override`: that helper's
+        whole job is to keep a pending, unsaved source_overrides entry's
+        *body* byte-identical while only regenerating its decorator --
+        exactly wrong here, since this operation's entire point is to
+        replace the body. Calling it would silently keep the session
+        showing (and a later Save re-writing) the pre-removal body
+        forever, even though the on-disk cell is already a pass-bodied
+        stub -- this was a real bug, caught via a live browser session,
+        not just reasoning about the code: `session.source_overrides[cell_name]`
+        must be dropped entirely instead, so the freshly-reloaded
+        `cell.source` (the new stub) is what the browser is shown and
+        what a later Save writes.
+
+        TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        section 3: no longer re-runs the cell -- App.tsx now triggers the
+        client-side equivalent once it sees this cell's new (blank)
+        source in `PrimaryEditorRemoved`'s reply, same reasoning as
+        `remove_element`.
 
         `serialization.remove_primary_editor` itself raises
         `SaveConflictError` if `cell_name` still has a test editor (the
@@ -1547,10 +1657,9 @@ class Kernel:
 
         cell = self.deck.cells[cell_name]
         session.seed_cell_instance(cell_name, cell)
-        results = self._run_cells([cell_name], session)
-        return cell, results[cell_name]
+        return cell
 
-    def add_primary_editor(self, session: Session, cell_name: str) -> tuple[Cell, ExecutionResult]:
+    def add_primary_editor(self, session: Session, cell_name: str) -> Cell:
         """Restore `cell_name`'s body to a blank, editable starting
         point, on disk, immediately, then reload this Kernel's baseline
         synchronously -- the inverse of `remove_primary_editor`, same
@@ -1559,7 +1668,12 @@ class Kernel:
         resyncing it, same reasoning as `remove_primary_editor` above:
         the body just changed underneath whatever unsaved edit the
         override held, so there is nothing meaningful left to preserve
-        from it."""
+        from it.
+
+        TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        section 3: no longer re-runs the cell -- App.tsx now triggers the
+        client-side equivalent once it sees this cell's new source in
+        `PrimaryEditorAdded`'s reply, same reasoning as `add_element`."""
         if self.deck_path is None:
             raise ValueError("cannot add a primary editor: this Kernel was not started from a deck file")
         if cell_name not in self.deck.cells:
@@ -1576,8 +1690,7 @@ class Kernel:
 
         cell = self.deck.cells[cell_name]
         session.seed_cell_instance(cell_name, cell)
-        results = self._run_cells([cell_name], session)
-        return cell, results[cell_name]
+        return cell
 
     def reorder_elements(self, session: Session, cell_name: str, element_order: list[str]) -> Cell:
         """Reorder `cell_name`'s elements to match `element_order`, on

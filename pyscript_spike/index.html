@@ -1,0 +1,137 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>CodeSlides / Pyodide spike</title>
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js"></script>
+  <style>
+    body { font-family: monospace; margin: 2rem; }
+    #output { white-space: pre-wrap; background: #f4f4f4; padding: 1rem; border-radius: 6px; }
+    .ok { color: green; }
+    .err { color: crimson; }
+  </style>
+</head>
+<body>
+  <h1>CodeSlides — Pyodide execution spike (TODO #64)</h1>
+  <p>Proves: compile a cell's source string with a shared, mutable
+     <code>__globals__</code> dict (matching <code>kernel.py</code>'s
+     <code>_compile_cell_function</code>/<code>session.namespace</code>
+     model exactly), call the cell function, capture stdout via
+     <code>contextlib.redirect_stdout</code>, and read back the
+     function's return value — all client-side, no server round trip.</p>
+  <div id="status">Loading Pyodide…</div>
+  <pre id="output"></pre>
+
+  <script type="module">
+    const outputEl = document.getElementById('output');
+    const statusEl = document.getElementById('status');
+
+    async function main() {
+      const pyodide = await loadPyodide();
+      statusEl.textContent = 'Pyodide loaded. Running spike…';
+
+      // This mirrors kernel.py's execute_cell/_compile_cell_function
+      // shape as closely as possible in pure Python running inside
+      // Pyodide: one shared namespace dict across "cells", compile each
+      // cell's source with `exec(source, namespace)` so top-level names
+      // (including the cell's own function) land directly in that same
+      // dict -- exactly the "function's __globals__ IS session.namespace"
+      // invariant kernel.py's own docstring calls out as load-bearing
+      // (a plain copy would NOT reproduce real cross-cell `global` write
+      // visibility).
+      const pySource = `
+import io
+import contextlib
+import traceback
+
+namespace = {}
+
+def run_cell(cell_name, source, kwargs=None):
+    """Mirrors execute_cell's actual shape: exec the source into the
+    shared namespace (binding the cell's own function name there, same
+    as a real module-level def would), then call cell_name(**kwargs)
+    with stdout/stderr captured, and return (value, stdout, stderr, error)."""
+    kwargs = kwargs or {}
+    stdout, stderr = io.StringIO(), io.StringIO()
+    value = None
+    error = None
+    try:
+        exec(compile(source, f"<cell:{cell_name}>", "exec"), namespace)
+        fn = namespace[cell_name]
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            value = fn(**kwargs)
+    except Exception:
+        error = traceback.format_exc()
+    return value, stdout.getvalue(), stderr.getvalue(), error
+
+# --- Simulate two cells with a real cross-cell dependency, exactly
+# like this app's own reactive graph (cell "explain" reads "base" --
+# a plain module-level name, written by cell "setup" via its own
+# return-value binding, same as kernel.py's own real cell shape).
+
+setup_source = '''
+def setup():
+    base = 5
+    return base
+'''
+
+explain_source = '''
+def explain():
+    print(f"base is currently {base}")
+    return base * 2
+'''
+
+setup_value, setup_out, setup_err, setup_error = run_cell("setup", setup_source)
+# kernel.py's own real behavior: a cell's return-named value gets bound
+# back into the shared namespace under the cell's own name, so a later
+# cell can read it as an ordinary global -- reproduce that one extra
+# step here explicitly (execute_cell does this after a successful call;
+# not shown inline above to keep run_cell itself generic).
+namespace["base"] = setup_value
+
+explain_value, explain_out, explain_err, explain_error = run_cell("explain", explain_source)
+
+import json
+result = {
+    "setup": {"value": setup_value, "stdout": setup_out, "error": setup_error},
+    "explain": {"value": explain_value, "stdout": explain_out, "error": explain_error},
+}
+json.dumps(result)
+`;
+
+      let resultJson;
+      try {
+        resultJson = await pyodide.runPythonAsync(pySource);
+      } catch (err) {
+        statusEl.innerHTML = '<span class="err">Spike failed: ' + err + '</span>';
+        outputEl.textContent = String(err);
+        return;
+      }
+      // Returning a plain JSON string from Python (rather than fighting
+      // Pyodide's dict/Map <-> JS-object proxy conversion rules) keeps
+      // this glue code simple and unambiguous -- the real app's own
+      // bridge will need a deliberate wire format between the Pyodide
+      // worker and the page anyway, so this isn't a shortcut being taken
+      // for the real implementation, just for this spike's own JS.
+      const result = JSON.parse(resultJson);
+      statusEl.innerHTML = '<span class="ok">Spike ran successfully.</span>';
+
+      const { setup, explain } = result;
+      const lines = [];
+      lines.push('setup:   value=' + JSON.stringify(setup.value) + '  stdout=' + JSON.stringify(setup.stdout));
+      lines.push('explain: value=' + JSON.stringify(explain.value) + '  stdout=' + JSON.stringify(explain.stdout));
+      lines.push('');
+      lines.push('Expected: setup.value=5, explain.stdout contains "base is currently 5", explain.value=10');
+      const passed =
+        setup.value === 5 &&
+        explain.stdout.includes('base is currently 5') &&
+        explain.value === 10;
+      lines.push('');
+      lines.push(passed ? 'PASS: cross-cell shared-namespace reactivity works in Pyodide.' : 'FAIL: see values above.');
+      outputEl.textContent = lines.join('\n');
+    }
+
+    main();
+  </script>
+</body>
+</html>

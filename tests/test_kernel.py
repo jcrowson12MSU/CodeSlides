@@ -1,7 +1,7 @@
 import pytest
 
 from codeslides import App, cs, ui
-from codeslides.kernel import Kernel
+from codeslides.kernel import Kernel, run_tests
 from codeslides.session import Session
 
 
@@ -34,44 +34,40 @@ def test_run_all_executes_in_dependency_order():
     assert session.instances["live_demo"].status == "idle"
 
 
-def test_element_value_change_triggers_minimal_rerun():
-    app = _build_deck()
-    kernel = Kernel(app.deck)
-    session = Session(deck=app.deck)
-    kernel.run_all(session)
-
-    kernel.on_element_changed("live_demo", "speed", 7, session)
-
-    assert session.namespace["result"] == 35
-    assert session.instances["live_demo"].elements["speed"].value == 7
-
-
-def test_editing_upstream_cell_propagates_to_dependents():
-    app = _build_deck()
-    kernel = Kernel(app.deck)
-    session = Session(deck=app.deck)
-    kernel.run_all(session)
-
-    kernel.on_cell_edited("setup", "def setup():\n    base = 100\n    return base\n", session)
-
-    assert session.namespace["base"] == 100
-    assert session.namespace["result"] == 300  # base(100) * speed(default 3)
+# TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+# section 3: test_element_value_change_triggers_minimal_rerun and
+# test_editing_upstream_cell_propagates_to_dependents are deleted --
+# both directly asserted on_element_changed/on_cell_edited re-run
+# dependent cells server-side (session.namespace picking up the
+# propagated value), exactly the execution step this rework removes
+# (see both methods' own docstrings). Neither has an adaptable
+# equivalent -- there's no other still-server-executing trigger that
+# would mean the same thing (a minimal-rerun-set re-execution, not just
+# a recorded value/override) -- pyodideKernel.ts's own
+# runCellClientSide/onElementChangedClientSide are the real, client-side
+# replacements and have their own Playwright-driven verification (this
+# repo's session history), not a pytest one, since they never touch the
+# server at all. What each method still genuinely does (record a value,
+# record a source override) is covered elsewhere -- e.g.
+# test_set_element_value_records_the_value_without_executing and
+# test_clone_isolation_holds_under_real_execution's own rewritten form.
 
 
-def test_exception_is_captured_without_crashing_kernel():
-    app = _build_deck()
-    kernel = Kernel(app.deck)
-    session = Session(deck=app.deck)
-    kernel.run_all(session)
-
-    kernel.on_cell_edited("setup", "def setup():\n    base = 1 / 0\n    return base\n", session)
-
-    assert session.instances["setup"].status == "error"
-    assert "ZeroDivisionError" in session.instances["setup"].error
-    # the kernel itself must still be usable after a cell error
-    kernel.on_cell_edited("setup", "def setup():\n    base = 9\n    return base\n", session)
-    assert session.namespace["base"] == 9
-    assert session.instances["setup"].status == "idle"
+# TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+# section 3: test_exception_is_captured_without_crashing_kernel is
+# deleted -- it asserted a RUNTIME exception (1 / 0) inside a cell body
+# is caught by on_cell_edited and reported as that cell's own error.
+# on_cell_edited no longer calls the cell's body at all (see its own
+# docstring) -- only genuine graph/definition-time problems (a
+# SyntaxError, MultipleDefinitionError, GraphCycleError) are still
+# caught, which is exactly what the still-passing
+# test_run_all_surfaces_a_fresh_cells_test_result... (removed elsewhere)
+# and the graph-error branch inside on_cell_edited itself already cover
+# (see kernel.py's own try/except (SyntaxError, ValueError) there). A
+# runtime exception from a cell's own body is now purely a client-side
+# concern (pyodideKernel.ts's _execute_one catches it and reports it in
+# the browser's own local execution state), with no server-side
+# equivalent left to test at all.
 
 
 def test_viewer_elements_are_not_passed_as_kwargs():
@@ -367,27 +363,17 @@ def test_input_reads_multiple_text_inputs_in_declaration_order():
     assert session.namespace["total"] == 13
 
 
-def test_input_reflects_a_live_edited_text_input_value():
-    """Changing a text_input's value (the same on_element_changed path a
-    real textbox edit in the browser goes through) and re-running the
-    cell picks up the new value on the next input() call -- confirming
-    the shim reads the element's *current* value each run, not a value
-    captured once at cell-definition time."""
-    app = App()
-
-    @app.cell(elements=[ui.text_input("age_text", default="15")])
-    def parse_age():
-        age = int(input("Age: "))
-        return age
-
-    kernel = Kernel(app.deck)
-    session = Session(deck=app.deck)
-    kernel.run_all(session)
-    assert session.namespace["age"] == 15
-
-    kernel.on_element_changed("parse_age", "age_text", "42", session)
-    assert session.namespace["age"] == 42
-    assert session.instances["parse_age"].status == "idle"
+# TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+# section 3: test_input_reflects_a_live_edited_text_input_value is
+# deleted -- it asserted on_element_changed re-runs the cell and the
+# input() shim picks up the new value on that re-run, exactly the
+# execution step this rework removes. What on_element_changed still
+# does (record the raw element value) is covered by
+# test_set_element_value_records_the_value_without_executing
+# (test_ws_handler.py) -- the "input() shim reads the CURRENT value each
+# run" guarantee itself is unchanged and still real, but only
+# observable through an actual execution, which now only ever happens
+# client-side.
 
 
 def test_input_raises_a_clear_error_when_called_more_times_than_there_are_text_inputs():
@@ -451,7 +437,20 @@ def test_input_also_works_inside_a_tests_element():
     """`ui.tests` boxes run as ordinary Python against the owning cell's
     own namespace (run_tests's own docstring) -- input() should be just
     as readable there as inside the cell's own body, reading from the
-    same cell's text_input elements."""
+    same cell's text_input elements.
+
+    TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    section 7: this used to drive the check through
+    Kernel.on_tests_edited (a real request-shaped call), which no
+    longer runs the test at all (see its own docstring) -- the
+    equivalent client-side path is pyodideKernel.ts's runTestClientSide,
+    covered by this rework's own live browser verification, not a
+    server-side unit test. run_tests itself is untouched and still the
+    real thing doing this work (kernel.py's own module docstring on why
+    it's kept), so this test now calls it directly -- same input()-
+    reads-from-elements behavior, just exercised as the plain Python API
+    it's always also been, rather than through a now execution-free
+    handler."""
     from codeslides.deck import Cell, Deck
 
     deck = Deck()
@@ -472,7 +471,12 @@ def test_input_also_works_inside_a_tests_element():
     kernel.run_all(session)
 
     assert session.instances["greet"].status == "idle", session.instances["greet"].error
-    result = kernel.on_tests_edited("greet", "unit", "assert input('Name: ') == 'Ada'", session)
+    result = run_tests(
+        "assert input('Name: ') == 'Ada'",
+        session.namespace,
+        deck.cells["greet"].elements,
+        element_instances=session.instances["greet"].elements,
+    )
     assert result["status"] == "pass", result["message"]
 
 
@@ -686,7 +690,19 @@ def test_clone_isolation_holds_under_real_execution():
     """Regression test for the marimo cloned-editor bug described in
     VISION.md: cloning a Session and editing one clone's cell source (or
     an element's value) must never affect the other clone, or the shared
-    Deck/Kernel baseline."""
+    Deck/Kernel baseline.
+
+    TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    section 3: on_element_changed/on_cell_edited no longer execute
+    anything server-side (see their own docstrings) -- this used to
+    prove isolation via session.namespace["result"] after a real re-run
+    each edit would trigger. What on_element_changed/on_cell_edited
+    still genuinely do -- record an element's value, record a source
+    override -- is exactly what this marimo-bug regression guard is
+    actually about (two clones' *state* diverging correctly, never
+    leaking into each other or the shared baseline), so it's rewritten
+    to check that state directly rather than a now-nonexistent
+    execution result."""
     app = _build_deck()
     kernel = Kernel(app.deck)
 
@@ -695,22 +711,23 @@ def test_clone_isolation_holds_under_real_execution():
     session_b = session_a.clone()
 
     kernel.on_element_changed("live_demo", "speed", 999, session_b)
-    assert session_a.namespace["result"] == 15
-    assert session_b.namespace["result"] == 4995
+    assert session_a.instances["live_demo"].elements["speed"].value == 3  # ui.slider's own default
+    assert session_b.instances["live_demo"].elements["speed"].value == 999
 
     kernel.on_cell_edited(
         "live_demo",
         "def live_demo(speed):\n    result = base + speed\n    return result\n",
         session_b,
     )
-    assert session_b.namespace["result"] == 1004
+    assert "result = base + speed" in session_b.source_overrides["live_demo"]
 
-    # session_a must still use the ORIGINAL multiply logic
+    # session_a must still use the ORIGINAL multiply logic -- its own
+    # element value change must never see session_b's edited source.
     kernel.on_element_changed("live_demo", "speed", 10, session_a)
-    assert session_a.namespace["result"] == 50
+    assert session_a.instances["live_demo"].elements["speed"].value == 10
+    assert "live_demo" not in session_a.source_overrides
 
     # the shared Deck/Kernel baseline must be untouched by session_b's edit
-    assert "live_demo" not in session_a.source_overrides
     assert "result = base * speed" in kernel.deck.cells["live_demo"].source
 
 
@@ -996,25 +1013,16 @@ def test_on_cell_edited_with_a_syntax_error_reports_a_cell_error_not_a_crash():
     assert session.namespace["base"] == 5
 
 
-def test_on_element_changed_tolerates_an_unrelated_cells_broken_override():
-    """A different cell in the same Session may currently have an invalid
-    (mid-edit) source override sitting around -- changing some other
-    element's value rebuilds the *whole* effective graph and must not
-    crash just because of that unrelated broken cell."""
-    app = _build_deck()
-    kernel = Kernel(app.deck)
-    session = Session(deck=app.deck)
-    kernel.run_all(session)
-
-    kernel.on_cell_edited("live_demo", "def live_demo(speed):\n    result = (\n", session)
-    assert session.source_overrides["live_demo"] == (
-        '@app.cell(instance="editable", elements=[ui.slider("speed", min=1, max=10, default=3)])\n'
-        "def live_demo(speed):\n    result = (\n"
-    )
-
-    results = kernel.on_element_changed("live_demo", "speed", 7, session)
-
-    assert results["live_demo"].status == "error"
+# TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+# section 3: test_on_element_changed_tolerates_an_unrelated_cells_broken_override
+# is deleted -- its whole premise ("rebuilding the effective graph must
+# not crash just because of a broken sibling override") no longer
+# applies: on_element_changed no longer rebuilds any graph at all (see
+# its own docstring -- there is nothing left there to crash, tolerate,
+# or otherwise guard). This is a genuine simplification, not a gap: the
+# graph-rebuild-must-tolerate-a-broken-sibling guarantee still matters
+# for on_cell_edited (which still validates via _effective_graph) and
+# is covered by that method's own still-passing tests.
 
 
 def _build_cross_cell_call_deck():
@@ -1068,50 +1076,24 @@ def test_a_cells_own_name_is_a_graph_write_creating_a_real_dependency_edge():
     assert "drawSquare" in app.deck.cells["drawSquares"].reads
 
 
-def test_editing_the_called_cell_reruns_the_caller_too():
-    app = _build_cross_cell_call_deck()
-    kernel = Kernel(app.deck)
-    session = Session(deck=app.deck)
-    kernel.run_all(session)
-    assert session.namespace["results"] == [2, 4, 6]
-
-    results = kernel.on_cell_edited(
-        "drawSquare",
-        "def drawSquare(step=1):\n    result = step * 10\n    return result\n",
-        session,
-    )
-
-    assert set(results) == {"drawSquare", "drawSquares"}
-    assert session.namespace["results"] == [10, 20, 30]
-
-
-def test_a_callee_cells_failed_run_does_not_update_its_bound_callable():
-    """Same all-or-nothing guarantee that already applies to return-named
-    values (a failed cell never partially updates the namespace) must also
-    hold for the cell's own callable binding: if `drawSquare` fails to run
-    standalone (e.g. an edit makes its own body raise), `session.namespace
-    ["drawSquare"]` must keep the last *successful* version rather than
-    being cleared or left half-updated -- otherwise a caller like
-    `drawSquares` would see a stale-but-consistent function, or worse, no
-    function at all."""
-    app = _build_cross_cell_call_deck()
-    kernel = Kernel(app.deck)
-    session = Session(deck=app.deck)
-    kernel.run_all(session)
-    original_fn = session.namespace["drawSquare"]
-
-    # `step` keeps its default (still auto-called standalone), but the
-    # body now raises at call time -- a genuine runtime failure, not
-    # just an unbound-required-parameter case that would otherwise be
-    # safely define-only'd instead of erroring.
-    results = kernel.on_cell_edited(
-        "drawSquare", "def drawSquare(step=1):\n    result = 1 / 0\n    return result\n", session
-    )
-
-    assert results["drawSquare"].status == "error"
-    # the stale-but-working callable is still there, untouched
-    assert session.namespace["drawSquare"] is original_fn
-    assert session.namespace["results"] == [2, 4, 6]
+# TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+# section 3: test_editing_the_called_cell_reruns_the_caller_too and
+# test_a_callee_cells_failed_run_does_not_update_its_bound_callable are
+# deleted -- both directly asserted on_cell_edited re-runs a caller cell
+# server-side (real cross-cell function calls, all-or-nothing namespace
+# update guarantees on a failed run), exactly the execution behavior
+# this rework removes. Neither has an adaptable equivalent: both are
+# fundamentally about what happens when code actually RUNS (a real
+# drawSquare() call from drawSquares, a genuine runtime failure leaving
+# the namespace's callable binding untouched), not a structural fact
+# on_cell_edited still records. This exact guarantee -- a failed cell
+# never partially updates state -- is still real and still enforced,
+# just entirely within pyodideKernel.ts's own client-side _execute_one
+# now (its own try/except only binds return-named values and the cell's
+# own callable AFTER a successful call, same "never partially pollute
+# the namespace on failure" rule kernel.py's own execute_cell always
+# had), with its own Playwright-driven verification rather than a
+# pytest one, since it never touches the server at all.
 
 
 def test_a_cell_with_no_default_parameters_and_no_tests_element_is_never_auto_called():
@@ -1190,11 +1172,13 @@ def test_add_cell_appends_a_blank_editable_cell_to_disk(tmp_path):
     session = Session(deck=deck)
     kernel.run_all(session)
 
-    cell, result = kernel.add_cell(session)
+    # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    # section 3: add_cell no longer executes the new cell at all (see its
+    # own docstring) -- there is no more ExecutionResult to unpack.
+    cell = kernel.add_cell(session)
 
     assert cell.name == "cell_1"
     assert cell.instance == "editable"
-    assert result.status == "idle"
     assert "def cell_1():" in path.read_text()
     # the Kernel's own baseline picked up the new cell too, not just the file
     assert "cell_1" in kernel.deck.cells
@@ -1209,7 +1193,7 @@ def test_add_cell_backfills_the_requesting_sessions_instances(tmp_path):
     session = Session(deck=deck)
     kernel.run_all(session)
 
-    cell, _ = kernel.add_cell(session)
+    cell = kernel.add_cell(session)
 
     # without backfilling, the very next run_all would KeyError on
     # session.instances["cell_1"] -- confirm it doesn't
@@ -1226,8 +1210,8 @@ def test_add_cell_twice_picks_different_names(tmp_path):
     session = Session(deck=deck)
     kernel.run_all(session)
 
-    cell1, _ = kernel.add_cell(session)
-    cell2, _ = kernel.add_cell(session)
+    cell1 = kernel.add_cell(session)
+    cell2 = kernel.add_cell(session)
 
     assert cell1.name != cell2.name
     assert {cell1.name, cell2.name} == {"cell_1", "cell_2"}
@@ -1257,7 +1241,7 @@ def test_add_cell_does_not_affect_a_different_sessions_instances(tmp_path):
     kernel.run_all(session_a)
     kernel.run_all(session_b)
 
-    cell, _ = kernel.add_cell(session_a)
+    cell = kernel.add_cell(session_a)
 
     assert cell.name in session_a.instances
     assert cell.name not in session_b.instances
@@ -1738,10 +1722,12 @@ def test_add_element_updates_disk_kernel_and_session(tmp_path):
     session = Session(deck=deck)
     kernel.run_all(session)
 
-    cell, result = kernel.add_element(session, "setup", ui.slider("multiplier", min=1, max=5, default=2))
+    # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    # section 3: add_element no longer re-runs the cell (see its own
+    # docstring) -- there is no more ExecutionResult to unpack.
+    cell = kernel.add_element(session, "setup", ui.slider("multiplier", min=1, max=5, default=2))
 
     assert [e.name for e in cell.elements] == ["multiplier"]
-    assert result.status == "idle"
     assert "multiplier" in kernel.deck.cells["setup"].elements[0].name
     assert "multiplier" in session.instances["setup"].elements
     assert "ui.slider('multiplier'" in path.read_text()
@@ -1804,14 +1790,15 @@ def test_remove_element_updates_disk_kernel_and_session(tmp_path):
     session = Session(deck=deck)
     kernel.run_all(session)
 
-    cell, result = kernel.remove_element(session, "live_demo", "speed")
+    # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    # section 3: remove_element no longer re-runs the cell -- there is
+    # no more ExecutionResult to unpack, and no cell status/output left
+    # to assert on server-side (the "speed" unbound-required-param/
+    # define-not-call distinction this test used to also check is now
+    # purely a client-side (pyodideKernel.ts) concern).
+    cell = kernel.remove_element(session, "live_demo", "speed")
 
     assert cell.elements == []
-    # `speed` has no default and, with its slider gone, no matching
-    # element either -- an unbound required parameter, so the cell is
-    # safely defined-but-not-called (_has_unbound_required_param)
-    # rather than auto-called with `speed` missing entirely.
-    assert result.status == "idle"
     assert "speed" not in session.instances["live_demo"].elements
     assert "ui.slider" not in path.read_text()
 
@@ -1829,7 +1816,7 @@ def test_remove_element_raises_if_the_element_does_not_exist(tmp_path):
         kernel.remove_element(session, "live_demo", "does_not_exist")
 
 
-def test_remove_primary_editor_updates_disk_kernel_and_reruns(tmp_path):
+def test_remove_primary_editor_updates_disk_and_kernel(tmp_path):
     from codeslides.loader import load_deck
 
     path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
@@ -1838,11 +1825,13 @@ def test_remove_primary_editor_updates_disk_kernel_and_reruns(tmp_path):
     session = Session(deck=deck)
     kernel.run_all(session)
 
-    cell, result = kernel.remove_primary_editor(session, "live_demo")
+    # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    # section 3: remove_primary_editor no longer re-runs the cell -- no
+    # more ExecutionResult to unpack.
+    cell = kernel.remove_primary_editor(session, "live_demo")
 
     assert "def live_demo(speed):\n    pass" in cell.source
     assert "ui.slider('speed'" in cell.source  # element preserved
-    assert result.status == "idle"
     assert "def live_demo(speed):\n    pass" in kernel.deck.cells["live_demo"].source
     assert "result = speed * 2" not in path.read_text()
 
@@ -1861,7 +1850,7 @@ def test_remove_primary_editor_raises_if_the_cell_has_a_test_element(tmp_path):
         kernel.remove_primary_editor(session, "live_demo")
 
 
-def test_add_primary_editor_restores_a_pass_stub_and_reruns(tmp_path):
+def test_add_primary_editor_restores_a_pass_stub(tmp_path):
     from codeslides.loader import load_deck
 
     path = _write_deck_file(tmp_path, _RENAME_DECK_SOURCE)
@@ -1871,10 +1860,12 @@ def test_add_primary_editor_restores_a_pass_stub_and_reruns(tmp_path):
     kernel.run_all(session)
     kernel.remove_primary_editor(session, "live_demo")
 
-    cell, result = kernel.add_primary_editor(session, "live_demo")
+    # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    # section 3: add_primary_editor no longer re-runs the cell -- no
+    # more ExecutionResult to unpack.
+    cell = kernel.add_primary_editor(session, "live_demo")
 
     assert "pass" in cell.source
-    assert result.status == "idle"
 
 
 def test_remove_primary_editor_drops_a_stale_pending_source_override(tmp_path):
@@ -1907,7 +1898,7 @@ def test_remove_primary_editor_drops_a_stale_pending_source_override(tmp_path):
     )
     assert "speed * 99" in session.source_overrides["live_demo"]
 
-    cell, _ = kernel.remove_primary_editor(session, "live_demo")
+    cell = kernel.remove_primary_editor(session, "live_demo")
 
     assert "live_demo" not in session.source_overrides
     assert "pass" in cell.source
@@ -1933,7 +1924,7 @@ def test_add_primary_editor_drops_a_stale_pending_source_override(tmp_path):
     )
     assert "live_demo" in session.source_overrides
 
-    cell, _ = kernel.add_primary_editor(session, "live_demo")
+    cell = kernel.add_primary_editor(session, "live_demo")
 
     assert "live_demo" not in session.source_overrides
     assert "stale in-progress edit" not in cell.source
@@ -2390,6 +2381,12 @@ def test_hide_def_survives_a_kernel_construction(tmp_path):
 
 
 def test_on_cell_edited_with_hide_def_reattaches_the_def_line_before_saving(tmp_path):
+    """TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+    section 3: on_cell_edited no longer executes anything (see its own
+    docstring) -- this used to also check session.namespace["base"] == 7
+    after a real re-run; that assertion is dropped, everything else
+    (the actual point of this test: def-line reattachment before the
+    override is recorded) is untouched, real, structural behavior."""
     from codeslides.loader import load_deck
     from codeslides.serialization import save_edits
 
@@ -2403,8 +2400,8 @@ def test_on_cell_edited_with_hide_def_reattaches_the_def_line_before_saving(tmp_
     kernel.on_cell_edited("setup", "base = 7\nreturn base\n", session)
 
     assert session.instances["setup"].status == "idle"
-    assert session.namespace["base"] == 7
     assert "def setup():" in session.source_overrides["setup"]
+    assert "base = 7" in session.source_overrides["setup"]
 
     save_edits(str(path), session.source_overrides)
     reloaded = load_deck(str(path))

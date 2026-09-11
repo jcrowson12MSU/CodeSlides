@@ -158,18 +158,25 @@ export interface CellProps {
   // client-side-execution work that would make that interaction
   // meaningful rather than a silently-no-op'd drag.
   viewerMode?: boolean
-  // TODO.md #65/#65-x/#65-xi: whether this document uses the
-  // propose/review/accept workflow -- when true, `onRunCell`'s
-  // Shift+Enter path (and a `tests` element's own Shift+Enter) stage the
-  // edit locally instead of immediately re-running/broadcasting
-  // (App.tsx wires `onStagePrimaryEdit` instead of `onRunCell` in that
-  // case), and the pending-actions/Push-button UI below becomes visible.
-  // `ownUserId` is this connection's own joined identity (null until
-  // Join/JoinAck completes), used only to distinguish "your own pending
-  // bundle" (Withdraw) from "someone else's" (Accept/Reject) --
-  // reviewMode is meaningless without a joined identity in practice
-  // (review_mode implies --collaborative), but this stays optional/null-
-  // safe rather than assuming that invariant holds.
+  // TODO.md #65/#65-x/#65-xi/#64 (collaboration rework): whether this
+  // document uses the propose/review/accept workflow -- when true,
+  // `onRunCell`'s Shift+Enter path (and a `tests` element's own
+  // Shift+Enter) stage the edit locally instead of immediately
+  // re-running/broadcasting (App.tsx wires `onStagePrimaryEdit` instead
+  // of `onRunCell` in that case), and the pending-actions/Push-button UI
+  // below becomes visible. As of TODO.md #64/
+  // PROPOSAL_pyscript_execution.md section 2.2, App.tsx always passes
+  // `acceptGated` (= `Boolean(documentId)`, i.e. "is this a
+  // collaborative connection at all") here, not the server's own
+  // `session_created.review_mode` field -- every collaborative document
+  // is accept-gated now, unconditionally; the always-live broadcast
+  // model this prop used to also represent no longer exists. `ownUserId`
+  // is this connection's own joined identity (null until Join/JoinAck
+  // completes), used only to distinguish "your own pending bundle"
+  // (Withdraw) from "someone else's" (Accept/Reject) -- reviewMode is
+  // meaningless without a joined identity in practice (reviewMode true
+  // implies collaborative), but this stays optional/null-safe rather
+  // than assuming that invariant holds.
   reviewMode?: boolean
   ownUserId?: string | null
   // TODO.md #65-xi: stages this cell's primary source into the local
