@@ -3,7 +3,7 @@ import './App.css'
 import { useChatState } from './chatState'
 import { useDeckState } from './deckState'
 import { usePresenceState } from './presenceState'
-import { runCellClientSide, type PyodideCellResult } from './pyodideKernel'
+import { runAllClientSide, runCellClientSide, type PyodideCellResult } from './pyodideKernel'
 import type { CellLayout, ServerMessage } from './protocol'
 import { useCodeSlidesSocket } from './useCodeSlidesSocket'
 import { Cell, type CellMeta } from './widgets/Cell'
@@ -793,16 +793,58 @@ function App() {
     send({ type: 'set_element_value', session_id: sessionId, cell_id: cellId, element_id: elementId, value })
   }
 
-  // TODO.md #64/PROPOSAL_pyscript_execution.md section 6 (first slice):
-  // Shift+Enter now runs entirely client-side via Pyodide -- no
-  // edit_cell websocket message at all. Marked "queued" immediately (so
-  // the UI shows something changed right away, matching the old
-  // send-then-wait-for-cell_status-broadcast feel) then replaced with
-  // the real result once Pyodide finishes. Errors thrown by
-  // runCellClientSide itself (Pyodide failed to load, a fetch for one
-  // of the codeslides_pyscript/ files 404'd, etc.) are surfaced as this
-  // cell's own error, same "never silently do nothing" rule the rest
-  // of this file follows for a failed send.
+  // TODO.md #64/PROPOSAL_pyscript_execution.md: `allSources` is this
+  // tab's full current view of the deck -- deck.cells' own last-known
+  // source for every OTHER cell, with `overrideCellId`'s own entry
+  // overridden by whatever fresh source the caller was just given
+  // (deck.cells[cellId].source only updates via server messages, which
+  // no longer fire for a client-side-only edit -- see App.tsx's own
+  // mergedCellState comment on why execution state is no longer
+  // server-derived at all). This is the exact "full current sources"
+  // shape pyodideKernel.ts's own runCellClientSide/runAllClientSide
+  // need to rebuild the dependency graph fresh on every call (there is
+  // no persistent client-side Deck object to keep in sync
+  // incrementally -- see pyodideKernel.ts's own header comment).
+  function currentSources(overrideCellId?: string, overrideSource?: string): Record<string, string> {
+    if (!deck) return {}
+    const sources: Record<string, string> = {}
+    for (const [id, meta] of Object.entries(deck.cells)) {
+      sources[id] = id === overrideCellId && overrideSource !== undefined ? overrideSource : meta.source
+    }
+    return sources
+  }
+
+  function applyClientExecutionResults(results: Record<string, PyodideCellResult>) {
+    setClientExecutionState((prev) => ({ ...prev, ...results }))
+  }
+
+  function reportClientExecutionError(cellId: string, err: unknown) {
+    setClientExecutionState((prev) => ({
+      ...prev,
+      [cellId]: {
+        status: 'error',
+        value: null,
+        kind: null,
+        data: null,
+        error: err instanceof Error ? err.message : String(err),
+        stdout: '',
+        stderr: '',
+      },
+    }))
+  }
+
+  // TODO.md #64/PROPOSAL_pyscript_execution.md section 6: Shift+Enter
+  // runs entirely client-side via Pyodide -- no edit_cell websocket
+  // message at all. Marked "queued" immediately (so the UI shows
+  // something changed right away, matching the old send-then-wait-for-
+  // cell_status-broadcast feel) then replaced with the real result(s)
+  // once Pyodide finishes -- `results` covers `cellId` itself plus
+  // every dependent cell the graph says is affected (graph.py's own
+  // `affected_by`), not just the one cell that was edited. Errors
+  // thrown by runCellClientSide itself (Pyodide failed to load, a fetch
+  // for one of the codeslides_pyscript/ files 404'd, etc.) are surfaced
+  // as this cell's own error, same "never silently do nothing" rule the
+  // rest of this file follows for a failed send.
   function handleRunCell(cellId: string, source: string) {
     setClientExecutionState((prev) => ({
       ...prev,
@@ -816,24 +858,9 @@ function App() {
         stderr: '',
       },
     }))
-    runCellClientSide(cellId, source)
-      .then((result) => {
-        setClientExecutionState((prev) => ({ ...prev, [cellId]: result }))
-      })
-      .catch((err: unknown) => {
-        setClientExecutionState((prev) => ({
-          ...prev,
-          [cellId]: {
-            status: 'error',
-            value: null,
-            kind: null,
-            data: null,
-            error: err instanceof Error ? err.message : String(err),
-            stdout: '',
-            stderr: '',
-          },
-        }))
-      })
+    runCellClientSide(cellId, currentSources(cellId, source))
+      .then(applyClientExecutionResults)
+      .catch((err: unknown) => reportClientExecutionError(cellId, err))
   }
 
   // TODO.md #65/#68: the review_mode analogue of handleRunCell above --
@@ -864,9 +891,17 @@ function App() {
     setDirtyCells((prev) => (prev.has(cellId) ? prev : new Set(prev).add(cellId)))
   }
 
+  // TODO.md #64 (dependency-graph slice): Run All's client-side
+  // equivalent -- every cell, full topological order, matching
+  // Kernel.run_all's own unfiltered semantics (PROPOSAL_pyscript_execution.md
+  // section 2.4) -- no more run_all websocket message at all.
   function handleRunAll() {
-    if (!sessionId) return
-    send({ type: 'run_all', session_id: sessionId })
+    runAllClientSide(currentSources())
+      .then(applyClientExecutionResults)
+      .catch((err: unknown) => {
+        if (!deck) return
+        for (const cellId of Object.keys(deck.cells)) reportClientExecutionError(cellId, err)
+      })
   }
 
   // TODO.md #46d-i/#46d-iv: which cell (if any) this connection's own
