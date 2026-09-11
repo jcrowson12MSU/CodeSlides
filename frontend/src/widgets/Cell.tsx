@@ -138,6 +138,18 @@ export interface CellProps {
    * with no way to expand it. Defaults to false for the flat "Cells"
    * view, which always shows the header. */
   hideHeader?: boolean
+  // Slides view, header collapsed (App.tsx's `headerCollapsed`, passed
+  // down through SlideShow): the user's own explicit request -- a
+  // collapsed header means "get out of the way for presenting," and
+  // the Push/Accept/Reject/Withdraw row (`cs-cell-header-notifications-
+  // only`, TODO.md #65-xiv's own standalone row for when `hideHeader`
+  // already hides the rest of the cell header) is exactly the kind of
+  // editing-workflow chrome that shouldn't still float over the slide
+  // while presenting. Meaningless (never even checked) when
+  // `hideHeader` is false, since Cells view's own in-header
+  // notification group isn't part of this collapse concept at all --
+  // only Slides view's standalone row is.
+  hideNotifications?: boolean
   // TODO.md #46e: `?role=viewer` (App.tsx's `roleFromUrl`) -- a viewer's
   // server-side allowlist (ws_handler.py's `VIEWER_ALLOWED_MESSAGE_TYPES`)
   // already rejects every structural edit regardless of what the UI
@@ -452,6 +464,7 @@ export function Cell({
   hideCode: hideCodeProp = false,
   extraCodeAbove,
   hideHeader = false,
+  hideNotifications = false,
   viewerMode = false,
   reviewMode = false,
   ownUserId = null,
@@ -1196,7 +1209,11 @@ export function Cell({
             </button>
           )}
           {onDiscardPendingChanges && (
-            <button type="button" onClick={onDiscardPendingChanges}>
+            <button
+              type="button"
+              className="cs-header-notification-toggle cs-header-notification-toggle-discard"
+              onClick={onDiscardPendingChanges}
+            >
               Discard
             </button>
           )}
@@ -1251,8 +1268,13 @@ export function Cell({
           the header row entirely, but must still surface Push/Accept
           -- this collapses to nothing when notificationButtons itself
           renders nothing (nothing pending/proposed), same as the
-          header's own copy. */}
-      {hideHeader && !collapsed && (
+          header's own copy. `hideNotifications` (Slides view, header
+          collapsed) suppresses this row entirely regardless of
+          notificationButtons' own content -- a collapsed header means
+          "get out of the way for presenting," and this floating row is
+          exactly the editing-workflow chrome that shouldn't still show
+          over the slide while presenting. */}
+      {hideHeader && !collapsed && !hideNotifications && (
         <div className="cs-cell-header-notifications-only">{notificationButtons}</div>
       )}
       {!hideHeader && (
@@ -1285,6 +1307,12 @@ export function Cell({
             </span>
           )}
           {collapsed && <span className="cs-collapsed-preview">{firstLine(meta.source)}</span>}
+          {/* Push/Accept/Reject/Withdraw sit to the LEFT of Edit -- per
+              the user's own explicit request -- so the review-workflow
+              action a peer most needs to notice (something pending on
+              this cell) reads before the general-purpose Edit toggle,
+              not after it. */}
+          {!collapsed && notificationButtons}
           {!collapsed && !viewerMode && (
             <button
               type="button"
@@ -1295,7 +1323,6 @@ export function Cell({
               {editing ? 'Close' : 'Edit'}
             </button>
           )}
-          {!collapsed && notificationButtons}
           {!collapsed && onMoveCellUp && onMoveCellDown && (
             <div className="cs-cell-reorder">
               <button
