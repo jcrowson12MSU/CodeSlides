@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Pyodide matplotlib spike</title></head>
+<body>
+<pre id="out">loading...</pre>
+<script type="module">
+  import { loadPyodide } from 'https://cdn.jsdelivr.net/pyodide/v0.29.4/full/pyodide.mjs'
+  const out = document.getElementById('out')
+  const log = (msg) => { out.textContent += '\n' + msg }
+
+  const start = performance.now()
+  const pyodide = await loadPyodide()
+  log(`pyodide loaded in ${(performance.now() - start).toFixed(0)}ms`)
+
+  const loadStart = performance.now()
+  await pyodide.loadPackage('matplotlib')
+  log(`matplotlib loaded in ${(performance.now() - loadStart).toFixed(0)}ms`)
+
+  const result = await pyodide.runPythonAsync(`
+import matplotlib
+import matplotlib.pyplot as plt
+import io, base64
+
+backend = matplotlib.get_backend()
+fig, ax = plt.subplots()
+ax.plot([1, 2, 3], [4, 5, 6])
+buf = io.BytesIO()
+fig.savefig(buf, format="png", bbox_inches="tight")
+encoded = base64.b64encode(buf.getvalue()).decode()
+f"{backend}|{len(encoded)}|{encoded[:30]}"
+  `)
+  log(`result: ${result}`)
+  log('DONE')
+</script>
+</body>
+</html>

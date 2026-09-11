@@ -89,6 +89,7 @@ export interface PyodideCellInput {
 // docstring above), just enough to keep this file itself type-checked.
 interface PyodideInterface {
   runPythonAsync(code: string): Promise<unknown>
+  loadPackage(names: string | string[]): Promise<unknown>
   FS: {
     mkdirTree(path: string): void
     writeFile(path: string, data: string): void
@@ -523,6 +524,52 @@ async function getPyodide(): Promise<PyodideInterface> {
   return pyodidePromise
 }
 
+// TODO.md #64 (matplotlib slice): output.py's own resolve_output/
+// _figure_to_data_uri already duck-type a matplotlib Figure by class
+// name and call figure.savefig(...) -- pure stdlib, no changes needed,
+// same "already portable" story as cs.py/turtle.py. What's missing is
+// matplotlib ITSELF: unlike codeslides' own modules, it isn't bundled
+// into codeslides_pyscript/ (it's a large, genuinely optional runtime
+// dependency for lesson authors, matching pyproject.toml's own
+// "matplotlib is a dev extra, not a hard dependency" stance), so it has
+// to be loaded from Pyodide's own curated package index
+// (pyodide.loadPackage('matplotlib'), confirmed against a real browser
+// in pyscript_spike/spike3_matplotlib.html -- ~1s to fetch, savefig()
+// works unmodified regardless of the auto-selected backend) -- but only
+// for a session that actually uses it, not unconditionally at Pyodide
+// startup, the same "pay only for what you use" reasoning the whole
+// Pyodide-over-self-hosted-runtime tradeoff already follows.
+//
+// Detection is a plain source-text scan for "import matplotlib"/"from
+// matplotlib" across every cell this run touches, rather than trying to
+// catch a ModuleNotFoundError mid-execution and retry -- the actual
+// exec() call happens deep inside one synchronous Python call
+// (_execute_one, inside run_cell_and_dependents_b64/run_all_b64/
+// on_element_changed_b64), and loadPackage is itself async, so
+// detecting and loading BEFORE that call starts avoids needing to
+// suspend Python execution mid-cell and resume after an awaited JS
+// call -- which Pyodide's runPythonAsync doesn't support for arbitrary
+// synchronous code anyway. A plain text scan can't be fooled by e.g. a
+// cell that builds the string "import matplotlib" without meaning it,
+// but that's a vanishingly unlikely false positive to worry about (the
+// cost of a false positive is one extra ~1s package load, never a
+// correctness problem) -- much cheaper than actually parsing imports.
+const MATPLOTLIB_IMPORT_RE = /\b(import\s+matplotlib\b|from\s+matplotlib\b)/
+
+let matplotlibLoadedPromise: Promise<void> | null = null
+
+async function ensureMatplotlibIfNeeded(
+  pyodide: PyodideInterface,
+  allCells: Record<string, PyodideCellInput>,
+): Promise<void> {
+  const needsMatplotlib = Object.values(allCells).some((cell) => MATPLOTLIB_IMPORT_RE.test(cell.source))
+  if (!needsMatplotlib) return
+  if (!matplotlibLoadedPromise) {
+    matplotlibLoadedPromise = Promise.resolve(pyodide.loadPackage('matplotlib')).then(() => undefined)
+  }
+  await matplotlibLoadedPromise
+}
+
 function toBase64(text: string): string {
   // btoa operates on a byte string (one char = one byte), so a UTF-8
   // encode step is required first for any non-ASCII text (a
@@ -546,6 +593,7 @@ export async function runCellClientSide(
   allCells: Record<string, PyodideCellInput>,
 ): Promise<Record<string, PyodideCellResult>> {
   const pyodide = await getPyodide()
+  await ensureMatplotlibIfNeeded(pyodide, allCells)
   const cellsB64 = toBase64(JSON.stringify(allCells))
   const call = `run_cell_and_dependents_b64(${JSON.stringify(toBase64(cellName))}, ${JSON.stringify(cellsB64)})`
   const resultJson = await pyodide.runPythonAsync(call)
@@ -556,6 +604,7 @@ export async function runAllClientSide(
   allCells: Record<string, PyodideCellInput>,
 ): Promise<Record<string, PyodideCellResult>> {
   const pyodide = await getPyodide()
+  await ensureMatplotlibIfNeeded(pyodide, allCells)
   const cellsB64 = toBase64(JSON.stringify(allCells))
   const call = `run_all_b64(${JSON.stringify(cellsB64)})`
   const resultJson = await pyodide.runPythonAsync(call)
@@ -572,6 +621,7 @@ export async function onElementChangedClientSide(
   allCells: Record<string, PyodideCellInput>,
 ): Promise<Record<string, PyodideCellResult>> {
   const pyodide = await getPyodide()
+  await ensureMatplotlibIfNeeded(pyodide, allCells)
   const cellsB64 = toBase64(JSON.stringify(allCells))
   const valueB64 = toBase64(JSON.stringify(value))
   const call = `on_element_changed_b64(${JSON.stringify(toBase64(cellName))}, ${JSON.stringify(toBase64(elementName))}, ${JSON.stringify(valueB64)}, ${JSON.stringify(cellsB64)})`
