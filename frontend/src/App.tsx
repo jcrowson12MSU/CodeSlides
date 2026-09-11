@@ -703,6 +703,13 @@ function App() {
             // cell has a primary editor until this UI explicitly
             // removes it (CELL_QUADRANT_LAYOUT_TODO.md item 2b).
             has_primary_editor: cells[msg.cell_id]?.has_primary_editor ?? true,
+            // None of these message types touch a cell's own docstring
+            // either (add/remove an element or reorder/reconfigure one
+            // never rewrites it) -- carry it forward same as is_main/
+            // is_setup/hide_code/hide_def above. cell_added is again the
+            // one case with nothing to carry forward: a brand-new cell's
+            // stub body has no docstring at all.
+            docstring: cells[msg.cell_id]?.docstring ?? '',
           }
         } else if (msg.type === 'primary_editor_removed' || msg.type === 'primary_editor_added') {
           if (!changed) cells = { ...cells }
@@ -717,6 +724,7 @@ function App() {
             hide_code: cells[msg.cell_id]?.hide_code ?? false,
             hide_def: cells[msg.cell_id]?.hide_def ?? false,
             has_primary_editor: msg.type === 'primary_editor_added',
+            docstring: cells[msg.cell_id]?.docstring ?? '',
           }
         } else if (msg.type === 'cell_renamed') {
           if (!changed) cells = { ...cells }
@@ -727,6 +735,9 @@ function App() {
           // pre-rename entry under its old key, same fallback-to-true
           // precedent as the cell_added/element_added block above.
           const hadPrimaryEditor = cells[msg.old_cell_id]?.has_primary_editor ?? true
+          // Same carry-forward precedent, for docstring -- a rename
+          // doesn't touch a cell's own docstring either.
+          const priorDocstring = cells[msg.old_cell_id]?.docstring ?? ''
           delete cells[msg.old_cell_id]
           cells[msg.cell_id] = {
             instance: msg.instance,
@@ -738,6 +749,7 @@ function App() {
             hide_code: msg.hide_code,
             hide_def: msg.hide_def,
             has_primary_editor: hadPrimaryEditor,
+            docstring: priorDocstring,
           }
         } else if (msg.type === 'main_cell_set') {
           if (!changed) cells = { ...cells }
@@ -821,6 +833,14 @@ function App() {
             source: msg.source,
             elements: msg.elements,
             layout: msg.layout,
+            // A title slide's own generated cell never has a notes
+            // element at all (serialization.append_title_slide's own
+            // template -- a cs.md(...) content cell, not one with
+            // elements=[ui.notes(...)]), so this never actually gets
+            // read here -- included only for the same "brand-new cell,
+            // nothing to carry forward" consistency add_cell's own
+            // branch above already follows.
+            docstring: '',
           }
           // Unlike slide_added (always appended -- see its own comment
           // above), a title slide is inserted first, so the server sends
@@ -1671,26 +1691,39 @@ function App() {
     }
   }
 
-  // Merge notes overrides and this cell's own client-side execution
-  // result into cell state once, shared by both views. TODO.md #64: the
-  // execution fields (status/value/kind/data/error) come ONLY from
-  // clientExecutionState now -- cellState[cellId] (reduced from server
-  // messages) never carries them any more, since the server never
-  // executes anything (PROPOSAL_pyscript_execution.md section 2.1).
-  // TODO.md #64 (element/input-binding slice): a run's elementWrites
-  // (cs.image()/cs.iframe() calls, mirroring kernel.py's own
-  // element_writes -> element_output translation, ws_handler.py's
-  // _element_output_messages) are folded into elementContent here, the
-  // same role that function plays server-side -- notes falls through to
-  // the server-derived value unchanged (static authored content, never
-  // re-computed by any run). TODO.md #64 (tests-element slice): a
-  // cell's tests-element result(s) (clientTestResults) are folded in
-  // the same way, unconditionally (not gated on `execution` existing --
-  // a tests element can have a real result even for a cell this tab has
-  // never run standalone, e.g. one whose only "run" happened inside
-  // run_test_b64's own internal execute-if-needed step), matching
-  // _element_output_messages' own former "notes/tests need a fallback,
-  // viewer writes don't" split minus the now-removed server-tests half.
+  // Merge notes seeding, notes overrides, and this cell's own
+  // client-side execution result into cell state once, shared by both
+  // views. TODO.md #64: the execution fields (status/value/kind/data/
+  // error) come ONLY from clientExecutionState now -- cellState[cellId]
+  // (reduced from server messages) never carries them any more, since
+  // the server never executes anything (PROPOSAL_pyscript_execution.md
+  // section 2.1). TODO.md #64 (element/input-binding slice): a run's
+  // elementWrites (cs.image()/cs.iframe() calls, mirroring kernel.py's
+  // own element_writes -> element_output translation, ws_handler.py's
+  // now-removed _element_output_messages) are folded into elementContent
+  // here, the same role that function used to play server-side.
+  //
+  // TODO.md #64 follow-up (a real regression, found via direct user
+  // report -- Lectures/Chapters/chapter4.py's `intro` cell has a real
+  // docstring in its own .py source but rendered a blank notes editor):
+  // notes content is authored content, never computed by any run --
+  // _element_output_messages used to be the ONE remaining path any
+  // notes content ever reached the browser through (its own "static
+  // content fallback" branch, surfacing session.instances[...].content,
+  // itself seeded from Cell.docstring at Session-construction time --
+  // session.py's seed_cell_instance). Removing that function (TODO.md
+  // #64-iv) left no path at all: nothing client-side ever computes a
+  // notes element's content, since it was never meant to be computed,
+  // only ever authored. docstringSeed reconstructs the same base value
+  // purely from deck.cells[cellId]'s own `docstring` field (now part of
+  // GET /api/deck's response) and this cell's own notes-kind element
+  // names -- no execution, no websocket round trip, matching every
+  // other piece of static deck metadata already available here.
+  // Deliberately the LOWEST-priority layer (spread first, before
+  // `overrides`): a live-in-progress notes edit (notesOverrides, this
+  // tab's own local echo) or an accepted push's own notes_source_changed
+  // must still win over this static, load-time value, exactly like
+  // before this fix existed.
   const mergedCellState: Record<string, ReturnType<typeof useDeckState>[string] | undefined> = {}
   if (deck) {
     for (const cellId of Object.keys(deck.cells)) {
@@ -1698,9 +1731,19 @@ function App() {
       const testResults = clientTestResults[cellId]
       const state = cellState[cellId]
       const execution = clientExecutionState[cellId]
-      const withNotes = overrides
-        ? { ...state, elementContent: { ...state?.elementContent, ...overrides } }
+      const notesElementNames = deck.cells[cellId].elements
+        .filter((e) => e.kind === 'notes')
+        .map((e) => e.name)
+      const docstringSeed =
+        notesElementNames.length > 0
+          ? Object.fromEntries(notesElementNames.map((name) => [name, deck.cells[cellId].docstring ?? '']))
+          : null
+      const withDocstringSeed = docstringSeed
+        ? { ...state, elementContent: { ...docstringSeed, ...state?.elementContent } }
         : state
+      const withNotes = overrides
+        ? { ...withDocstringSeed, elementContent: { ...withDocstringSeed?.elementContent, ...overrides } }
+        : withDocstringSeed
       const withTestResults = testResults
         ? { ...withNotes, elementContent: { ...withNotes?.elementContent, ...testResults } }
         : withNotes
