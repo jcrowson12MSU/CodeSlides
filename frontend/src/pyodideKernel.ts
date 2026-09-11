@@ -44,6 +44,12 @@ const PYODIDE_CDN_URL = 'https://cdn.jsdelivr.net/pyodide/v0.29.4/full/pyodide.m
 // slice -- see sync-pyscript-modules.mjs's own comment.
 const PYODIDE_MODULE_FILES = ['deck.py', 'graph.py', 'cs.py', 'output.py', 'turtle.py']
 
+export interface PyodideElementWrite {
+  elementName: string
+  kind: string
+  content: unknown
+}
+
 export interface PyodideCellResult {
   status: 'idle' | 'error'
   value: unknown
@@ -52,6 +58,28 @@ export interface PyodideCellResult {
   error: string | null
   stdout: string
   stderr: string
+  // kernel.py's execute_cell only ever returns element_writes for a
+  // SUCCESSFUL run (ExecutionResult's own default is []); an error
+  // result never carries any, matching that -- see this file's own
+  // execute_cell docstring for why (a failed cell must not leave any
+  // partial viewer-content change behind).
+  elementWrites: PyodideElementWrite[]
+}
+
+// name/kind/config, matching ElementMeta (widgets/elementMeta.ts) --
+// this is App.tsx's own per-cell deck.cells[id].elements, passed
+// through unmodified so the Pyodide runner can bind input-element
+// values as kwargs and know which elements exist for cs.*'s own
+// "no such element" validation, exactly like kernel.py's execute_cell.
+export interface PyodideElementMeta {
+  name: string
+  kind: string
+  config: Record<string, unknown>
+}
+
+export interface PyodideCellInput {
+  source: string
+  elements: PyodideElementMeta[]
 }
 
 // Minimal ambient shape for what this module actually calls on a
@@ -105,13 +133,22 @@ function loadPyodideScript(src: string): Promise<void> {
 // TODO.md #64: mirrors kernel.py's execute_cell + Kernel._run_cells +
 // output.py's resolve_output/wire_safe_value, and graph.py's own
 // build_graph/affected_by/topological_order for real cross-cell
-// reactivity -- deliberately without elements/kwargs binding,
-// deck_imports, or is_main handling yet (a later slice's scope).
+// reactivity. TODO.md #64 (element/input-binding slice) adds input-
+// element (slider/text_input/button) kwargs binding and cs.*
+// viewer-element writes (image/iframe), mirroring execute_cell's own
+// params/cs.execution_context() handling -- still deliberately without
+// turtle_canvas (codeslides.turtle needs its own execution_context, a
+// later slice), deck_imports, or is_main handling (also later slices).
 // `_namespace` is one plain module-level dict, shared across every
 // `run_cells`/`run_all` call for the life of this page load -- the
 // client-side equivalent of session.namespace, scoped to this one
 // browser tab (PROPOSAL_pyscript_execution.md section 2.1: no
-// execution state of any kind is ever shared across tabs).
+// execution state of any kind is ever shared across tabs). `_element_values`
+// is this tab's equivalent of session.instances[cell].elements[el].value
+// -- also module-level and persistent across calls, so a slider's
+// position (set via on_element_changed_b64) survives independently of
+// whatever run_cell_and_dependents_b64/run_all_b64 call comes next,
+// exactly like a Session's own ElementInstance.value does.
 const RUNNER_MODULE_PYTHON = `
 import ast
 import base64
@@ -122,7 +159,7 @@ import traceback
 
 from codeslides import cs, turtle
 from codeslides import output as _output
-from codeslides.deck import Cell, Deck
+from codeslides.deck import Cell, Deck, Element
 from codeslides.graph import build_graph, extract_return_names
 
 _namespace = {}
@@ -150,19 +187,34 @@ _namespace["turtle"] = turtle
 # edited cell itself.
 _run_once = set()
 
+# cell_name -> {element_name: value}. Only ever holds entries for input
+# elements (slider/button/text_input) that on_element_changed_b64 has
+# actually set at least once -- an element never touched by the user yet
+# simply isn't a key here, and _execute_one's kwargs binding below falls
+# back to the element's own config["default"] in that case (Element's
+# own config, not a separate seeding step -- see _build_deck).
+_element_values = {}
+
 def _decode(b64):
     return base64.b64decode(b64).decode("utf-8")
 
-def _build_deck(sources_json_b64):
-    """sources_json_b64 decodes to a JSON object of {cell_name: source}
+def _build_deck(cells_json_b64):
+    """cells_json_b64 decodes to a JSON object of
+    {cell_name: {"source": str, "elements": [{"name", "kind", "config"}]}}
     -- the caller's full current view of the deck (App.tsx's own
     deck.cells), same "rebuild fresh every call" shape
-    Kernel._effective_graph already uses server-side. Only name/source
-    are populated on each Cell -- every other field defaults, and is
-    irrelevant to graph-building (see this module's own header
-    comment)."""
-    sources = json.loads(_decode(sources_json_b64))
-    cells = {name: Cell(name=name, source=source) for name, source in sources.items()}
+    Kernel._effective_graph already uses server-side. Only name/source/
+    elements are populated on each Cell -- every other field defaults,
+    and is irrelevant to graph-building or kwargs binding (this slice
+    still doesn't touch layout/is_main/deck_imports)."""
+    raw_cells = json.loads(_decode(cells_json_b64))
+    cells = {}
+    for name, raw in raw_cells.items():
+        elements = [
+            Element(name=e["name"], kind=e["kind"], config=e.get("config") or {})
+            for e in raw.get("elements", [])
+        ]
+        cells[name] = Cell(name=name, source=raw["source"], elements=elements)
     return Deck(cells=cells)
 
 def _return_names_for(source):
@@ -178,25 +230,62 @@ def _return_names_for(source):
         raise ValueError(f"expected exactly one function definition, found {len(func_defs)}")
     return extract_return_names(func_defs[0])
 
-def _execute_one(cell_name, source):
+_INPUT_KINDS = {"slider", "button", "text_input"}
+
+def _kwargs_for(cell_name, fn, elements):
+    """Bind each input element (slider/button/text_input) whose name is
+    also one of fn's own declared parameters -- exactly execute_cell's
+    own params = fn.__code__.co_varnames[:argcount] / "if element_name
+    in params" filter, so a cell with elements the function doesn't
+    actually take as arguments (e.g. only used inside the body via
+    module-level input(), or not read at all) doesn't get a spurious
+    TypeError from an unexpected kwarg. Falls back to the element's own
+    declared config["default"] (ui.slider/ui.text_input's own default=,
+    ui.button has none) when on_element_changed_b64 has never set this
+    element for this cell -- same as a Session's ElementInstance.value
+    starting at its seeded default until the user actually touches it."""
+    params = set(fn.__code__.co_varnames[: fn.__code__.co_argcount])
+    values = _element_values.get(cell_name, {})
+    kwargs = {}
+    for element in elements:
+        if element.kind not in _INPUT_KINDS or element.name not in params:
+            continue
+        if element.name in values:
+            kwargs[element.name] = values[element.name]
+        else:
+            kwargs[element.name] = element.config.get("default")
+    return kwargs
+
+def _execute_one(cell_name, source, elements):
     """Mirrors kernel.py's execute_cell: run the cell's function against
     the shared _namespace (its real __globals__, via plain exec into
     _namespace itself -- so a global x write lands permanently, same
-    guarantee _compile_cell_function documents), then -- critically --
-    bind the call's result back into _namespace under its return-named
-    name(s) (kernel.py lines ~471-485), exactly like a bare 'return
-    name' or 'return a, b' cell publishes name/a/b for any other
-    cell to read by ordinary Python name resolution. Without this step,
-    a downstream cell reading an upstream cell's returned value (not
-    just calling its function directly) would always see a NameError,
-    regardless of run order."""
+    guarantee _compile_cell_function documents), bind input-element
+    values as kwargs (_kwargs_for), run the call inside
+    cs.execution_context() so cs.image()/cs.iframe() calls have
+    somewhere to record their writes, then -- critically -- bind the
+    call's result back into _namespace under its return-named name(s)
+    (kernel.py lines ~471-485), exactly like a bare 'return name' or
+    'return a, b' cell publishes name/a/b for any other cell to read by
+    ordinary Python name resolution. Without that step, a downstream
+    cell reading an upstream cell's returned value (not just calling its
+    function directly) would always see a NameError, regardless of run
+    order.
+
+    turtle_canvas is deliberately not handled here -- codeslides.turtle
+    calls need their own execution_context (_maybe_turtle_context in
+    kernel.py), a separate later slice; a cell with a turtle_canvas
+    element still runs fine here, its turtle.* calls just raise (same
+    as execute_cell's own behavior with no valid canvas target),
+    reported as this cell's own error like any other exception."""
     stdout, stderr = io.StringIO(), io.StringIO()
     try:
         return_names = _return_names_for(source)
         exec(compile(source, f"<cell:{cell_name}>", "exec"), _namespace)
         fn = _namespace[cell_name]
-        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            value = fn()
+        kwargs = _kwargs_for(cell_name, fn, elements)
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), cs.execution_context() as writes:
+            value = fn(**kwargs)
         if len(return_names) == 1:
             _namespace[return_names[0]] = value
         elif len(return_names) > 1:
@@ -207,6 +296,13 @@ def _execute_one(cell_name, source):
                 )
             for name, item in zip(return_names, values):
                 _namespace[name] = item
+        element_names = {e.name for e in elements}
+        for write in writes:
+            if write.element_name not in element_names:
+                raise RuntimeError(
+                    f"cell {cell_name!r} called cs.{write.kind}({write.element_name!r}, ...) "
+                    f"but has no element named {write.element_name!r}"
+                )
     except Exception:
         return {
             "status": "error",
@@ -216,6 +312,7 @@ def _execute_one(cell_name, source):
             "error": traceback.format_exc(),
             "stdout": stdout.getvalue(),
             "stderr": stderr.getvalue(),
+            "elementWrites": [],
         }
     resolved = _output.resolve_output(value)
     return {
@@ -226,12 +323,16 @@ def _execute_one(cell_name, source):
         "error": None,
         "stdout": stdout.getvalue(),
         "stderr": stderr.getvalue(),
+        "elementWrites": [
+            {"elementName": w.element_name, "kind": w.kind, "content": w.content} for w in writes
+        ],
     }
 
-def _run_names(names, sources):
+def _run_names(names, cells):
     results = {}
     for name in names:
-        results[name] = _execute_one(name, sources[name])
+        cell = cells[name]
+        results[name] = _execute_one(name, cell.source, cell.elements)
         _run_once.add(name)
     return results
 
@@ -266,7 +367,7 @@ def _missing_upstream(graph, cell_name, all_names):
     order = graph.topological_order()
     return [name for name in order if name in missing]
 
-def run_cell_and_dependents_b64(cell_name_b64, sources_json_b64):
+def run_cell_and_dependents_b64(cell_name_b64, cells_json_b64):
     """Kernel.on_cell_edited's client-side equivalent: build the graph
     fresh from the caller's current sources, compute the minimal
     re-run set for an edit to cell_name (graph.py's own
@@ -288,7 +389,7 @@ def run_cell_and_dependents_b64(cell_name_b64, sources_json_b64):
     as it would server-side."""
     cell_name = _decode(cell_name_b64)
     try:
-        deck = _build_deck(sources_json_b64)
+        deck = _build_deck(cells_json_b64)
         graph = build_graph(deck)
     except (SyntaxError, ValueError) as exc:
         return json.dumps({cell_name: {
@@ -299,19 +400,19 @@ def run_cell_and_dependents_b64(cell_name_b64, sources_json_b64):
             "error": str(exc),
             "stdout": "",
             "stderr": "",
+            "elementWrites": [],
         }})
-    sources = {name: cell.source for name, cell in deck.cells.items()}
-    prerequisites = _missing_upstream(graph, cell_name, sources.keys())
+    prerequisites = _missing_upstream(graph, cell_name, deck.cells.keys())
     affected = graph.affected_by(cell_name)
     to_run = prerequisites + [name for name in affected if name not in prerequisites]
-    return json.dumps(_run_names(to_run, sources))
+    return json.dumps(_run_names(to_run, deck.cells))
 
-def run_all_b64(sources_json_b64):
+def run_all_b64(cells_json_b64):
     """Kernel.run_all's client-side equivalent: every cell, in full
     topological order -- no minimal-rerun-set filtering, matching
     run_all's own unfiltered graph.topological_order() call exactly."""
     try:
-        deck = _build_deck(sources_json_b64)
+        deck = _build_deck(cells_json_b64)
         graph = build_graph(deck)
     except (SyntaxError, ValueError) as exc:
         return json.dumps({"__run_all_error__": {
@@ -322,9 +423,43 @@ def run_all_b64(sources_json_b64):
             "error": str(exc),
             "stdout": "",
             "stderr": "",
+            "elementWrites": [],
         }})
-    sources = {name: cell.source for name, cell in deck.cells.items()}
-    return json.dumps(_run_names(graph.topological_order(), sources))
+    return json.dumps(_run_names(graph.topological_order(), deck.cells))
+
+def on_element_changed_b64(cell_name_b64, element_name_b64, value_json_b64, cells_json_b64):
+    """Kernel.on_element_changed's client-side equivalent: record the new
+    value (so _kwargs_for picks it up), then re-run exactly the same
+    minimal set an edit to cell_name would -- cell_name itself plus any
+    of its own never-yet-run upstream dependencies, plus its downstream
+    dependents (graph.affected_by), same composition as
+    run_cell_and_dependents_b64. value_json_b64 decodes to a JSON value
+    (not a bare string) since an element's value can be a number
+    (slider), int (button press count), or string (text_input) --
+    JSON round-trips all three without the base64-string's own
+    "everything is text" ambiguity."""
+    cell_name = _decode(cell_name_b64)
+    element_name = _decode(element_name_b64)
+    value = json.loads(_decode(value_json_b64))
+    _element_values.setdefault(cell_name, {})[element_name] = value
+    try:
+        deck = _build_deck(cells_json_b64)
+        graph = build_graph(deck)
+    except (SyntaxError, ValueError) as exc:
+        return json.dumps({cell_name: {
+            "status": "error",
+            "value": None,
+            "kind": None,
+            "data": None,
+            "error": str(exc),
+            "stdout": "",
+            "stderr": "",
+            "elementWrites": [],
+        }})
+    prerequisites = _missing_upstream(graph, cell_name, deck.cells.keys())
+    affected = graph.affected_by(cell_name)
+    to_run = prerequisites + [name for name in affected if name not in prerequisites]
+    return json.dumps(_run_names(to_run, deck.cells))
 `
 
 async function installModules(pyodide: PyodideInterface): Promise<void> {
@@ -371,28 +506,46 @@ function toBase64(text: string): string {
   return btoa(binary)
 }
 
-// Both entry points below take `allSources` -- the caller's full
-// current view of every cell's source (own edits + whatever the
-// document currently shows) -- since the graph must be rebuilt fresh
-// each call (see this module's own header comment for why there's no
-// persistent Deck object to keep in sync incrementally client-side).
+// Every entry point below takes `allCells` -- the caller's full current
+// view of every cell (source + elements: name/kind/config, own edits +
+// whatever the document currently shows) -- since the graph and kwargs
+// binding must be rebuilt fresh each call (see this module's own header
+// comment for why there's no persistent Deck object to keep in sync
+// incrementally client-side).
 export async function runCellClientSide(
   cellName: string,
-  allSources: Record<string, string>,
+  allCells: Record<string, PyodideCellInput>,
 ): Promise<Record<string, PyodideCellResult>> {
   const pyodide = await getPyodide()
-  const sourcesB64 = toBase64(JSON.stringify(allSources))
-  const call = `run_cell_and_dependents_b64(${JSON.stringify(toBase64(cellName))}, ${JSON.stringify(sourcesB64)})`
+  const cellsB64 = toBase64(JSON.stringify(allCells))
+  const call = `run_cell_and_dependents_b64(${JSON.stringify(toBase64(cellName))}, ${JSON.stringify(cellsB64)})`
   const resultJson = await pyodide.runPythonAsync(call)
   return JSON.parse(resultJson as string) as Record<string, PyodideCellResult>
 }
 
 export async function runAllClientSide(
-  allSources: Record<string, string>,
+  allCells: Record<string, PyodideCellInput>,
 ): Promise<Record<string, PyodideCellResult>> {
   const pyodide = await getPyodide()
-  const sourcesB64 = toBase64(JSON.stringify(allSources))
-  const call = `run_all_b64(${JSON.stringify(sourcesB64)})`
+  const cellsB64 = toBase64(JSON.stringify(allCells))
+  const call = `run_all_b64(${JSON.stringify(cellsB64)})`
+  const resultJson = await pyodide.runPythonAsync(call)
+  return JSON.parse(resultJson as string) as Record<string, PyodideCellResult>
+}
+
+// value is JSON-encoded (not base64-of-a-string) since an element's
+// value can be a number (slider), int (button press count), or string
+// (text_input) -- see on_element_changed_b64's own docstring.
+export async function onElementChangedClientSide(
+  cellName: string,
+  elementName: string,
+  value: unknown,
+  allCells: Record<string, PyodideCellInput>,
+): Promise<Record<string, PyodideCellResult>> {
+  const pyodide = await getPyodide()
+  const cellsB64 = toBase64(JSON.stringify(allCells))
+  const valueB64 = toBase64(JSON.stringify(value))
+  const call = `on_element_changed_b64(${JSON.stringify(toBase64(cellName))}, ${JSON.stringify(toBase64(elementName))}, ${JSON.stringify(valueB64)}, ${JSON.stringify(cellsB64)})`
   const resultJson = await pyodide.runPythonAsync(call)
   return JSON.parse(resultJson as string) as Record<string, PyodideCellResult>
 }

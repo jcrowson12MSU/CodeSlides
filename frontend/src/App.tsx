@@ -3,7 +3,13 @@ import './App.css'
 import { useChatState } from './chatState'
 import { useDeckState } from './deckState'
 import { usePresenceState } from './presenceState'
-import { runAllClientSide, runCellClientSide, type PyodideCellResult } from './pyodideKernel'
+import {
+  onElementChangedClientSide,
+  runAllClientSide,
+  runCellClientSide,
+  type PyodideCellInput,
+  type PyodideCellResult,
+} from './pyodideKernel'
 import type { CellLayout, ServerMessage } from './protocol'
 import { useCodeSlidesSocket } from './useCodeSlidesSocket'
 import { Cell, type CellMeta } from './widgets/Cell'
@@ -784,34 +790,57 @@ function App() {
     }
   }, [messages])
 
+  // TODO.md #64 (element/input-binding slice): mirrors handleRunCell/
+  // handleRunAll below -- the value change runs entirely client-side via
+  // Pyodide now (Kernel.on_element_changed's own re-run semantics,
+  // replicated in pyodideKernel.ts's on_element_changed_b64), so the
+  // set_element_value websocket message this used to send is dropped
+  // entirely, same "no server round trip for execution" rule those two
+  // already follow (PROPOSAL_pyscript_execution.md section 2.1 -- the
+  // server never executes anything and never sees this value at all).
+  // `elementValues` (local React state) stays the source of truth for
+  // "what is this slider currently set to" exactly as it already was --
+  // only the round-trip-to-server part is gone, not the local echo.
   function handleSetElementValue(cellId: string, elementId: string, value: unknown) {
-    if (!sessionId) return
     setElementValues((prev) => ({
       ...prev,
       [cellId]: { ...prev[cellId], [elementId]: value },
     }))
-    send({ type: 'set_element_value', session_id: sessionId, cell_id: cellId, element_id: elementId, value })
+    onElementChangedClientSide(cellId, elementId, value, currentCellInputs())
+      .then(applyClientExecutionResults)
+      .catch((err: unknown) => reportClientExecutionError(cellId, err))
   }
 
-  // TODO.md #64/PROPOSAL_pyscript_execution.md: `allSources` is this
-  // tab's full current view of the deck -- deck.cells' own last-known
-  // source for every OTHER cell, with `overrideCellId`'s own entry
+  // TODO.md #64/PROPOSAL_pyscript_execution.md: this tab's full current
+  // view of the deck -- deck.cells' own last-known source/elements for
+  // every OTHER cell, with `overrideCellId`'s own entry's source
   // overridden by whatever fresh source the caller was just given
   // (deck.cells[cellId].source only updates via server messages, which
   // no longer fire for a client-side-only edit -- see App.tsx's own
   // mergedCellState comment on why execution state is no longer
-  // server-derived at all). This is the exact "full current sources"
-  // shape pyodideKernel.ts's own runCellClientSide/runAllClientSide
-  // need to rebuild the dependency graph fresh on every call (there is
-  // no persistent client-side Deck object to keep in sync
-  // incrementally -- see pyodideKernel.ts's own header comment).
-  function currentSources(overrideCellId?: string, overrideSource?: string): Record<string, string> {
+  // server-derived at all). This is the exact shape
+  // runCellClientSide/runAllClientSide/onElementChangedClientSide need
+  // to rebuild the dependency graph AND bind input-element kwargs fresh
+  // on every call (there is no persistent client-side Deck object to
+  // keep in sync incrementally -- see pyodideKernel.ts's own header
+  // comment). `elements` always comes from `deck.cells[id].elements`
+  // itself (name/kind/config, ElementMeta's own shape -- never
+  // overridden per-call, since only source changes live-edit to live-
+  // edit within this slice's scope), not `elementValues` -- those are a
+  // SEPARATE per-tab value the Pyodide runner's own _element_values
+  // dict tracks (see on_element_changed_b64), matching how
+  // session.instances[cell].elements[el].value is a Session-side
+  // concern kernel.py never threads through Cell/Deck either.
+  function currentCellInputs(overrideCellId?: string, overrideSource?: string): Record<string, PyodideCellInput> {
     if (!deck) return {}
-    const sources: Record<string, string> = {}
+    const cells: Record<string, PyodideCellInput> = {}
     for (const [id, meta] of Object.entries(deck.cells)) {
-      sources[id] = id === overrideCellId && overrideSource !== undefined ? overrideSource : meta.source
+      cells[id] = {
+        source: id === overrideCellId && overrideSource !== undefined ? overrideSource : meta.source,
+        elements: meta.elements,
+      }
     }
-    return sources
+    return cells
   }
 
   function applyClientExecutionResults(results: Record<string, PyodideCellResult>) {
@@ -829,6 +858,7 @@ function App() {
         error: err instanceof Error ? err.message : String(err),
         stdout: '',
         stderr: '',
+        elementWrites: [],
       },
     }))
   }
@@ -856,9 +886,10 @@ function App() {
         error: null,
         stdout: '',
         stderr: '',
+        elementWrites: prev[cellId]?.elementWrites ?? [],
       },
     }))
-    runCellClientSide(cellId, currentSources(cellId, source))
+    runCellClientSide(cellId, currentCellInputs(cellId, source))
       .then(applyClientExecutionResults)
       .catch((err: unknown) => reportClientExecutionError(cellId, err))
   }
@@ -896,7 +927,7 @@ function App() {
   // Kernel.run_all's own unfiltered semantics (PROPOSAL_pyscript_execution.md
   // section 2.4) -- no more run_all websocket message at all.
   function handleRunAll() {
-    runAllClientSide(currentSources())
+    runAllClientSide(currentCellInputs())
       .then(applyClientExecutionResults)
       .catch((err: unknown) => {
         if (!deck) return
@@ -1354,8 +1385,16 @@ function App() {
   // clientExecutionState now -- cellState[cellId] (reduced from server
   // messages) never carries them any more, since the server never
   // executes anything (PROPOSAL_pyscript_execution.md section 2.1).
-  // Non-execution fields (elementContent, lastEditedBy/At) still come
-  // from the server as before -- this slice doesn't touch those.
+  // TODO.md #64 (element/input-binding slice): a run's elementWrites
+  // (cs.image()/cs.iframe() calls, mirroring kernel.py's own
+  // element_writes -> element_output translation, ws_handler.py's
+  // _element_output_messages) are folded into elementContent here, the
+  // same role that function plays server-side -- notes/tests fall
+  // through to the server-derived value unchanged (notes is static
+  // authored content, never re-computed by any run; tests has its own
+  // separate, still-server-only execution path, out of this slice's
+  // scope), matching _element_output_messages' own "notes/tests need a
+  // fallback, viewer writes don't" split.
   const mergedCellState: Record<string, ReturnType<typeof useDeckState>[string] | undefined> = {}
   if (deck) {
     for (const cellId of Object.keys(deck.cells)) {
@@ -1365,6 +1404,15 @@ function App() {
       const withNotes = overrides
         ? { ...state, elementContent: { ...state?.elementContent, ...overrides } }
         : state
+      const withElementWrites =
+        execution && execution.elementWrites.length > 0
+          ? {
+              elementContent: {
+                ...withNotes?.elementContent,
+                ...Object.fromEntries(execution.elementWrites.map((w) => [w.elementName, w.content])),
+              },
+            }
+          : null
       mergedCellState[cellId] = execution
         ? {
             ...withNotes,
@@ -1373,7 +1421,7 @@ function App() {
             kind: execution.kind,
             data: execution.data,
             error: execution.error,
-            elementContent: withNotes?.elementContent ?? {},
+            elementContent: withElementWrites?.elementContent ?? withNotes?.elementContent ?? {},
             lastEditedBy: withNotes?.lastEditedBy ?? null,
             lastEditedAt: withNotes?.lastEditedAt ?? null,
             pendingPush: withNotes?.pendingPush ?? null,
