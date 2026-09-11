@@ -149,7 +149,10 @@ def test_run_all_is_a_harmless_no_op():
 # is a real, confirmed dead-code finding (not fixed here, since it's a
 # distinct cleanup from porting structural operations): removing
 # _element_output_messages/_results_to_messages and their two now-inert
-# call sites is a legitimate follow-up.
+# call sites is a legitimate follow-up. Done: both functions and their
+# call sites (EditCell/SetElementValue) are removed as of the #64-iv
+# cleanup slice -- see ws_handler.py's own module docstring and the
+# comment now sitting where these two functions used to be defined.
 
 
 def test_set_notes_source_updates_content_without_rerun():

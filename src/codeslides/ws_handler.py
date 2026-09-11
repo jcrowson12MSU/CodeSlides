@@ -1,11 +1,16 @@
 """Websocket message dispatch. See ARCHITECTURE.md section 5.
 
 Wraps a Kernel with a session registry and translates protocol.py
-messages into Kernel calls, then translates the resulting
-kernel.ExecutionResult / Session state back into outgoing messages. Has
-no dependency on FastAPI/websockets -- `handle_message` takes and returns
-plain message dataclasses, so it can be tested standalone and reused by
-any transport.
+messages into Kernel calls, then translates the resulting Session state
+back into outgoing messages. TODO.md #64 (collaboration rework)/
+PROPOSAL_pyscript_execution.md: the server never executes cell/test code
+any more (every Kernel method that used to run something now only
+validates and records state -- see each of their own docstrings), so
+there is no more kernel.ExecutionResult translation step here at all --
+every browser computes and shows its own execution results locally via
+pyodideKernel.ts. Has no dependency on FastAPI/websockets --
+`handle_message` takes and returns plain message dataclasses, so it can
+be tested standalone and reused by any transport.
 """
 
 from __future__ import annotations
@@ -14,9 +19,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from codeslides.deck import Deck
-from codeslides.kernel import ExecutionResult, Kernel
-from codeslides.output import resolve_output, wire_safe_value
+from codeslides.kernel import Kernel
 from codeslides.protocol import (
     AcceptCellState,
     AddCell,
@@ -26,7 +29,6 @@ from codeslides.protocol import (
     AddTitleSlide,
     CellAdded,
     CellAttributionChanged,
-    CellOutput,
     CellRemoved,
     CellRenamed,
     CellSourceChanged,
@@ -35,7 +37,6 @@ from codeslides.protocol import (
     CellStatePushed,
     CellStateRejected,
     CellStateWithdrawn,
-    CellStatus,
     ChatMessageReceived,
     ClientMessage,
     CloneSession,
@@ -431,136 +432,25 @@ def _effective_display_source(session: Session, cell) -> str:
     return display_source(override if override is not None else cell.source, hide_def=cell.hide_def)
 
 
-def _results_to_messages(session_id: str, results: dict[str, ExecutionResult]) -> list[ServerMessage]:
-    """Translate a Kernel run's per-cell ExecutionResults into the
-    cell_status/cell_output messages ARCHITECTURE.md section 5 defines.
-    `output.kind`/`output.data` carry the tagged output union from section
-    6, resolved from the cell's raw returned value (skipped for a cell
-    that errored -- there's no meaningful value to classify)."""
-    messages: list[ServerMessage] = []
-    for cell_id, result in results.items():
-        messages.append(CellStatus(session_id=session_id, cell_id=cell_id, status=result.status))
-        resolved = resolve_output(result.value) if result.status == "idle" else None
-        messages.append(
-            CellOutput(
-                session_id=session_id,
-                cell_id=cell_id,
-                output={
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                    "value": wire_safe_value(result.value),
-                    "kind": resolved.kind if resolved else None,
-                    "data": resolved.data if resolved else None,
-                },
-                error=result.error,
-            )
-        )
-    return messages
-
-
-def _element_output_messages(
-    session: Session, results: dict[str, ExecutionResult], deck: Deck
-) -> list[ServerMessage]:
-    """Emit element_output for viewer elements a re-run cell actually wrote
-    to via cs.image()/cs.iframe(), or via codeslides.turtle calls
-    (ARCHITECTURE.md section 3a/7) -- each write already names its target
-    element, so this is a direct translation, not a broadcast to every
-    viewer element on the cell (broadcasting was the placeholder behavior
-    this replaces, and it was wrong for any cell with more than one viewer
-    element).
-
-    `deck` is the CALLER's current, live view of the deck's structure
-    (almost always `registry.kernel.deck`) -- deliberately NOT
-    `session.deck`, which `Session`'s own docstring documents as a
-    snapshot frozen at Session-creation time. This matters here
-    specifically: a structural handler that adds/removes/reconfigures an
-    element (AddElement, SetElementConfig, etc.) calls
-    `Kernel.reload_deck` and THEN builds this very message list in the
-    same request/response cycle -- reading `session.deck` here would see
-    the element list from *before* that same request's own change, so
-    the "static src=/notes docstring without any write" fallback below
-    would silently never fire for a just-added element (confirmed
-    directly: after an AddElement call, `session.deck.cells[cell_id]
-    .elements` was still empty while `registry.kernel.deck.cells[cell_id]
-    .elements` already had the new element). This is a narrower, more
-    immediate case than the documented `session.deck` staleness (an
-    external CLI file-watcher reload during an already-open,
-    long-lived session, `Session`'s own docstring) -- there, a session's
-    stale view is expected to eventually reconnect; here, the very same
-    call that changed the deck must see its own change immediately.
-
-    `notes` and `tests` elements are handled separately: neither is
-    written to via a `cs.*` call, so both need a fallback that surfaces
-    their current `content` directly. `notes` is authored content --
-    the owning cell's own docstring (`Cell.docstring`, `deck.py`) -- that's
-    never "computed" at all; `tests`
-    (ARCHITECTURE.md section 3b) *is* computed, but by `_run_cells`
-    calling `kernel.run_tests` directly and storing the result straight
-    onto `ElementInstance.content` -- not through the `cs.execution_context`
-    write-collection path every other viewer output goes through -- so
-    without this fallback a freshly-run cell's test result would never
-    reach the browser at all.
-
-    An `image`/`iframe` element with a static `src=` and a cell body
-    that never calls `cs.image(...)`/`cs.iframe(...)` at all (e.g. an
-    image meant only to be uploaded once and displayed, no code driving
-    it) needs the exact same fallback: `session.py`'s
-    `seed_cell_instance` already seeds `ElementInstance.content` from
-    that `src=` at construction time, but that's pure Python state --
-    the browser only ever learns about content through an explicit
-    `ElementOutput` message, so without this, a freshly-created Session
-    (a page (re)load, or a `set_element_config` upload) would show "no
-    image yet" even though the Session's own state already has the
-    right content.
-
-    A cell's `turtle_canvas` needs a *forced* resend (not skipped just
-    because `result.element_writes` already includes it), but only when
-    the cell has a `tests` element: a test's own turtle drawing
-    (ARCHITECTURE.md section 3b) is written into that same canvas
-    element *after* `execute_cell` already captured
-    `result.element_writes` -- so on a cell with a test, the canvas's
-    final `content` may differ from what those writes captured (the
-    test may have overwritten the cell's own drawing, or the cell may
-    have had no turtle calls of its own at all), and a message built
-    from `element_writes` alone would silently show the browser stale
-    content. A turtle-drawing cell with no `tests` element is
-    unaffected -- `element_writes` alone is already correct there, so
-    this forced resend is skipped for it rather than duplicating an
-    identical message every run."""
-    messages: list[ServerMessage] = []
-    for cell_id, result in results.items():
-        cell = deck.cells.get(cell_id)
-        has_tests_element = cell is not None and any(e.kind == "tests" for e in cell.elements)
-        for write in result.element_writes:
-            if write.kind == "turtle" and has_tests_element:
-                continue  # forced resend below carries the post-test content instead
-            messages.append(
-                ElementOutput(
-                    session_id=session.session_id,
-                    cell_id=cell_id,
-                    element_id=write.element_name,
-                    content=write.content,
-                )
-            )
-
-        if cell is None:
-            continue
-        written_names = {w.element_name for w in result.element_writes}
-        for element in cell.elements:
-            is_static_content_fallback = (
-                element.kind in ("notes", "tests", "image", "iframe") and element.name not in written_names
-            )
-            is_forced_turtle_resend = element.kind == "turtle_canvas" and has_tests_element
-            if is_static_content_fallback or is_forced_turtle_resend:
-                messages.append(
-                    ElementOutput(
-                        session_id=session.session_id,
-                        cell_id=cell_id,
-                        element_id=element.name,
-                        content=session.instances[cell_id].elements[element.name].content,
-                    )
-                )
-    return messages
+# TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+# section 3+7: _results_to_messages/_element_output_messages (the
+# ExecutionResult -> cell_status/cell_output/element_output translation
+# ARCHITECTURE.md section 5/3a used to route every re-run result
+# through) are removed. Their last 2 real callers -- EditCell's own
+# handler (on_cell_edited) and SetElementValue's (on_element_changed)
+# -- always passed an empty results dict by the time this was removed:
+# both Kernel methods stopped executing anything server-side in an
+# earlier slice of this same rework (see each of their own
+# docstrings), and this rework's tests-element slice removed
+# SetTestSource's own separate call into a real execution path (the
+# only other place _element_output_messages' notes/tests fallback
+# branch could ever fire with real data). Flagged as a known follow-up
+# when that tests-element slice landed; this is that follow-up. Every
+# browser now learns a cell/element's output entirely client-side
+# (pyodideKernel.ts's runCellClientSide/runAllClientSide/
+# onElementChangedClientSide/runTestClientSide, wired into App.tsx) --
+# no server-side request shape ever needs to build one of these
+# messages again.
 
 
 # TODO.md #46e-ii: the only message types a "viewer" role connection may
@@ -885,7 +775,12 @@ def handle_message(
                     message="unknown cell", session_id=message.session_id, cell_id=message.cell_id
                 )
             ]
-        results = registry.kernel.on_cell_edited(message.cell_id, message.source, session)
+        # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        # section 3: on_cell_edited always returns {} now (see its own
+        # docstring) -- no more _results_to_messages/_element_output_messages
+        # tail translating a (now permanently empty) results dict into
+        # cell_status/cell_output/element_output messages.
+        registry.kernel.on_cell_edited(message.cell_id, message.source, session)
         # TODO.md #46b-i: on a shared document, every *other* connection
         # needs to learn the cell's new source, not just its re-run
         # output -- cell_status/cell_output alone say "this cell changed
@@ -902,17 +797,13 @@ def handle_message(
         # incoming source already matches the live doc), so this is
         # unconditional rather than needing a sender/peer split in
         # handle_message's contract.
-        return (
-            [
-                CellSourceChanged(
-                    session_id=message.session_id,
-                    cell_id=message.cell_id,
-                    source=message.source,
-                )
-            ]
-            + _results_to_messages(message.session_id, results)
-            + _element_output_messages(session, results, registry.kernel.deck)
-        )
+        return [
+            CellSourceChanged(
+                session_id=message.session_id,
+                cell_id=message.cell_id,
+                source=message.source,
+            )
+        ]
 
     if isinstance(message, PushCellState):
         session = registry.get(message.session_id)
@@ -1214,12 +1105,13 @@ def handle_message(
                     cell_id=message.cell_id,
                 )
             ]
-        results = registry.kernel.on_element_changed(
-            message.cell_id, message.element_id, message.value, session
-        )
-        return _results_to_messages(message.session_id, results) + _element_output_messages(
-            session, results, registry.kernel.deck
-        )
+        # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
+        # section 3: on_element_changed always returns {} now (see its
+        # own docstring) -- no more _results_to_messages/
+        # _element_output_messages tail; App.tsx's onElementChangedClientSide
+        # is what actually re-runs the affected cells client-side now.
+        registry.kernel.on_element_changed(message.cell_id, message.element_id, message.value, session)
+        return []
 
     if isinstance(message, SetUiState):
         session = registry.get(message.session_id)
