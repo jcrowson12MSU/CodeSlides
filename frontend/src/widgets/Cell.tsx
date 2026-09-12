@@ -963,13 +963,24 @@ export function Cell({
         <div className="cs-cell-code-and-output">
           <CodeEditor
             source={meta.source}
-            // TODO.md #65/#65-xi: Shift+Enter stages this edit into the
-            // local pending-actions list instead of immediately
-            // re-running/broadcasting, on a review_mode document --
-            // falls back to onRunCell if the caller didn't wire
-            // onStagePrimaryEdit even though reviewMode is set, rather
-            // than silently no-op'ing a keystroke.
-            onRunCell={reviewMode && onStagePrimaryEdit ? onStagePrimaryEdit : onRunCell}
+            // TODO.md #65/#65-xi (original): Shift+Enter used to stage
+            // this edit into the local pending-actions list INSTEAD OF
+            // running it, on a review_mode document -- meaning your own
+            // code never actually ran, or showed any output, until the
+            // push was accepted. Changed per direct user report/request:
+            // whether a change has been pushed/accepted must never
+            // affect whether YOUR OWN code runs and shows output --
+            // review/accept-gating is about what other people see, not
+            // about your own local execution. Shift+Enter now always
+            // calls onRunCell (the real client-side run,
+            // pyodideKernel.ts via App.tsx's handleRunCell) -- reviewMode
+            // staging (onStagePrimaryEdit, still needed so Push has a
+            // draft to send and the cell shows as dirty) happens
+            // alongside it, never instead of it.
+            onRunCell={(source) => {
+              onRunCell(source)
+              if (reviewMode && onStagePrimaryEdit) onStagePrimaryEdit(source)
+            }}
             onRunAll={onRunAll}
             readOnly={meta.instance === 'static' || viewerMode}
             highlightedLines={highlightedLines}
@@ -1052,11 +1063,16 @@ export function Cell({
           elementId={element.name}
           source={testSourceValues[element.name] ?? String(element.config.default ?? '')}
           result={isTestResult(content) ? content : null}
-          onChangeSource={
-            reviewMode && onStageTestEdit
-              ? (source) => onStageTestEdit(element.name, source)
-              : (source) => onChangeTestSource(element.name, source)
-          }
+          // Same "run always happens, staging happens alongside it (not
+          // instead of it) when in review mode" fix as the primary
+          // editor's own onRunCell above -- push/accept-gating must
+          // never affect whether YOUR OWN test box actually runs and
+          // shows a real pass/fail/output, only whether other people
+          // see the change.
+          onChangeSource={(source) => {
+            onChangeTestSource(element.name, source)
+            if (reviewMode && onStageTestEdit) onStageTestEdit(element.name, source)
+          }}
         />
       )
     }

@@ -1674,13 +1674,30 @@ function App() {
           },
         }))
       })
-    send({
-      type: 'set_test_source',
-      session_id: sessionId,
-      cell_id: cellId,
-      element_id: elementId,
-      source,
-    })
+    // Cell.tsx now always calls this (its own onChangeSource wiring),
+    // regardless of reviewMode -- your own test box must always
+    // actually run and show output, review/push-gating or not (direct
+    // user request: whether a change has been pushed/accepted must
+    // never affect whether YOUR OWN code runs). But set_test_source
+    // itself is still review_mode-gated server-side (ws_handler.py's
+    // SetTestSource handler rejects it outright there, same as
+    // edit_cell) -- sending it anyway on a review_mode document would
+    // surface a spurious "this document is in review mode" error on
+    // every single Shift+Enter, worse than doing nothing. Cell.tsx's
+    // own onStageTestEdit call (its onChangeSource wiring, alongside
+    // this one) already handles staging/persisting the edit for Push
+    // in that case -- this send is only for the non-review-mode "sync
+    // this edit to my own session_overrides for Save" role it always
+    // had.
+    if (!acceptGated) {
+      send({
+        type: 'set_test_source',
+        session_id: sessionId,
+        cell_id: cellId,
+        element_id: elementId,
+        source,
+      })
+    }
   }
 
   function handleToggleCollapse(cellId: string) {
