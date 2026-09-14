@@ -283,3 +283,17 @@ editing -- a checkout that's behind `origin/main` will happily let you
 edit an old version of `fonts.css`, and committing from it can silently
 revert someone else's already-merged changes to unrelated files in the
 same commit (this has already happened once, to this very section).
+
+
+
+To run class with the old, pre-push/review version:                                                                            
+  cd /Users/jic12/PycharmProjects/CodeSlides                                                                                     
+  git fetch origin                                                                                                               
+  git checkout pre-push-review                                                                                                   
+  This checks out the exact state of the project before push/review or chat existed — plain always-live collaborative editing, no
+  review step, no chat panel. You can run codeslides edit ... --collaborative from there exactly as you did before any of this   
+  session's work started.                                                                                                        
+                                                                                                                                 
+  To get back to the latest work (chat panel + fixed push/review):                                                               
+  git checkout main                                                                                                              
+  git pull             
