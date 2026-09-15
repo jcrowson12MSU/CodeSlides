@@ -153,6 +153,24 @@ export interface PyodideTestResult {
   turtleCommands: unknown[] | null
 }
 
+// run_test_with_breakpoints_b64's own result shape -- PyodideTestResult's
+// status vocabulary ('pass'/'fail'/'error', not PyodideDebugRunResult's
+// 'idle'/'error') plus PyodideDebugRunResult's own snapshots/truncated,
+// since a tests-element debug run is "the step-through debugger, but for
+// test source" -- see _debug_run_test's own docstring for why its
+// snapshots never include turtleCommands or a final value the way a
+// cell's own debug run does (a test has no single "return value", and
+// the debugger's own point here is inspecting the test's line-by-line
+// state, not its drawing).
+export interface PyodideTestDebugRunResult {
+  status: 'pass' | 'fail' | 'error'
+  message: string
+  stdout: string
+  stderr: string
+  snapshots: PyodideDebugSnapshot[]
+  truncated: boolean
+}
+
 // Minimal ambient shape for what this module actually calls on a
 // loaded Pyodide instance -- not a full @types/pyodide surface (the
 // full types package targets the npm-bundled runtime; this loads from
@@ -293,6 +311,22 @@ _namespace = {}
 _namespace["cs"] = cs
 _namespace["turtle"] = turtle
 
+# The exact key set of _namespace at this point -- before any cell or
+# test has ever run in this tab -- is the stable "not a test's own
+# variable" baseline _debug_run_test's own tracer filtering needs (see
+# _make_snapshot_tracer's own exclude_keys docstring for why this must
+# never be recomputed from _namespace's own CURRENT keys at debug-run
+# time: cs/turtle only ever get added here, once, at this exact line,
+# for the rest of this tab's whole lifetime -- capturing it now, and
+# only now, is what makes it stable across every later cell definition/
+# execution/test run this tab will ever do). Every cell name defined
+# after this point is also excluded (see run_test_with_breakpoints_b64),
+# but this constant only needs to cover what's seeded here, since a
+# cell's own name is never a key in _namespace until _define_one/
+# _execute_one actually runs it -- there's nothing else this baseline
+# needs to capture.
+_NAMESPACE_BASELINE_KEYS = frozenset(_namespace.keys())
+
 # Cell names that have been executed at least once in this tab's session
 # (i.e. are already bound into _namespace). Server-side, Kernel.on_cell_edited
 # can assume every upstream cell already has a value in session.namespace,
@@ -304,6 +338,21 @@ _namespace["turtle"] = turtle
 # detect and backfill missing upstream dependencies before running the
 # edited cell itself.
 _run_once = set()
+
+# Every name any cell's own return name/return a, b has EVER bound
+# into _namespace, across this tab's whole lifetime (_execute_one/
+# _debug_run_one both add to this at the same point they write the
+# value itself into _namespace) -- needed by _debug_run_test's own
+# exclude_keys construction: a cell's return-named value (e.g. base
+# from a setup cell returning base) is otherwise indistinguishable
+# from a name a TEST itself assigned, since both are just plain
+# top-level names in the one shared _namespace dict with no marker of
+# which cell (if any) produced them. Deliberately never removed once
+# added (even if that cell is later deleted/renamed) -- a stale
+# leftover name being over-excluded from a future test's own variable
+# snapshot is a far smaller cost than a genuinely different cell's
+# return value being wrongly shown as if the test had assigned it.
+_RETURN_NAMED_VALUES = set()
 
 # cell_name -> {element_name: value}. Only ever holds entries for input
 # elements (slider/button/text_input) that on_element_changed_b64 has
@@ -421,6 +470,7 @@ def _execute_one(cell_name, source, elements):
             value = fn(**kwargs)
         if len(return_names) == 1:
             _namespace[return_names[0]] = value
+            _RETURN_NAMED_VALUES.add(return_names[0])
         elif len(return_names) > 1:
             values = value if isinstance(value, tuple) else (value,)
             if len(values) != len(return_names):
@@ -429,6 +479,7 @@ def _execute_one(cell_name, source, elements):
                 )
             for name, item in zip(return_names, values):
                 _namespace[name] = item
+                _RETURN_NAMED_VALUES.add(name)
         # kernel.py's own execute_cell folds the turtle write into the
         # same writes list cs.image/cs.iframe populate (both go
         # through the identical "validate every element name, then
@@ -474,6 +525,94 @@ def _execute_one(cell_name, source, elements):
 
 _MAX_DEBUG_SNAPSHOTS = 500
 
+def _safe_repr(value):
+    """Shared by every debug-run tracer below: a repr() that itself
+    raises (a buggy __repr__) is caught per-variable so one bad object
+    can't blow up an entire snapshot."""
+    try:
+        return repr(value)
+    except Exception as exc:
+        return f"<repr() failed: {exc!r}>"
+
+def _make_snapshot_tracer(
+    filename, breakpoint_lines, stdout, snapshots, truncated, exclude_keys=frozenset(), exclude_dunders=False
+):
+    """Builds a sys.settrace-compatible tracer function recording a
+    snapshot (line, local variables as repr() strings, stdout captured
+    so far) each time execution reaches a line in breakpoint_lines
+    inside code compiled under filename -- shared by both a cell's own
+    debug run (_debug_run_one, filename is "<cell:NAME>") and a tests
+    element's own debug run (_debug_run_test, filename is "<test>") so
+    the two never drift in tracing/cap semantics. snapshots and
+    truncated are the caller's own mutable list/dict (not created
+    here) so the caller can still read them after sys.settrace(None) --
+    a tracer function itself has no return channel back to its caller
+    once installed.
+
+    Only traces frames whose code was compiled from the SAME source this
+    debug run is tracing (an exact filename match) -- a breakpoint line
+    number is only ever meaningful relative to that one source; a call
+    into cs.*/turtle.*/any other module's code (a different co_filename)
+    is never checked against breakpoint_lines, just allowed to run
+    unobserved. Returning the tracer itself (not None) from a 'call'
+    event is what makes sys.settrace keep tracing 'line' events inside a
+    nested function DEFINED in that same source (e.g. a helper def'd
+    inside a cell, or inside a test) -- without this, only the outermost
+    frame would ever be traced.
+
+    exclude_keys/exclude_dunders: a tests element's own source runs as
+    plain top-level statements via exec(compile(...), _namespace)
+    (_run_test/_debug_run_test), NOT inside a function call the way a
+    cell's own body does -- and at true module/top-level scope,
+    frame.f_locals IS frame.f_globals, so it would otherwise include
+    every pre-existing name in the shared _namespace (cs, turtle, every
+    other cell's own function, ...) in every single snapshot, not just
+    the test's own variables. _debug_run_test passes every current cell
+    name plus the permanently-seeded names as exclude_keys (see that
+    function's own docstring for why this must be a STABLE set, never
+    "whatever _namespace happens to contain right now" -- the latter
+    breaks on a second run of the same test text), so a snapshot only
+    ever shows names the test itself introduced or overwrote -- exactly
+    the variables someone stepping through THIS test actually wrote.
+    exclude_dunders additionally drops any key that looks like
+    "__name__" (exec's own implicit "__builtins__" injection into a
+    plain dict passed as globals, plus any other dunder a test's own
+    source might itself assign) -- a fixed prefix/suffix check rather
+    than one more name to list by hand in exclude_keys, since Python's
+    own set of implicitly-injected dunder globals isn't otherwise this
+    function's concern to track. A cell's own debug run passes neither
+    (both default to "nothing excluded"): tracing there happens inside a
+    real function call, where frame.f_locals is already correctly scoped
+    to just that function's own parameters/local variables, so no
+    filtering is needed."""
+
+    def _tracer(frame, event, arg):
+        if frame.f_code.co_filename != filename:
+            return None
+        if event == "call":
+            return _tracer
+        if event == "line" and not truncated["value"]:
+            line_no = frame.f_lineno
+            if line_no in breakpoint_lines:
+                if len(snapshots) >= _MAX_DEBUG_SNAPSHOTS:
+                    truncated["value"] = True
+                    return None
+                def _keep(k):
+                    if k in exclude_keys:
+                        return False
+                    if exclude_dunders and k.startswith("__") and k.endswith("__"):
+                        return False
+                    return True
+
+                snapshots.append({
+                    "line": line_no,
+                    "variables": {k: _safe_repr(v) for k, v in frame.f_locals.items() if _keep(k)},
+                    "stdoutSoFar": stdout.getvalue(),
+                })
+        return _tracer
+
+    return _tracer
+
 def _debug_run_one(cell_name, source, elements, breakpoint_lines):
     """Time-travel debugger run (step-through-via-arrows feature, not a
     live pause/resume debugger -- Pyodide's runPythonAsync can't suspend
@@ -518,42 +657,8 @@ def _debug_run_one(cell_name, source, elements, breakpoint_lines):
     turtle_element = _find_turtle_canvas(elements)
     snapshots = []
     truncated = {"value": False}
-
-    def _safe_repr(value):
-        try:
-            return repr(value)
-        except Exception as exc:
-            return f"<repr() failed: {exc!r}>"
-
     cell_filename = f"<cell:{cell_name}>"
-
-    def _tracer(frame, event, arg):
-        # Only trace frames whose code was compiled from THIS cell's own
-        # source -- a breakpoint line number is only ever meaningful
-        # relative to this cell's own text, so a call into cs.*/turtle.*/
-        # any other module's code (different co_filename) is never
-        # checked against breakpoint_lines, just allowed to run
-        # unobserved. Returning _tracer itself (not None) from a 'call'
-        # event is what makes sys.settrace keep tracing 'line' events
-        # inside a nested function DEFINED in this cell's own source
-        # (e.g. a helper def'd inside the cell) -- without this, only the
-        # outermost frame would ever be traced.
-        if frame.f_code.co_filename != cell_filename:
-            return None
-        if event == "call":
-            return _tracer
-        if event == "line" and not truncated["value"]:
-            line_no = frame.f_lineno
-            if line_no in breakpoint_lines:
-                if len(snapshots) >= _MAX_DEBUG_SNAPSHOTS:
-                    truncated["value"] = True
-                    return None
-                snapshots.append({
-                    "line": line_no,
-                    "variables": {k: _safe_repr(v) for k, v in frame.f_locals.items()},
-                    "stdoutSoFar": stdout.getvalue(),
-                })
-        return _tracer
+    _tracer = _make_snapshot_tracer(cell_filename, breakpoint_lines, stdout, snapshots, truncated)
 
     try:
         return_names = _return_names_for(source)
@@ -575,6 +680,7 @@ def _debug_run_one(cell_name, source, elements, breakpoint_lines):
                 sys.settrace(None)
         if len(return_names) == 1:
             _namespace[return_names[0]] = value
+            _RETURN_NAMED_VALUES.add(return_names[0])
         elif len(return_names) > 1:
             values = value if isinstance(value, tuple) else (value,)
             if len(values) != len(return_names):
@@ -583,6 +689,7 @@ def _debug_run_one(cell_name, source, elements, breakpoint_lines):
                 )
             for name, item in zip(return_names, values):
                 _namespace[name] = item
+                _RETURN_NAMED_VALUES.add(name)
         if turtle_commands and turtle_element is not None:
             writes.append(cs.ElementWrite(element_name=turtle_element, kind="turtle", content=turtle_commands))
         element_names = {e.name for e in elements}
@@ -787,6 +894,160 @@ def run_test_b64(cell_name_b64, test_source_b64, cells_json_b64):
     if cell_name not in _namespace:
         _define_one(cell_name, cell.source)
     return json.dumps(_run_test(test_source, cell_name, cell.elements))
+
+def _debug_run_test(test_source, cell_name, elements, breakpoint_lines, all_cell_names):
+    """The step-through debugger's "Run with breakpoints" action, for a
+    tests element's own editor (TestsElementWidget) -- same time-travel
+    "record snapshots on one uninterrupted run, scrub through them after
+    the fact" shape as _debug_run_one, sharing its exact tracer/cap
+    semantics via _make_snapshot_tracer, but wrapping _run_test's own
+    "exec the test source as top-level statements" shape instead of a
+    cell's "call the compiled function" shape -- there is no function
+    call to wrap here, so breakpoint lines are simply lines of
+    test_source itself, traced under the SAME "<test>" filename
+    _run_test already compiles under (kept in sync with that function
+    deliberately: any change to how _run_test executes test_source --
+    the input() shim, the turtle context -- must be mirrored here too,
+    or a debug run's snapshots would silently stop reflecting what an
+    ordinary test run actually does).
+
+    Deliberately mirrors _run_test's own "run against the SAME shared
+    _namespace _execute_one already exec'd the owning cell's function
+    into" behavior -- so a test calling the cell's own function by name
+    can still be traced through that function's body too (the tracer's
+    own 'call' handling covers this: the cell's function was compiled
+    under "<cell:NAME>", a different filename than "<test>", so its own
+    lines are never captured as snapshots even though execution passes
+    through them -- a debug run here is scoped to the TEST's own lines,
+    not the cell body it exercises; debugging the cell body itself is
+    what Cell.tsx's own "Run with breakpoints" is for).
+
+    all_cell_names (every cell in the current deck, not just this one)
+    plus _NAMESPACE_BASELINE_KEYS (cs/turtle) plus _RETURN_NAMED_VALUES
+    (every name any cell's own return has EVER bound, across every
+    cell, this whole tab's lifetime) plus "input" together form the
+    exclude_keys passed to _make_snapshot_tracer -- deliberately NOT
+    "whatever _namespace already contains right before this call", which
+    would silently under-exclude on a SECOND debug/ordinary run of the
+    same (or textually similar) test: this call's own test_source is
+    itself exec'd into the shared, persistent _namespace, so any name it
+    assigned on a PRIOR run (e.g. this test's own "total"/"i" loop
+    variables) is already sitting in _namespace by the time this run's
+    own baseline would be captured, and would be wrongly treated as
+    "pre-existing, not the test's own" forever after -- reproduced by
+    running the exact same test text twice in a row and watching its
+    second run's snapshots come back with an empty variables dict.
+
+    Cell names alone aren't enough either: a cell's own RETURN-named
+    value (e.g. base from a setup cell returning base) is a
+    DIFFERENT name from the cell itself, sitting in _namespace as its
+    own plain top-level binding with nothing marking which cell (if any)
+    produced it -- reproduced by testing a cell that reads an upstream
+    cell's return value (e.g. calling live_demo(3) inside a loop, where
+    "base" is upstream of live_demo) and watching that upstream value
+    show up in every snapshot's own variables as if the test itself had
+    assigned it. _RETURN_NAMED_VALUES (updated by _execute_one/
+    _debug_run_one at the exact point each one writes a return-named
+    value into _namespace) is what closes this gap. All four pieces are
+    stable regardless of run history, so computing exclude_keys from
+    those (never from _namespace's own current key set) is correct on
+    every run, first or hundredth alike."""
+    turtle_element = _find_turtle_canvas(elements)
+    snapshots = []
+    truncated = {"value": False}
+    result = {
+        "status": "pass",
+        "message": "",
+        "stdout": "",
+        "stderr": "",
+        "snapshots": snapshots,
+        "truncated": False,
+    }
+    if not test_source.strip():
+        return result
+
+    stdout, stderr = io.StringIO(), io.StringIO()
+    _NO_PRIOR_INPUT = object()
+    prior_input = _namespace.get("input", _NO_PRIOR_INPUT)
+    element_values = _element_values.get(cell_name, {})
+    _namespace["input"] = _make_input_shim(cell_name, elements, element_values)
+    # See this function's own docstring for why this is every cell name
+    # plus the permanently-seeded names, never _namespace's own current
+    # key set. exec(compile(...), _namespace) below also implicitly
+    # injects "__builtins__" into _namespace itself (a plain dict given
+    # as exec's globals gets one added automatically if not already
+    # present, same as any top-level module's own __builtins__) --
+    # filtered here as "any dunder name" rather than one more name to
+    # list by hand, since Python's own set of implicitly-injected dunder
+    # globals isn't otherwise this function's concern to track.
+    exclude_keys = frozenset(all_cell_names) | _NAMESPACE_BASELINE_KEYS | _RETURN_NAMED_VALUES | {"input"}
+    _tracer = _make_snapshot_tracer(
+        "<test>",
+        breakpoint_lines,
+        stdout,
+        snapshots,
+        truncated,
+        exclude_keys=exclude_keys,
+        exclude_dunders=True,
+    )
+    try:
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(contextlib.redirect_stdout(stdout))
+            stack.enter_context(contextlib.redirect_stderr(stderr))
+            if turtle_element is not None:
+                stack.enter_context(turtle.execution_context())
+            if breakpoint_lines:
+                sys.settrace(_tracer)
+            try:
+                exec(compile(test_source, "<test>", "exec"), _namespace)
+            finally:
+                sys.settrace(None)
+    except AssertionError as exc:
+        result["status"] = "fail"
+        result["message"] = str(exc) or "assertion failed"
+    except Exception:
+        result["status"] = "error"
+        result["message"] = traceback.format_exc()
+    finally:
+        if prior_input is _NO_PRIOR_INPUT:
+            _namespace.pop("input", None)
+        else:
+            _namespace["input"] = prior_input
+
+    result["stdout"] = stdout.getvalue()
+    result["stderr"] = stderr.getvalue()
+    result["truncated"] = truncated["value"]
+    return result
+
+def run_test_with_breakpoints_b64(
+    cell_name_b64, test_source_b64, cells_json_b64, breakpoint_lines_json_b64, all_cell_names_json_b64
+):
+    """TestsElementWidget's own "Run with breakpoints" entry point --
+    same shape as run_cell_with_breakpoints_b64, but for a tests
+    element's own source rather than the owning cell's. Defines (never
+    executes) the owning cell first if this tab hasn't touched it yet,
+    exactly like run_test_b64 already does, so a test targeting a cell
+    the user never directly ran doesn't NameError against an empty
+    _namespace.
+
+    all_cell_names_json_b64 decodes to a JSON array of EVERY cell name in
+    the current deck -- deliberately NOT derived from cells_json_b64/
+    deck.cells.keys() here, since cells_json_b64 only ever contains the
+    ONE owning cell (TestsElementWidget's own cellsInput, built from just
+    cellSource/cellElements -- there is no persistent client-side Deck
+    object to read the full cell list from some other way, see this
+    file's own installModules/getPyodide docstrings). Passed straight
+    through to _debug_run_test's own exclude_keys construction -- see
+    its docstring for why this must be the deck's real, full cell list."""
+    cell_name = _decode(cell_name_b64)
+    test_source = _decode(test_source_b64)
+    deck = _build_deck(cells_json_b64)
+    cell = deck.cells[cell_name]
+    breakpoint_lines = set(json.loads(_decode(breakpoint_lines_json_b64)))
+    all_cell_names = json.loads(_decode(all_cell_names_json_b64))
+    if cell_name not in _namespace:
+        _define_one(cell_name, cell.source)
+    return json.dumps(_debug_run_test(test_source, cell_name, cell.elements, breakpoint_lines, all_cell_names))
 
 def _find_tests_element(elements):
     """kernel.py's own _find_tests_element, unchanged: the cell's one
@@ -1188,4 +1449,34 @@ export async function runTestClientSide(
   const call = `run_test_b64(${JSON.stringify(toBase64(cellName))}, ${JSON.stringify(toBase64(testSource))}, ${JSON.stringify(cellsB64)})`
   const resultJson = await pyodide.runPythonAsync(call)
   return JSON.parse(resultJson as string) as PyodideTestResult
+}
+
+// The step-through debugger's "Run with breakpoints" action, for a
+// tests element's own editor (TestsElementWidget) -- same shape as
+// runCellWithBreakpointsClientSide, but targets a tests element's own
+// source/breakpoints rather than the owning cell's. Defines (never
+// executes) the owning cell first if this tab hasn't touched it yet,
+// same precondition runTestClientSide already has.
+export async function runTestWithBreakpointsClientSide(
+  cellName: string,
+  testSource: string,
+  allCells: Record<string, PyodideCellInput>,
+  breakpointLines: ReadonlySet<number>,
+  // Every cell name in the deck (TestsElementWidget's own allCellNames
+  // prop) -- see run_test_with_breakpoints_b64's own docstring for why
+  // this must be the DECK's full cell list, never just Object.keys(allCells)
+  // (allCells here only ever contains the ONE owning cell, not the whole
+  // deck -- see this file's own installModules/getPyodide docstrings for
+  // why there's no persistent client-side Deck object to read the full
+  // list from some other way).
+  allCellNames: string[],
+): Promise<PyodideTestDebugRunResult> {
+  const pyodide = await getPyodide()
+  await ensureMatplotlibIfNeeded(pyodide, allCells)
+  const cellsB64 = toBase64(JSON.stringify(allCells))
+  const breakpointLinesB64 = toBase64(JSON.stringify([...breakpointLines]))
+  const allCellNamesB64 = toBase64(JSON.stringify(allCellNames))
+  const call = `run_test_with_breakpoints_b64(${JSON.stringify(toBase64(cellName))}, ${JSON.stringify(toBase64(testSource))}, ${JSON.stringify(cellsB64)}, ${JSON.stringify(breakpointLinesB64)}, ${JSON.stringify(allCellNamesB64)})`
+  const resultJson = await pyodide.runPythonAsync(call)
+  return JSON.parse(resultJson as string) as PyodideTestDebugRunResult
 }

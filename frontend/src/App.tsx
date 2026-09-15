@@ -81,6 +81,15 @@ function roleFromUrl(): 'editor' | 'viewer' {
 // and how.
 function App() {
   const [deck, setDeck] = useState<DeckSummary | null>(null)
+  // Every cell name in the current deck -- Cell.tsx's own allCellNames
+  // prop, threaded through purely so TestsElementWidget's debug run can
+  // correctly exclude every OTHER cell's own function/return-named
+  // value from a test's own variable-snapshot filtering (see Cell.tsx's
+  // own allCellNames docstring and pyodideKernel.ts's _debug_run_test
+  // for the full story). Memoized so a cell that never adds/removes/
+  // renames doesn't force every other cell's own props to a new array
+  // identity on every unrelated render.
+  const allCellNames = useMemo(() => (deck ? Object.keys(deck.cells) : []), [deck])
   // TODO.md #64/PROPOSAL_pyscript_execution.md: cold-start loading
   // state -- Pyodide's first-ever load on a page (the CDN script fetch,
   // loadPyodide() itself, and writing/importing the codeslides package
@@ -2088,6 +2097,7 @@ function App() {
               key={cellId}
               cellId={cellId}
               meta={meta}
+              allCellNames={allCellNames}
               lineOffset={cellLineOffsets[cellId] ?? 0}
               onLineCountChange={(count) => handleLineCountChange(cellId, count)}
               state={mergedCellState[cellId]}
