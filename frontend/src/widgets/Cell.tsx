@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { CellState } from '../deckState'
 import { CODE_TAB_ID, INPUTS_TAB_ID, type CellLayout, type Quadrant } from '../protocol'
+import { runCellWithBreakpointsClientSide, type PyodideDebugRunResult } from '../pyodideKernel'
 import { CellOutputView } from './CellOutputView'
 import { hasCellOutput } from './cellOutput'
 import { CodeEditor, type RemotePeerCursor } from './CodeEditor'
@@ -657,6 +658,88 @@ export function Cell({
     })
   }, [meta.source])
 
+  // Step-through debugger (breakpoints): a plain toggle Set, same shape
+  // as highlightedLines above but semantically unrelated -- a breakpoint
+  // is a run-time instruction to the Pyodide runner (which lines to
+  // snapshot on), not a presenter-only display annotation. Local/
+  // ephemeral, same rationale as highlightedLines (no server concept of
+  // a breakpoint to seed from or sync to peers).
+  const [breakpointLines, setBreakpointLines] = useState<ReadonlySet<number>>(() => new Set())
+  const toggleBreakpoint = useCallback((line: number) => {
+    setBreakpointLines((prev) => {
+      const next = new Set(prev)
+      if (next.has(line)) next.delete(line)
+      else next.add(line)
+      return next
+    })
+  }, [])
+  // Same pruning rationale as the highlightedLines effect above -- a
+  // breakpoint on a line number that no longer exists (source shrank)
+  // must be dropped at the source of truth.
+  useEffect(() => {
+    const lineCount = meta.source.split('\n').length
+    setBreakpointLines((prev) => {
+      if (![...prev].some((line) => line > lineCount)) return prev
+      return new Set([...prev].filter((line) => line <= lineCount))
+    })
+  }, [meta.source])
+
+  // The debug run's own recorded snapshots (null until "Run with
+  // breakpoints" has been used at least once this mount) plus which one
+  // the step arrows currently point at, and a running/error status
+  // distinct from the cell's own ordinary run status (state?.status) --
+  // a debug run is a separate, on-demand action, not part of the
+  // ordinary Shift+Enter execution flow, so it needs its own status
+  // rather than overloading `state`.
+  const [debugResult, setDebugResult] = useState<PyodideDebugRunResult | null>(null)
+  const [debugStepIndex, setDebugStepIndex] = useState(0)
+  const [debugRunning, setDebugRunning] = useState(false)
+  const [debugError, setDebugError] = useState<string | null>(null)
+
+  // This app's client-side-only execution model never writes a local
+  // edit back into deck.cells[cellId].source/meta.source at all (App.tsx's
+  // own mergedCellState comment: "deck.cells[cellId].source only updates
+  // via server messages", i.e. a collaborative peer's edit, never your
+  // own -- see PROPOSAL_pyscript_execution.md section 2.1) -- meta.source
+  // only ever reflects what GET /api/deck returned at load time. So
+  // runWithBreakpoints (below) can't read meta.source for what to debug;
+  // it needs the actual text last committed via Shift+Enter, which is
+  // exactly what CodeEditor's own onRunCell callback already receives as
+  // its `source` argument on every run. Seeded from meta.executable_source
+  // (never meta.source -- see CellMeta's own executable_source
+  // docstring: meta.source is display-only, def-line-free too for a
+  // hide_def=True cell, and isn't standalone-compilable) so a cell
+  // debugged before its first Shift+Enter still debugs the
+  // originally-loaded, real code.
+  const latestRunSourceRef = useRef(meta.executable_source)
+  // meta.executable_source itself can still change out from under this
+  // ref -- a collaborative peer's own edit, or a fresh deck reload -- in
+  // which case that external value must win over whatever this tab last
+  // ran locally (the same "another Session's edit, or the initial load"
+  // case CodeEditor's own source-sync effect handles for the visible
+  // editor). Runs after every render, not gated to a dependency array,
+  // since it must apply on EVERY change including ones that happen to
+  // match what's already in the ref (a no-op assignment is harmless
+  // either way).
+  useEffect(() => {
+    latestRunSourceRef.current = meta.executable_source
+  }, [meta.executable_source])
+
+  const runWithBreakpoints = useCallback(() => {
+    setDebugRunning(true)
+    setDebugError(null)
+    const cellsInput = { [cellId]: { source: latestRunSourceRef.current, elements: meta.elements } }
+    runCellWithBreakpointsClientSide(cellId, cellsInput, breakpointLines)
+      .then((result) => {
+        setDebugResult(result)
+        setDebugStepIndex(0)
+      })
+      .catch((err: unknown) => {
+        setDebugError(err instanceof Error ? err.message : String(err))
+      })
+      .finally(() => setDebugRunning(false))
+  }, [cellId, meta.elements, breakpointLines])
+
   // The left column's own top/bottom split -- declared here (not next to
   // startLeftPanelResizing/stopLeftPanelResizing further down, where
   // it's otherwise used) so `layoutRef` below can close over it;
@@ -972,6 +1055,85 @@ export function Cell({
           )}
         </>
       )
+      // Step-through debugger panel: only takes up space once there's
+      // something to debug (at least one breakpoint set) or a previous
+      // debug run's results are still showing -- a cell nobody is
+      // debugging pays nothing extra in its layout, same "additive
+      // feature" rule the presenter-highlight feature already follows.
+      const debuggerPanel =
+        !collapsed && (breakpointLines.size > 0 || debugResult || debugError) ? (
+          <div className="cs-cell-debugger">
+            <div className="cs-cell-debugger-controls">
+              <button
+                type="button"
+                onClick={runWithBreakpoints}
+                disabled={debugRunning || breakpointLines.size === 0}
+                title={
+                  breakpointLines.size === 0
+                    ? 'Click a line number in the gutter to set a breakpoint first'
+                    : undefined
+                }
+              >
+                {debugRunning ? 'Running…' : 'Run with breakpoints'}
+              </button>
+              {debugResult && debugResult.snapshots.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setDebugStepIndex((i) => Math.max(0, i - 1))}
+                    disabled={debugStepIndex === 0}
+                    aria-label="Step back"
+                  >
+                    ◀
+                  </button>
+                  <span className="cs-cell-debugger-step-counter">
+                    step {debugStepIndex + 1} / {debugResult.snapshots.length}
+                    {' — line '}
+                    {debugResult.snapshots[debugStepIndex].line + lineOffset}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setDebugStepIndex((i) => Math.min(debugResult.snapshots.length - 1, i + 1))}
+                    disabled={debugStepIndex === debugResult.snapshots.length - 1}
+                    aria-label="Step forward"
+                  >
+                    ▶
+                  </button>
+                </>
+              )}
+            </div>
+            {debugError && <pre className="cs-cell-error">{debugError}</pre>}
+            {debugResult?.truncated && (
+              <p className="cs-cell-debugger-warning">
+                Stopped recording after 500 breakpoint hits (the program still ran to completion) —
+                narrow down which line you break on to see the rest.
+              </p>
+            )}
+            {debugResult && debugResult.status === 'error' && (
+              <pre className="cs-cell-error">{debugResult.error}</pre>
+            )}
+            {debugResult && debugResult.snapshots.length === 0 && debugResult.status === 'idle' && (
+              <p className="cs-cell-debugger-warning">Ran to completion without hitting any breakpoint.</p>
+            )}
+            {debugResult && debugResult.snapshots.length > 0 && (
+              <div className="cs-cell-debugger-snapshot">
+                <table className="cs-cell-debugger-variables">
+                  <tbody>
+                    {Object.entries(debugResult.snapshots[debugStepIndex].variables).map(([name, value]) => (
+                      <tr key={name}>
+                        <td className="cs-cell-debugger-var-name">{name}</td>
+                        <td className="cs-cell-debugger-var-value">{value}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <pre className="cs-cell-output cs-cell-debugger-output">
+                  {debugResult.snapshots[debugStepIndex].stdoutSoFar || '(no output yet)'}
+                </pre>
+              </div>
+            )}
+          </div>
+        ) : null
       const codeEditor = (
         <div className="cs-cell-code-and-output">
           <CodeEditor
@@ -991,6 +1153,26 @@ export function Cell({
             // draft to send and the cell shows as dirty) happens
             // alongside it, never instead of it.
             onRunCell={(source) => {
+              // Mirrors App.tsx's own currentCellInputs hide_def
+              // reattachment exactly: for a hide_def=True cell, this
+              // callback's `source` is the SAME display-only, def-line-
+              // free body meta.source/the editor always shows (the code
+              // editor never lets the author see/edit the def line at
+              // all for such a cell) -- not standalone-compilable on its
+              // own. Reattach the cell's real def line (from its own
+              // current executable_source, which always starts with
+              // it), re-indenting the dedented body one level to sit
+              // back under it, exactly serialization.reattach_decorator's
+              // own hide_def branch. A non-hide_def cell's `source`
+              // already has its own def line and correct indentation.
+              latestRunSourceRef.current = meta.hide_def
+                ? meta.executable_source.split('\n')[0] +
+                  '\n' +
+                  source
+                    .split('\n')
+                    .map((line) => (line ? `    ${line}` : line))
+                    .join('\n')
+                : source
               onRunCell(source)
               if (reviewMode && onStagePrimaryEdit) onStagePrimaryEdit(source)
             }}
@@ -998,6 +1180,9 @@ export function Cell({
             readOnly={meta.instance === 'static' || viewerMode}
             highlightedLines={highlightedLines}
             onToggleLineHighlight={toggleLineHighlight}
+            breakpointLines={breakpointLines}
+            onToggleBreakpoint={toggleBreakpoint}
+            stepLine={debugResult && debugResult.snapshots.length > 0 ? debugResult.snapshots[debugStepIndex].line : null}
             lineOffset={lineOffset}
             onLineCountChange={onLineCountChange}
             cellId={cellId}
@@ -1005,6 +1190,7 @@ export function Cell({
             onCursorChange={onCursorChange}
             remotePeers={remotePeers}
           />
+          {debuggerPanel}
           {outputBelowEditor}
         </div>
       )

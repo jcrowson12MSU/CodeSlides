@@ -45,6 +45,24 @@ export interface CodeEditorProps {
   // means -- it just reports the raw click.
   highlightedLines?: ReadonlySet<number>
   onToggleLineHighlight?: (line: number, shiftKey: boolean) => void
+  // 1-indexed line numbers with a breakpoint set (step-through debugger
+  // feature), and a toggle callback fired on a gutter click -- a
+  // separate gutter/state field from highlightedLines above (that one
+  // is a presenter-only, purely visual "point at this line" annotation
+  // with no run-time meaning; a breakpoint controls the debug-run
+  // snapshot capture instead). Optional/additive, same pay-nothing-
+  // when-omitted shape as the highlight props.
+  breakpointLines?: ReadonlySet<number>
+  onToggleBreakpoint?: (line: number) => void
+  // 1-indexed line the step-through debugger's arrows currently point at
+  // (Cell.tsx's own debugStepIndex into a recorded snapshot list), or
+  // null/omitted when there's no debug run in progress -- a single-line
+  // marker, own CSS class (cs-step-line-highlight, distinct from both
+  // cs-line-highlight and the breakpoint gutter dot), so a presenter's
+  // manual highlight and the debugger's own "you are here" marker never
+  // visually collide even if both happen to be active on the same cell
+  // at once.
+  stepLine?: number | null
   // How many lines precede this cell's own source, in deck order -- so
   // this editor's displayed line numbers continue where the previous
   // cell's left off (e.g. a 15-line cell followed by one starting at
@@ -147,6 +165,31 @@ const highlightField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 })
 
+// Step-through debugger's single "you are here" line marker -- same
+// StateEffect+StateField+DecorationSet shape as setHighlightedLines/
+// highlightField above, but holding at most one line (or none) rather
+// than a Set, and its own CSS class so it never visually collides with
+// the presenter highlight feature.
+const setStepLine = StateEffect.define<number | null>()
+
+const stepLineMark = Decoration.line({ attributes: { class: 'cs-step-line-highlight' } })
+
+function buildStepLineDecoration(state: EditorState, line: number | null): DecorationSet {
+  if (line === null || line < 1 || line > state.doc.lines) return Decoration.none
+  return Decoration.set([stepLineMark.range(state.doc.line(line).from)])
+}
+
+const stepLineField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(decorations, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setStepLine)) return buildStepLineDecoration(tr.state, effect.value)
+    }
+    return decorations.map(tr.changes)
+  },
+  provide: (field) => EditorView.decorations.from(field),
+})
+
 // TODO.md #46d-iv: a remote peer's cursor -- a thin colored vertical bar
 // at their reported position, with their name shown only on hover (a
 // `title`-less approach: CSS ::after content from a data- attribute, not
@@ -242,6 +285,34 @@ class HighlightGutterMarker extends GutterMarker {
   }
 }
 const highlightGutterMarker = new HighlightGutterMarker()
+
+// Same one-instance-per-gutter shape as HighlightGutterMarker above, for
+// the breakpoint gutter's own red-dot marker.
+class BreakpointGutterMarker extends GutterMarker {
+  toDOM() {
+    const el = document.createElement('div')
+    el.className = 'cs-breakpoint-marker'
+    return el
+  }
+}
+const breakpointGutterMarker = new BreakpointGutterMarker()
+
+// Breakpoint line set, tracked the same StateEffect+StateField shape as
+// setHighlightedLines/highlightField above, but kept as a plain line-number
+// Set (not a DecorationSet) -- a breakpoint has no text decoration of its
+// own, only a gutter marker (lineMarker reads this field directly below),
+// so there's nothing to build/re-map through document edits the way a line
+// decoration needs.
+const setBreakpointLines = StateEffect.define<ReadonlySet<number>>()
+const breakpointField = StateField.define<ReadonlySet<number>>({
+  create: () => new Set(),
+  update(lines, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setBreakpointLines)) return effect.value
+    }
+    return lines
+  },
+})
 
 // Reactive line-offset for lineNumbers()'s formatNumber (below) -- a
 // StateField (not a value captured once when the mount effect's
@@ -340,6 +411,9 @@ export function CodeEditor({
   readOnly = false,
   highlightedLines,
   onToggleLineHighlight,
+  breakpointLines,
+  onToggleBreakpoint,
+  stepLine,
   lineOffset = 0,
   onLineCountChange,
   cellId,
@@ -354,6 +428,7 @@ export function CodeEditor({
   const onRunCellRef = useRef(onRunCell)
   const onRunAllRef = useRef(onRunAll)
   const onToggleLineHighlightRef = useRef(onToggleLineHighlight)
+  const onToggleBreakpointRef = useRef(onToggleBreakpoint)
   const onLineCountChangeRef = useRef(onLineCountChange)
   const onFocusChangeRef = useRef(onFocusChange)
   const onCursorChangeRef = useRef(onCursorChange)
@@ -368,9 +443,20 @@ export function CodeEditor({
   // after the first -- doesn't flash at 0 for a frame before the sync
   // effect further down catches up).
   const lineOffsetRef = useRef(lineOffset)
+  // Read once by breakpointField's init() in the mount effect below, same
+  // "ref for mount-time initial value" precedent as remotePeersRef/
+  // lineOffsetRef above.
+  const breakpointLinesRef = useRef(breakpointLines)
+  breakpointLinesRef.current = breakpointLines
+  // Read once by stepLineField.init() in the mount effect below, same
+  // "ref for mount-time initial value" precedent as breakpointLinesRef
+  // just above.
+  const stepLineRef = useRef(stepLine)
+  stepLineRef.current = stepLine
   onRunCellRef.current = onRunCell
   onRunAllRef.current = onRunAll
   onToggleLineHighlightRef.current = onToggleLineHighlight
+  onToggleBreakpointRef.current = onToggleBreakpoint
   onLineCountChangeRef.current = onLineCountChange
   onFocusChangeRef.current = onFocusChange
   onCursorChangeRef.current = onCursorChange
@@ -448,6 +534,7 @@ export function CodeEditor({
       highlightActiveLine(),
       highlightActiveLineGutter(),
       highlightField,
+      stepLineField.init((state) => buildStepLineDecoration(state, stepLineRef.current ?? null)),
       // A dedicated gutter (separate from lineNumbers()/foldGutter()) for
       // the highlight-toggle click target -- keeps click handling scoped
       // to this one gutter's DOM rather than intercepting clicks meant
@@ -466,6 +553,28 @@ export function CodeEditor({
           click: (view, line, event) => {
             const lineNumber = view.state.doc.lineAt(line.from).number
             onToggleLineHighlightRef.current?.(lineNumber, (event as MouseEvent).shiftKey)
+            return true
+          },
+        },
+      }),
+      breakpointField.init(() => breakpointLinesRef.current ?? new Set()),
+      // A third gutter, own click target, for the step-through debugger's
+      // breakpoints -- deliberately separate from both the line-number
+      // gutter and the presenter highlight gutter above: a breakpoint is a
+      // run-time instruction to the Pyodide runner, not a display-only
+      // annotation, and keeping it in its own gutter/click-handler avoids
+      // a click meant for one feature accidentally toggling the other.
+      gutter({
+        class: 'cs-breakpoint-gutter',
+        lineMarker: (view, line) => {
+          const lineNumber = view.state.doc.lineAt(line.from).number
+          const active = view.state.field(breakpointField, false)
+          return active?.has(lineNumber) ? breakpointGutterMarker : null
+        },
+        domEventHandlers: {
+          click: (view, line) => {
+            const lineNumber = view.state.doc.lineAt(line.from).number
+            onToggleBreakpointRef.current?.(lineNumber)
             return true
           },
         },
@@ -620,6 +729,22 @@ export function CodeEditor({
     if (!view) return
     view.dispatch({ effects: setHighlightedLines.of(highlightedLines ?? new Set()) })
   }, [highlightedLines])
+
+  // Same dispatch-on-change shape as the highlight sync effect above, for
+  // breakpointField.
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({ effects: setBreakpointLines.of(breakpointLines ?? new Set()) })
+  }, [breakpointLines])
+
+  // Same dispatch-on-change shape as the two sync effects above, for
+  // stepLineField.
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({ effects: setStepLine.of(stepLine ?? null) })
+  }, [stepLine])
 
   // Same dispatch-on-change shape as the highlight sync effect above --
   // a preceding cell in the deck gaining/losing lines (as the user

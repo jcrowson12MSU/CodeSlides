@@ -533,6 +533,33 @@ body.cs-resizing {
   background-color: rgba(255, 212, 59, 0.7);
 }
 
+/* Step-through debugger's breakpoint gutter (click to toggle) --
+   CodeEditor.tsx's breakpointField/gutter(). A red dot, the universal
+   IDE-breakpoint convention, in its own gutter so a click here never
+   collides with the presenter highlight gutter's own click handler. */
+.cs-code-editor .cs-breakpoint-gutter {
+  width: 0.9rem;
+  cursor: pointer;
+}
+
+.cs-code-editor .cs-breakpoint-gutter .cs-breakpoint-marker {
+  width: 0.55rem;
+  height: 0.55rem;
+  margin: 0.35em auto 0;
+  border-radius: 50%;
+  background-color: #e03131;
+}
+
+/* Step-through debugger's own "you are here" current-snapshot line
+   marker (CodeEditor.tsx's stepLineField) -- a distinct blue, never the
+   presenter highlight's yellow, so the two features stay visually
+   unambiguous even when both are active on the same cell at once. */
+.cs-code-editor .cs-step-line-highlight {
+  background-color: rgba(51, 133, 255, 0.25);
+  outline: 1px solid rgba(51, 133, 255, 0.6);
+  outline-offset: -1px;
+}
+
 /* TODO.md #46d-iv: a remote peer's cursor -- a thin colored vertical bar
    (CodeEditor.tsx's RemoteCursorWidget), color set per-instance via the
    --cs-remote-cursor-color custom property so one CSS rule covers every
@@ -951,6 +978,80 @@ body.cs-resizing-vertical {
 
 .cs-cell-output-dataframe th {
   background: #eee;
+}
+
+/* Step-through debugger panel (Cell.tsx's debuggerPanel) -- "time-travel"
+   scrubbing through recorded breakpoint-hit snapshots, not a live pause/
+   resume debugger (see pyodideKernel.ts's _debug_run_one docstring).
+   Matches .cs-cell-output/.cs-cell-error's own margin/font-size/
+   border-radius conventions so it reads as one family of "stuff that
+   shows up below the editor", not a bolted-on separate widget. */
+.cs-cell-debugger {
+  margin: 0.35rem 0.75rem 0;
+  padding: 0.5rem;
+  background: #f0f4ff;
+  border: 1px solid #d3ddf7;
+  border-radius: 4px;
+  font-size: var(--cs-font-base);
+}
+
+.cs-cell-debugger-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.cs-cell-debugger-step-counter {
+  font-size: var(--cs-font-sm);
+  color: #333;
+}
+
+.cs-cell-debugger-warning {
+  margin: 0.5rem 0 0;
+  font-size: var(--cs-font-sm);
+  color: #7a5b00;
+}
+
+.cs-cell-debugger .cs-cell-error {
+  margin: 0.5rem 0 0;
+}
+
+.cs-cell-debugger-snapshot {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.cs-cell-debugger-variables {
+  border-collapse: collapse;
+  font-size: var(--cs-font-sm);
+  flex: 1 1 auto;
+  min-width: 10rem;
+}
+
+.cs-cell-debugger-variables td {
+  border: 1px solid #d3ddf7;
+  padding: 0.15rem 0.4rem;
+  vertical-align: top;
+}
+
+.cs-cell-debugger-var-name {
+  font-family: ui-monospace, monospace;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.cs-cell-debugger-var-value {
+  font-family: ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
+
+.cs-cell-debugger-output {
+  flex: 1 1 auto;
+  min-width: 10rem;
+  margin: 0;
 }
 
 .cs-element-viewer {
