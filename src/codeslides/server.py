@@ -26,7 +26,7 @@ from codeslides.protocol import (
     decode_client_message,
     encode,
 )
-from codeslides.serialization import display_source
+from codeslides.serialization import display_source, executable_source
 from codeslides.ws_handler import (
     ATTRIBUTABLE_MESSAGE_TYPES,
     VIEWER_ALLOWED_MESSAGE_TYPES,
@@ -158,17 +158,26 @@ def create_app(
                     # execution (kernel.py) never had this problem: it
                     # always worked from `cell.source` directly (the real,
                     # undisplayed source), never the browser's own display
-                    # copy. `executable_source` is exactly that same
-                    # `display_source` call with `hide_def` forced to
-                    # False -- decorator- and docstring-free (like `source`
-                    # above), but with the real `def` line and its
-                    # correctly-indented body always intact, regardless of
-                    # this cell's own hide_def setting. App.tsx uses this
-                    # field (not `source`) for anything it hands to
-                    # pyodideKernel.ts to compile; `source` itself is
-                    # untouched -- still exactly what the code editor
-                    # shows/edits.
-                    "executable_source": display_source(cell.source, hide_def=False),
+                    # copy. `executable_source` (serialization.py) keeps
+                    # the real `def` line always intact regardless of this
+                    # cell's own hide_def setting -- decorator-stripped
+                    # (like `source` above), but deliberately NOT
+                    # docstring-stripped (unlike `source`): a cell whose
+                    # body is only a docstring (a real shape, confirmed by
+                    # a direct user's own deck -- a hide_def=True cell that
+                    # exists purely to hold a ui.notes element, no other
+                    # code) would otherwise have display_source's own
+                    # docstring-stripping remove its ONLY body statement,
+                    # leaving a genuine Python SyntaxError ("expected an
+                    # indented block") the moment anything tried to compile
+                    # it -- confirmed by direct reproduction, a real
+                    # regression this exact field introduced when it first
+                    # reused display_source(..., hide_def=False) for this
+                    # role. App.tsx uses this field (not `source`) for
+                    # anything it hands to pyodideKernel.ts to compile;
+                    # `source` itself is untouched -- still exactly what
+                    # the code editor shows/edits.
+                    "executable_source": executable_source(cell.source),
                     # a `notes` element's content is the cell's own docstring
                     # (`Cell.docstring`, deck.py) -- authored content, never
                     # computed by any run (session.py's seed_cell_instance's

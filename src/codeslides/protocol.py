@@ -813,8 +813,12 @@ class CellAdded:
     # docstring on it) -- `source` above is display-only (decorator-
     # and docstring-free, and `def`-line-free too for a hide_def=True
     # cell); pyodideKernel.ts needs a real, standalone-compilable
-    # function definition, which `source` alone isn't for a hide_def
-    # cell. Always `display_source(cell.source, hide_def=False)`.
+    # function definition, which `source` alone isn't. Always
+    # `serialization.executable_source(cell.source)` -- NOT
+    # `display_source(cell.source, hide_def=False)`: that still strips
+    # the docstring, which breaks a cell whose body is only a
+    # docstring (a real shape -- see executable_source's own
+    # docstring).
     executable_source: str
     elements: list[dict[str, Any]]
     layout: dict[str, Any] | None = None
