@@ -125,6 +125,21 @@ export interface CellMeta {
 export interface CellProps {
   cellId: string
   meta: CellMeta
+  // Every cell name in the current deck (Object.keys(deck.cells) or
+  // Object.keys(cellMeta), computed once by whichever parent -- App.tsx
+  // for Cells view, SlideShow.tsx for Slides view -- already has the
+  // full deck in scope). Passed straight through to TestsElementWidget:
+  // a tests element's own step-through debug run needs to tell "a name
+  // this test itself just assigned" apart from "some OTHER cell's own
+  // function/return-named value, already sitting in the shared
+  // _namespace from an earlier run" when filtering a snapshot's own
+  // variables (pyodideKernel.ts's _debug_run_test/_make_snapshot_tracer
+  // own exclude_keys docstrings have the full story on why this can't
+  // be derived from _namespace's own current keys at debug-run time).
+  // Cell.tsx itself never reads this -- it only has its OWN meta, never
+  // the whole deck -- so this exists purely to thread the one piece of
+  // deck-wide information TestsElementWidget's debug run needs.
+  allCellNames: string[]
   state: CellState | undefined
   elementValues: Record<string, unknown>
   /** A `tests` element's current editable source, keyed by element name
@@ -490,6 +505,7 @@ function useDragDivider(axis: 'horizontal' | 'vertical', invert: boolean, onMove
 export function Cell({
   cellId,
   meta,
+  allCellNames,
   state,
   elementValues,
   testSourceValues,
@@ -1272,6 +1288,19 @@ export function Cell({
             onChangeTestSource(element.name, source)
             if (reviewMode && onStageTestEdit) onStageTestEdit(element.name, source)
           }}
+          cellId={cellId}
+          // The SAME latestRunSourceRef.current the primary editor's own
+          // runWithBreakpoints already uses -- the owning cell's actual
+          // last-committed, standalone-compilable source (hide_def
+          // reattachment already applied there, see that ref's own
+          // docstring), never meta.source/meta.executable_source
+          // directly, so a test's debug run defines the SAME code its
+          // own pass/fail run would define if this tab hasn't touched
+          // the cell yet, and the SAME code a local edit to the cell
+          // (not yet reflected in meta.*) would use.
+          cellSource={latestRunSourceRef.current}
+          cellElements={meta.elements}
+          allCellNames={allCellNames}
         />
       )
     }

@@ -155,6 +155,10 @@ export function SlideShow({
   // to reflect each cell's position in the whole deck, not just among
   // the handful of cells on this one slide.
   const cellLineOffsets = useMemo(() => computeLineOffsets(cellMeta, liveLineCounts), [cellMeta, liveLineCounts])
+  // Same allCellNames App.tsx computes for the Cells view -- see Cell.tsx's
+  // own allCellNames docstring for why TestsElementWidget's debug run
+  // needs this.
+  const allCellNames = useMemo(() => Object.keys(cellMeta), [cellMeta])
 
   // The user wants a slide's single cell to grow and fill whatever
   // vertical space is left below it, rather than only shrinking to fit
@@ -293,6 +297,7 @@ export function SlideShow({
               key={cellId}
               cellId={cellId}
               meta={meta}
+              allCellNames={allCellNames}
               extraCodeAbove={
                 setupCellId && setupMeta ? (
                   <CodeEditor
