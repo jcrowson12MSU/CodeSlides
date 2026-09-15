@@ -251,8 +251,26 @@ _MAX_DEBUG_SNAPSHOTS = 500
 def _safe_repr(value):
     """Shared by every debug-run tracer below: a repr() that itself
     raises (a buggy __repr__) is caught per-variable so one bad object
-    can't blow up an entire snapshot."""
+    can't blow up an entire snapshot.
+
+    A str containing a real newline is deliberately returned RAW here,
+    never through repr() -- repr() would escape it to the two literal
+    characters backslash-n (Python's own str.__repr__ behavior), which
+    the frontend's variables table would then display exactly as typed,
+    "line1\\nline2", rather than as two visually separate lines. The
+    frontend's own CSS (.cs-cell-debugger-var-value, App.css) renders
+    this raw value with white-space: pre-wrap, so an actual embedded
+    newline character here becomes a real line break there -- this
+    function's OWN job is only to make sure the character survives
+    this far unescaped for a multi-line string specifically. A
+    single-line str still goes through ordinary repr() (kept quoted,
+    e.g. 'hello') so it stays visually distinct from a non-string value
+    -- only a genuinely multi-line string trades that quoting away for
+    readability, matching how a real Python REPL's own print(s) (not
+    repr(s)) shows a multi-line string."""
     try:
+        if isinstance(value, str) and "\\n" in value:
+            return value
         return repr(value)
     except Exception as exc:
         return f"<repr() failed: {exc!r}>"
