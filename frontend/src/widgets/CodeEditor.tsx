@@ -541,6 +541,20 @@ export function CodeEditor({
       // for the line-number or fold gutters.
       gutter({
         class: 'cs-line-highlight-gutter',
+        // See the breakpoint gutter's own renderEmptyElements comment
+        // below for why this is required, not optional -- the identical
+        // gap existed here too (this gutter's own click handler is what
+        // the breakpoint gutter's own was modeled on).
+        renderEmptyElements: true,
+        // Same missing-lineMarkerChange gap as the breakpoint gutter's
+        // own (see its comment below for the full CodeMirror-internals
+        // explanation) -- this gutter's own marker DOT never repainted
+        // on a highlight toggle either (the yellow LINE BACKGROUND still
+        // updated correctly, since that's a real decoration going
+        // through highlightField's own normal EditorView.decorations
+        // pipeline, entirely separate machinery from this gutter's own
+        // marker redraw check).
+        lineMarkerChange: (update) => update.transactions.some((tr) => tr.effects.some((e) => e.is(setHighlightedLines))),
         lineMarker: (view, line) => {
           const active = view.state.field(highlightField, false)
           let isHighlighted = false
@@ -566,6 +580,44 @@ export function CodeEditor({
       // a click meant for one feature accidentally toggling the other.
       gutter({
         class: 'cs-breakpoint-gutter',
+        // Without this, CodeMirror's own gutter implementation skips
+        // creating a DOM element entirely for any line whose lineMarker
+        // returns null (@codemirror/view's GutterElements.line: "if
+        // localMarkers.length == 0 && !renderEmptyElements, return"
+        // before ever calling addElement) -- meaning a line with no
+        // breakpoint YET has no gutter cell there at all to click on.
+        // This is exactly why toggling a breakpoint ON felt inconsistent
+        // (a real bug, confirmed by reading CodeMirror's own source, not
+        // a "click harder"/hit-area-size problem): most lines never had
+        // a clickable element in the first place, so a click there just
+        // fell through to whatever was underneath (nothing, or the
+        // gutter's own empty background) instead of ever reaching this
+        // handler. Toggling a breakpoint OFF worked fine, since a
+        // line THAT ALREADY HAS one always gets a real element
+        // regardless of this setting -- which is what made the bug look
+        // like flaky/inconsistent clicking rather than a clean
+        // reproducible failure.
+        renderEmptyElements: true,
+        // A second, independent gap with the exact same "looks like it
+        // did nothing" symptom: SingleGutterView.update() (this file's
+        // own gutter() call, @codemirror/view's internal implementation)
+        // only redraws a gutter's markers when EITHER its own `markers`
+        // facet output changed (this gutter doesn't use `markers`, only
+        // `lineMarker` -- so that side of the check is always "no
+        // change") OR `lineMarkerChange(update)` returns true. Without
+        // supplying this, `lineMarkerChange` defaults to null, so the
+        // OR is always false and the gutter's OWN redraw check never
+        // fires -- toggling a breakpoint DOES correctly update
+        // breakpointField and DOES correctly enable/show the "Run with
+        // breakpoints" button (a real, separate piece of UI reading
+        // that same state), but the gutter's own marker dot silently
+        // never repaints to reflect it, confirmed by inspecting the
+        // gutter's live innerHTML after a click that provably changed
+        // breakpointField. offsetLineNumberGutter() above already
+        // documents/solves this exact same CodeMirror gotcha for its
+        // own lineOffset-driven redraws -- same fix here, keyed off
+        // setBreakpointLines instead.
+        lineMarkerChange: (update) => update.transactions.some((tr) => tr.effects.some((e) => e.is(setBreakpointLines))),
         lineMarker: (view, line) => {
           const lineNumber = view.state.doc.lineAt(line.from).number
           const active = view.state.field(breakpointField, false)
