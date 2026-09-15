@@ -432,6 +432,19 @@ def _effective_display_source(session: Session, cell) -> str:
     return display_source(override if override is not None else cell.source, hide_def=cell.hide_def)
 
 
+def _effective_executable_source(session: Session, cell) -> str:
+    """`_effective_display_source`'s own executable-source counterpart
+    (see server.py's `executable_source` field for why this needs to
+    exist at all): the same override-resolution `_effective_display_source`
+    does, but with `hide_def` forced to `False` so a hide_def=True
+    cell's real `def` line is always kept -- pyodideKernel.ts needs a
+    standalone-compilable function definition, which the display-only
+    text `_effective_display_source` returns isn't, for a hide_def
+    cell."""
+    override = session.source_overrides.get(cell.name)
+    return display_source(override if override is not None else cell.source, hide_def=False)
+
+
 # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
 # section 3+7: _results_to_messages/_element_output_messages (the
 # ExecutionResult -> cell_status/cell_output/element_output translation
@@ -1418,6 +1431,7 @@ def handle_message(
                 cell_id=cell.name,
                 instance=cell.instance,
                 source=display_source(cell.source, hide_def=cell.hide_def),
+                executable_source=display_source(cell.source, hide_def=False),
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
@@ -1489,6 +1503,7 @@ def handle_message(
                 cell_id=cell.name,
                 instance=cell.instance,
                 source=display_source(cell.source, hide_def=cell.hide_def),
+                executable_source=display_source(cell.source, hide_def=False),
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
@@ -1569,6 +1584,7 @@ def handle_message(
                 cell_id=cell.name,
                 instance=cell.instance,
                 source=_effective_display_source(session, cell),
+                executable_source=_effective_executable_source(session, cell),
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
@@ -1669,6 +1685,7 @@ def handle_message(
                 cell_id=cell.name,
                 hide_def=cell.hide_def,
                 source=_effective_display_source(session, cell),
+                executable_source=_effective_executable_source(session, cell),
             )
         ]
 
@@ -1714,6 +1731,7 @@ def handle_message(
                 cell_id=cell.name,
                 instance=cell.instance,
                 source=_effective_display_source(session, cell),
+                executable_source=_effective_executable_source(session, cell),
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
@@ -1739,6 +1757,7 @@ def handle_message(
                 cell_id=cell.name,
                 instance=cell.instance,
                 source=_effective_display_source(session, cell),
+                executable_source=_effective_executable_source(session, cell),
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
@@ -1764,6 +1783,7 @@ def handle_message(
                 cell_id=cell.name,
                 instance=cell.instance,
                 source=_effective_display_source(session, cell),
+                executable_source=_effective_executable_source(session, cell),
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
@@ -1789,6 +1809,7 @@ def handle_message(
                 cell_id=cell.name,
                 instance=cell.instance,
                 source=_effective_display_source(session, cell),
+                executable_source=_effective_executable_source(session, cell),
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
@@ -1812,6 +1833,7 @@ def handle_message(
                 cell_id=cell.name,
                 instance=cell.instance,
                 source=_effective_display_source(session, cell),
+                executable_source=_effective_executable_source(session, cell),
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
@@ -1837,6 +1859,7 @@ def handle_message(
                 cell_id=cell.name,
                 instance=cell.instance,
                 source=_effective_display_source(session, cell),
+                executable_source=_effective_executable_source(session, cell),
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
