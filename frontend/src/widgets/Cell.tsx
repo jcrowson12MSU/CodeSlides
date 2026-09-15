@@ -36,6 +36,19 @@ const MAX_CODE_FRACTION = 0.85
 export interface CellMeta {
   instance: 'static' | 'editable'
   source: string
+  // TODO.md #64 (collaboration rework): a real bug report -- `source`
+  // above is display-only (decorator-/docstring-free, and `def`-line-
+  // free too for a hide_def=True cell -- server.py's own
+  // `executable_source` field docstring has the full story). Every
+  // place App.tsx hands a cell's source to pyodideKernel.ts to compile
+  // (currentCellInputs) must use THIS field instead, or a hide_def
+  // cell crashes client-side execution entirely with "expected exactly
+  // one function definition, found 0" the moment anything tries to run
+  // it (confirmed via direct reproduction: moving a slider on any
+  // hide_def=True cell). Always present (unlike docstring below) --
+  // every server response that carries `source` at all now carries
+  // this alongside it.
+  executable_source: string
   // TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md:
   // a `notes` element's content is this cell's own docstring
   // (codeslides.deck.Cell.docstring) -- authored content, never
@@ -692,23 +705,25 @@ export function Cell({
   // runWithBreakpoints (below) can't read meta.source for what to debug;
   // it needs the actual text last committed via Shift+Enter, which is
   // exactly what CodeEditor's own onRunCell callback already receives as
-  // its `source` argument on every run. Seeded from meta.source so a
-  // cell debugged before its first Shift+Enter still debugs the
-  // originally-loaded code, matching what CodeEditor itself displays at
-  // mount.
-  const latestRunSourceRef = useRef(meta.source)
-  // meta.source itself can still change out from under this ref -- a
-  // collaborative peer's own edit, or a fresh deck reload -- in which
-  // case that external value must win over whatever this tab last ran
-  // locally (the same "another Session's edit, or the initial load"
+  // its `source` argument on every run. Seeded from meta.executable_source
+  // (never meta.source -- see CellMeta's own executable_source
+  // docstring: meta.source is display-only, def-line-free too for a
+  // hide_def=True cell, and isn't standalone-compilable) so a cell
+  // debugged before its first Shift+Enter still debugs the
+  // originally-loaded, real code.
+  const latestRunSourceRef = useRef(meta.executable_source)
+  // meta.executable_source itself can still change out from under this
+  // ref -- a collaborative peer's own edit, or a fresh deck reload -- in
+  // which case that external value must win over whatever this tab last
+  // ran locally (the same "another Session's edit, or the initial load"
   // case CodeEditor's own source-sync effect handles for the visible
   // editor). Runs after every render, not gated to a dependency array,
-  // since it must apply on EVERY meta.source change including ones that
-  // happen to match what's already in the ref (a no-op assignment is
-  // harmless either way).
+  // since it must apply on EVERY change including ones that happen to
+  // match what's already in the ref (a no-op assignment is harmless
+  // either way).
   useEffect(() => {
-    latestRunSourceRef.current = meta.source
-  }, [meta.source])
+    latestRunSourceRef.current = meta.executable_source
+  }, [meta.executable_source])
 
   const runWithBreakpoints = useCallback(() => {
     setDebugRunning(true)
@@ -1138,7 +1153,26 @@ export function Cell({
             // draft to send and the cell shows as dirty) happens
             // alongside it, never instead of it.
             onRunCell={(source) => {
-              latestRunSourceRef.current = source
+              // Mirrors App.tsx's own currentCellInputs hide_def
+              // reattachment exactly: for a hide_def=True cell, this
+              // callback's `source` is the SAME display-only, def-line-
+              // free body meta.source/the editor always shows (the code
+              // editor never lets the author see/edit the def line at
+              // all for such a cell) -- not standalone-compilable on its
+              // own. Reattach the cell's real def line (from its own
+              // current executable_source, which always starts with
+              // it), re-indenting the dedented body one level to sit
+              // back under it, exactly serialization.reattach_decorator's
+              // own hide_def branch. A non-hide_def cell's `source`
+              // already has its own def line and correct indentation.
+              latestRunSourceRef.current = meta.hide_def
+                ? meta.executable_source.split('\n')[0] +
+                  '\n' +
+                  source
+                    .split('\n')
+                    .map((line) => (line ? `    ${line}` : line))
+                    .join('\n')
+                : source
               onRunCell(source)
               if (reviewMode && onStagePrimaryEdit) onStagePrimaryEdit(source)
             }}
