@@ -1046,6 +1046,12 @@ body.cs-resizing-vertical {
 .cs-cell-debugger-var-value {
   font-family: ui-monospace, monospace;
   overflow-wrap: anywhere;
+  /* A multi-line string's own value arrives with real embedded newline
+     characters (pyodideKernel.ts's _safe_repr, deliberately returned
+     raw rather than repr()-escaped for this one case) -- pre-wrap is
+     what turns those into actual visual line breaks here, while still
+     wrapping a long line at the cell's own width same as before. */
+  white-space: pre-wrap;
 }
 
 .cs-cell-debugger-output {
