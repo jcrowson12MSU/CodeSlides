@@ -255,6 +255,35 @@ def display_source(source: str, hide_def: bool = False) -> str:
     return "\n".join(lines) + "\n"
 
 
+def executable_source(source: str) -> str:
+    """A real, standalone-compilable function definition for `source` --
+    decorator-stripped (same as `display_source`, via `_split_cell_
+    source`'s own decorator-stripping), `def name(...):` line ALWAYS
+    kept regardless of `hide_def` (unlike `display_source(...,
+    hide_def=True)`, whose whole point is stripping it for the editor),
+    and -- critically, unlike `display_source` in every mode --
+    docstring NEVER stripped.
+
+    That last part is the real reason this can't just be
+    `display_source(source, hide_def=False)`: a cell whose function
+    body is only a single docstring statement -- e.g. a hide_def=True
+    cell that exists purely to hold a `ui.notes` element's content, no
+    other code -- confirmed as a real shape via a direct user's own
+    deck) has `display_source`'s docstring-stripping step remove its
+    ONLY body statement, leaving a function with a `def` line and
+    nothing else -- a genuine Python `SyntaxError: expected an indented
+    block`, confirmed by direct reproduction (moving an unrelated
+    slider on exactly this shape of cell). `Cell.source` itself (real
+    execution, kernel.py's own `execute_cell`) never had this bug: a
+    docstring IS a valid, complete statement, satisfying a function
+    body's own "needs at least one statement" requirement all on its
+    own -- this function preserves that by simply never touching it,
+    matching server-side execution's own semantics exactly rather than
+    reusing display_source's browser-editor-specific stripping."""
+    def_line, body_lines = _split_cell_source(source)
+    return "\n".join([def_line, *body_lines]) + "\n"
+
+
 def _decorator_prefix(source: str) -> str:
     """The literal decorator text (however many lines it spans) above a
     cell's `def` line, or `""` if it has none -- the inverse of

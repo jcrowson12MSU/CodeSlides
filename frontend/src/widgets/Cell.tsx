@@ -35,6 +35,19 @@ const MAX_CODE_FRACTION = 0.85
 export interface CellMeta {
   instance: 'static' | 'editable'
   source: string
+  // TODO.md #64 (collaboration rework): a real bug report -- `source`
+  // above is display-only (decorator-/docstring-free, and `def`-line-
+  // free too for a hide_def=True cell -- server.py's own
+  // `executable_source` field docstring has the full story). Every
+  // place App.tsx hands a cell's source to pyodideKernel.ts to compile
+  // (currentCellInputs) must use THIS field instead, or a hide_def
+  // cell crashes client-side execution entirely with "expected exactly
+  // one function definition, found 0" the moment anything tries to run
+  // it (confirmed via direct reproduction: moving a slider on any
+  // hide_def=True cell). Always present (unlike docstring below) --
+  // every server response that carries `source` at all now carries
+  // this alongside it.
+  executable_source: string
   // TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md:
   // a `notes` element's content is this cell's own docstring
   // (codeslides.deck.Cell.docstring) -- authored content, never
