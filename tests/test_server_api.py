@@ -99,10 +99,10 @@ def test_deck_endpoint_executable_source_keeps_the_def_line_for_hide_def_cells()
     exactly right for the code editor (that's the whole point of
     hide_def), but pyodideKernel.ts's client-side runner needs a real,
     standalone-compilable function definition to `exec`, and `source`
-    was the only source App.tsx ever gave it. `executable_source` is
-    always `display_source(cell.source, hide_def=False)` regardless of
-    this cell's own hide_def setting -- the def line (and correctly
-    indented body) is always present, so it always compiles."""
+    was the only source App.tsx ever gave it. `executable_source`
+    (serialization.executable_source) keeps the real `def` line (and
+    correctly indented body) regardless of this cell's own hide_def
+    setting, so it always compiles."""
     app = App()
 
     @app.cell(elements=[ui.slider("speed", min=1, max=10, default=3)], hide_def=True)
@@ -122,13 +122,57 @@ def test_deck_endpoint_executable_source_keeps_the_def_line_for_hide_def_cells()
     assert "def scoreboard(speed):" in hide_def_cell["executable_source"]
     assert "result = speed * 2" in hide_def_cell["executable_source"]
 
-    # A non-hide_def cell's source already has its own def line --
-    # source and executable_source should be identical there (both are
-    # just display_source(cell.source, hide_def=False), since
-    # cell.hide_def is False for this cell either way).
+    # A non-hide_def cell's source already has its own def line, so
+    # executable_source doesn't need to add one back -- but the two
+    # fields are NOT identical: `source` (display_source) still strips
+    # the docstring, `executable_source` never does (see its own
+    # docstring for why -- a docstring-only body would otherwise become
+    # a SyntaxError). This cell has no docstring at all, so there's
+    # nothing to diverge on here; test_deck_endpoint_executable_source_
+    # keeps_a_docstring_only_body_compilable below covers the case
+    # where it matters.
     plain_cell = body["cells"]["plain"]
-    assert plain_cell["source"] == plain_cell["executable_source"]
     assert "def plain" in plain_cell["executable_source"]
+
+
+def test_deck_endpoint_executable_source_keeps_a_docstring_only_body_compilable():
+    """TODO.md #64 (collaboration rework): a second real regression,
+    found via direct user report on a REAL deck (Lectures/Projects/
+    TicTacToe.py) after the first hide_def fix above shipped --
+    "expected an indented block after function definition on line 1"
+    when changing an input's value on a hide_def=True cell whose
+    function body is ONLY a docstring statement, e.g. a cell that
+    exists purely to hold a `ui.notes` element's content, no other code.
+    The first fix's own `executable_source` reused
+    `display_source(cell.source, hide_def=False)`, which still strips
+    the docstring in every mode -- for a cell whose ONLY body statement
+    IS the docstring, that leaves a `def` line with nothing indented
+    under it: a genuine Python SyntaxError, not the "found 0" error the
+    first fix addressed. `serialization.executable_source` never
+    strips the docstring at all, so this compiles correctly -- a
+    docstring is a valid, complete function body all on its own,
+    exactly like real server-side execution (kernel.py) already always
+    treated it."""
+    app = App()
+
+    @app.cell(elements=[ui.notes("notes")], hide_def=True)
+    def notes_only():
+        """Just some notes, no other code at all."""
+
+    client = TestClient(create_app(app.deck))
+    body = client.get("/api/deck").json()
+
+    cell = body["cells"]["notes_only"]
+    assert "def notes_only" not in cell["source"]
+    executable = cell["executable_source"]
+    assert executable.startswith("def notes_only():")
+    assert "Just some notes, no other code at all." in executable
+    # This is the actual regression check: the reconstructed source
+    # must be real, compilable Python -- not just contain the right
+    # substrings. `compile()` raises SyntaxError exactly the way
+    # Pyodide's own `exec(compile(source, ...))` would if this were
+    # still broken.
+    compile(executable, "<test>", "exec")
 
 
 def test_deck_endpoint_title_slide_shows_setup_then_main_cell():

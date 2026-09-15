@@ -96,6 +96,7 @@ from codeslides.serialization import (
     InvalidSourceError,
     SaveConflictError,
     display_source,
+    executable_source,
     save_attribution,
     save_edits,
     write_export,
@@ -434,15 +435,19 @@ def _effective_display_source(session: Session, cell) -> str:
 
 def _effective_executable_source(session: Session, cell) -> str:
     """`_effective_display_source`'s own executable-source counterpart
-    (see server.py's `executable_source` field for why this needs to
-    exist at all): the same override-resolution `_effective_display_source`
-    does, but with `hide_def` forced to `False` so a hide_def=True
-    cell's real `def` line is always kept -- pyodideKernel.ts needs a
-    standalone-compilable function definition, which the display-only
-    text `_effective_display_source` returns isn't, for a hide_def
-    cell."""
+    (see server.py's/serialization.executable_source's own docstrings
+    for why this needs to exist at all, and why it's `serialization.
+    executable_source`, never `display_source(..., hide_def=False)`):
+    the same override-resolution `_effective_display_source` does, but
+    keeping the real `def` line (regardless of hide_def) AND the
+    docstring -- pyodideKernel.ts needs a standalone-compilable
+    function definition, which `_effective_display_source`'s own
+    display-only text isn't for a hide_def cell, and which
+    display_source(..., hide_def=False) alone still isn't for a cell
+    whose body is only a docstring (display_source always strips the
+    docstring too, in every hide_def mode)."""
     override = session.source_overrides.get(cell.name)
-    return display_source(override if override is not None else cell.source, hide_def=False)
+    return executable_source(override if override is not None else cell.source)
 
 
 # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md
@@ -1431,7 +1436,7 @@ def handle_message(
                 cell_id=cell.name,
                 instance=cell.instance,
                 source=display_source(cell.source, hide_def=cell.hide_def),
-                executable_source=display_source(cell.source, hide_def=False),
+                executable_source=executable_source(cell.source),
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
@@ -1503,7 +1508,7 @@ def handle_message(
                 cell_id=cell.name,
                 instance=cell.instance,
                 source=display_source(cell.source, hide_def=cell.hide_def),
-                executable_source=display_source(cell.source, hide_def=False),
+                executable_source=executable_source(cell.source),
                 elements=[
                     {"name": e.name, "kind": e.kind, "config": e.config} for e in cell.elements
                 ],
