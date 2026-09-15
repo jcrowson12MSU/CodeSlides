@@ -679,6 +679,7 @@ function App() {
           cells[msg.cell_id] = {
             instance: msg.instance,
             source: msg.source,
+            executable_source: msg.executable_source,
             elements: msg.elements,
             layout: msg.layout,
             // None of these message types touch is_main/is_setup/
@@ -717,6 +718,7 @@ function App() {
           cells[msg.cell_id] = {
             instance: msg.instance,
             source: msg.source,
+            executable_source: msg.executable_source,
             elements: msg.elements,
             layout: msg.layout,
             is_main: cells[msg.cell_id]?.is_main ?? false,
@@ -742,6 +744,7 @@ function App() {
           cells[msg.cell_id] = {
             instance: msg.instance,
             source: msg.source,
+            executable_source: msg.executable_source,
             elements: msg.elements,
             layout: msg.layout,
             is_main: msg.is_main,
@@ -780,7 +783,12 @@ function App() {
             // `def name(...):` line is included) -- source must be
             // replaced too, or the editor keeps showing pre-toggle
             // content until some unrelated event happens to refresh it.
-            cells[msg.cell_id] = { ...cells[msg.cell_id], hide_def: msg.hide_def, source: msg.source }
+            cells[msg.cell_id] = {
+              ...cells[msg.cell_id],
+              hide_def: msg.hide_def,
+              source: msg.source,
+              executable_source: msg.executable_source,
+            }
           }
         } else if (msg.type === 'cell_source_changed') {
           // TODO.md #46b-i: on a shared document, a peer's edit_cell
@@ -789,6 +797,22 @@ function App() {
           // no-op when the incoming source already matches the live
           // doc) converges on the same source, matching the winning
           // last-write in Session.source_overrides server-side.
+          //
+          // Known, narrow gap (not fixed here): CellSourceChanged
+          // itself doesn't carry an executable_source field the way
+          // every structural reply now does, so `executable_source`
+          // below is left stale for a hide_def=True cell specifically.
+          // EditCell (this message's own trigger) is reachable almost
+          // nowhere in practice today -- confirmed elsewhere in this
+          // codebase's own history that Shift+Enter never sends it at
+          // all any more (runs entirely client-side), so the only real
+          // path here is AcceptCellState's own internal replay, itself
+          // rare. Worth a real fix (threading executable_source through
+          // CellSourceChanged/EditCell too) if this specific gap is
+          // ever hit in practice -- not done proactively here to keep
+          // this change scoped to the actual reported bug (moving an
+          // input on a hide_def cell, and every other structural
+          // operation touching one).
           if (!changed) cells = { ...cells }
           changed = true
           if (cells[msg.cell_id]) {
@@ -831,6 +855,7 @@ function App() {
           cells[msg.cell_id] = {
             instance: msg.instance,
             source: msg.source,
+            executable_source: msg.executable_source,
             elements: msg.elements,
             layout: msg.layout,
             // A title slide's own generated cell never has a notes
@@ -1068,8 +1093,39 @@ function App() {
     if (!deck) return {}
     const cells: Record<string, PyodideCellInput> = {}
     for (const [id, meta] of Object.entries(deck.cells)) {
+      // TODO.md #64 (collaboration rework): pyodideKernel.ts needs a
+      // real, standalone-compilable function definition -- meta.source
+      // is display-only (see CellMeta's own executable_source
+      // docstring), so this must be meta.executable_source, never
+      // meta.source, for the common "nothing being live-edited right
+      // now" case.
+      let source = meta.executable_source
+      if (id === overrideCellId && overrideSource !== undefined) {
+        // handleRunCell passes the code editor's own live text here --
+        // for a hide_def=True cell, that's the SAME display-only,
+        // def-line-free body meta.source always was (the editor never
+        // shows/lets the author edit the def line at all -- same
+        // "hide_def cell's own parameter list isn't editable from the
+        // code editor" rule serialization.reattach_decorator's own
+        // docstring establishes server-side). Reattach the cell's real
+        // def line (taken from its own current executable_source,
+        // which always starts with it), RE-INDENTING the dedented body
+        // one level to sit back under it -- exactly
+        // serialization.reattach_decorator's own hide_def branch
+        // (def_line + textwrap.indent(body, "    ")). A non-hide_def
+        // cell's overrideSource already has its own def line and
+        // correct indentation, so there's nothing to reattach there.
+        source = meta.hide_def
+          ? meta.executable_source.split('\n')[0] +
+            '\n' +
+            overrideSource
+              .split('\n')
+              .map((line) => (line ? `    ${line}` : line))
+              .join('\n')
+          : overrideSource
+      }
       cells[id] = {
-        source: id === overrideCellId && overrideSource !== undefined ? overrideSource : meta.source,
+        source,
         elements: meta.elements,
       }
     }

@@ -604,6 +604,13 @@ export interface CellAdded {
   cell_id: string
   instance: 'static' | 'editable'
   source: string
+  // TODO.md #64 (collaboration rework): `source` above is display-only
+  // (decorator-/docstring-free, and `def`-line-free too for a
+  // hide_def=True cell -- server.py's own `executable_source`
+  // docstring). pyodideKernel.ts needs a real, standalone-compilable
+  // function definition to `exec`; use this field for that, never
+  // `source`.
+  executable_source: string
   elements: ElementMeta[]
   layout: CellLayout | null
 }
@@ -629,6 +636,8 @@ export interface TitleSlideAdded {
   cell_id: string
   instance: 'static' | 'editable'
   source: string
+  // Same as CellAdded's own executable_source field.
+  executable_source: string
   elements: ElementMeta[]
   layout: CellLayout | null
   // Unlike SlideAdded (which always lands at the end -- the client just
@@ -645,6 +654,8 @@ export interface CellRenamed {
   cell_id: string
   instance: 'static' | 'editable'
   source: string
+  // Same as CellAdded's own executable_source field.
+  executable_source: string
   elements: ElementMeta[]
   layout: CellLayout | null
   is_main: boolean
@@ -680,6 +691,11 @@ export interface HideDefSet {
   cell_id: string
   hide_def: boolean
   source: string
+  // Same as CellAdded's own executable_source field -- especially
+  // important here, since this is exactly the toggle point where a
+  // cell's client-side-executable source either starts or stops
+  // matching `source` above.
+  executable_source: string
 }
 
 export interface CellRemoved {
@@ -700,6 +716,8 @@ export interface ElementAdded {
   cell_id: string
   instance: 'static' | 'editable'
   source: string
+  // Same as CellAdded's own executable_source field.
+  executable_source: string
   elements: ElementMeta[]
   layout: CellLayout | null
 }
@@ -710,6 +728,7 @@ export interface ElementRemoved {
   cell_id: string
   instance: 'static' | 'editable'
   source: string
+  executable_source: string
   elements: ElementMeta[]
   layout: CellLayout | null
 }
@@ -724,6 +743,7 @@ export interface PrimaryEditorRemoved {
   cell_id: string
   instance: 'static' | 'editable'
   source: string
+  executable_source: string
   elements: ElementMeta[]
   layout: CellLayout | null
 }
@@ -734,6 +754,7 @@ export interface PrimaryEditorAdded {
   cell_id: string
   instance: 'static' | 'editable'
   source: string
+  executable_source: string
   elements: ElementMeta[]
   layout: CellLayout | null
 }
@@ -744,6 +765,7 @@ export interface ElementsReordered {
   cell_id: string
   instance: 'static' | 'editable'
   source: string
+  executable_source: string
   elements: ElementMeta[]
   layout: CellLayout | null
 }
@@ -754,6 +776,7 @@ export interface ElementConfigSet {
   cell_id: string
   instance: 'static' | 'editable'
   source: string
+  executable_source: string
   elements: ElementMeta[]
   layout: CellLayout | null
 }

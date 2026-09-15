@@ -808,6 +808,14 @@ class CellAdded:
     cell_id: str
     instance: str
     source: str
+    # TODO.md #64 (collaboration rework): same field, same reason, as
+    # GET /api/deck's own `executable_source` (server.py's own
+    # docstring on it) -- `source` above is display-only (decorator-
+    # and docstring-free, and `def`-line-free too for a hide_def=True
+    # cell); pyodideKernel.ts needs a real, standalone-compilable
+    # function definition, which `source` alone isn't for a hide_def
+    # cell. Always `display_source(cell.source, hide_def=False)`.
+    executable_source: str
     elements: list[dict[str, Any]]
     layout: dict[str, Any] | None = None
 
@@ -843,6 +851,8 @@ class TitleSlideAdded:
     cell_id: str
     instance: str
     source: str
+    # Same as CellAdded's own executable_source field.
+    executable_source: str
     elements: list[dict[str, Any]]
     layout: dict[str, Any] | None
     slides: list[dict[str, Any]]
@@ -871,6 +881,8 @@ class CellRenamed:
     cell_id: str
     instance: str
     source: str
+    # Same as CellAdded's own executable_source field.
+    executable_source: str
     elements: list[dict[str, Any]]
     layout: dict[str, Any] | None = None
     is_main: bool = False
@@ -930,6 +942,11 @@ class HideDefSet:
     cell_id: str
     hide_def: bool
     source: str
+    # Same as CellAdded's own executable_source field -- especially
+    # important here, since this is exactly the toggle point where a
+    # cell's client-side-executable source either starts or stops
+    # matching `source` above (hide_def turning on/off).
+    executable_source: str
 
 
 @dataclass
@@ -983,6 +1000,8 @@ class ElementAdded:
     cell_id: str
     instance: str
     source: str
+    # Same as CellAdded's own executable_source field.
+    executable_source: str
     elements: list[dict[str, Any]]
     layout: dict[str, Any] | None = None
 
@@ -997,6 +1016,7 @@ class ElementRemoved:
     cell_id: str
     instance: str
     source: str
+    executable_source: str
     elements: list[dict[str, Any]]
     layout: dict[str, Any] | None = None
 
@@ -1014,6 +1034,7 @@ class PrimaryEditorRemoved:
     cell_id: str
     instance: str
     source: str
+    executable_source: str
     elements: list[dict[str, Any]]
     layout: dict[str, Any] | None = None
 
@@ -1028,6 +1049,7 @@ class PrimaryEditorAdded:
     cell_id: str
     instance: str
     source: str
+    executable_source: str
     elements: list[dict[str, Any]]
     layout: dict[str, Any] | None = None
 
@@ -1043,6 +1065,7 @@ class ElementsReordered:
     cell_id: str
     instance: str
     source: str
+    executable_source: str
     elements: list[dict[str, Any]]
     layout: dict[str, Any] | None = None
 
@@ -1058,6 +1081,7 @@ class ElementConfigSet:
     cell_id: str
     instance: str
     source: str
+    executable_source: str
     elements: list[dict[str, Any]]
     layout: dict[str, Any] | None = None
 

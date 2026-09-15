@@ -90,6 +90,47 @@ def test_deck_endpoint_reports_each_cells_own_docstring():
     assert body["cells"]["undocumented"]["docstring"] == ""
 
 
+def test_deck_endpoint_executable_source_keeps_the_def_line_for_hide_def_cells():
+    """TODO.md #64 (collaboration rework): a real regression, found via
+    direct user report -- "expected exactly one function definition,
+    found 0" when changing an input's value on a hide_def=True cell.
+    `source` (display_source(cell.source, hide_def=cell.hide_def)) has
+    its own `def name(...):` line stripped for a hide_def=True cell --
+    exactly right for the code editor (that's the whole point of
+    hide_def), but pyodideKernel.ts's client-side runner needs a real,
+    standalone-compilable function definition to `exec`, and `source`
+    was the only source App.tsx ever gave it. `executable_source` is
+    always `display_source(cell.source, hide_def=False)` regardless of
+    this cell's own hide_def setting -- the def line (and correctly
+    indented body) is always present, so it always compiles."""
+    app = App()
+
+    @app.cell(elements=[ui.slider("speed", min=1, max=10, default=3)], hide_def=True)
+    def scoreboard(speed):
+        result = speed * 2
+        return result
+
+    @app.cell
+    def plain():
+        return 1
+
+    client = TestClient(create_app(app.deck))
+    body = client.get("/api/deck").json()
+
+    hide_def_cell = body["cells"]["scoreboard"]
+    assert "def scoreboard" not in hide_def_cell["source"]
+    assert "def scoreboard(speed):" in hide_def_cell["executable_source"]
+    assert "result = speed * 2" in hide_def_cell["executable_source"]
+
+    # A non-hide_def cell's source already has its own def line --
+    # source and executable_source should be identical there (both are
+    # just display_source(cell.source, hide_def=False), since
+    # cell.hide_def is False for this cell either way).
+    plain_cell = body["cells"]["plain"]
+    assert plain_cell["source"] == plain_cell["executable_source"]
+    assert "def plain" in plain_cell["executable_source"]
+
+
 def test_deck_endpoint_title_slide_shows_setup_then_main_cell():
     app = App()
 

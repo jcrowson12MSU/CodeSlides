@@ -142,7 +142,33 @@ def create_app(
                 name: {
                     "instance": cell.instance,
                     "source": display_source(cell.source, hide_def=cell.hide_def),
-                    # TODO.md #64 (collaboration rework)/PROPOSAL_pyscript_execution.md:
+                    # TODO.md #64 (collaboration rework): a real bug report --
+                    # a hide_def=True cell's own `source` above has its
+                    # `def name(...):` line stripped (display_source's own
+                    # docstring: that's the whole point of hide_def, the
+                    # editor never shows it) -- but pyodideKernel.ts's
+                    # client-side runner needs a real, standalone-
+                    # compilable function definition to `exec`, and this
+                    # was the only source it ever had. Confirmed directly:
+                    # moving a slider on any hide_def=True cell crashed
+                    # client-side execution with "expected exactly one
+                    # function definition, found 0" -- reproducible on
+                    # every hide_def cell, not just sliders (Shift+Enter/
+                    # Run All hit the exact same compile step). Server-side
+                    # execution (kernel.py) never had this problem: it
+                    # always worked from `cell.source` directly (the real,
+                    # undisplayed source), never the browser's own display
+                    # copy. `executable_source` is exactly that same
+                    # `display_source` call with `hide_def` forced to
+                    # False -- decorator- and docstring-free (like `source`
+                    # above), but with the real `def` line and its
+                    # correctly-indented body always intact, regardless of
+                    # this cell's own hide_def setting. App.tsx uses this
+                    # field (not `source`) for anything it hands to
+                    # pyodideKernel.ts to compile; `source` itself is
+                    # untouched -- still exactly what the code editor
+                    # shows/edits.
+                    "executable_source": display_source(cell.source, hide_def=False),
                     # a `notes` element's content is the cell's own docstring
                     # (`Cell.docstring`, deck.py) -- authored content, never
                     # computed by any run (session.py's seed_cell_instance's
