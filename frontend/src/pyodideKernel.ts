@@ -99,6 +99,43 @@ export interface PyodideCellInput {
   elements: PyodideElementMeta[]
 }
 
+// One recorded breakpoint hit from a debug run (_debug_run_one's own
+// snapshot dict, run_cell_with_breakpoints_b64) -- `variables` holds
+// repr() strings, never live values (see that function's own docstring
+// for why), and `stdoutSoFar` is the cell's full accumulated stdout up
+// to and including this line, so Cell.tsx can show "the output as it
+// looked at this step" just by displaying the string directly, no
+// further slicing needed.
+export interface PyodideDebugSnapshot {
+  line: number
+  variables: Record<string, string>
+  stdoutSoFar: string
+}
+
+// run_cell_with_breakpoints_b64's own result shape -- deliberately its
+// own type, not PyodideCellResult, since a debug run never produces
+// elementWrites (cs.image()/turtle canvas writes are still recorded
+// server^Wclient-side but a debug run's whole point is inspecting the
+// cell's own step-by-step state, not updating other elements) and adds
+// `snapshots`/`truncated` that an ordinary run has no use for.
+export interface PyodideDebugRunResult {
+  status: 'idle' | 'error'
+  error: string | null
+  stdout: string
+  stderr: string
+  snapshots: PyodideDebugSnapshot[]
+  // True once _MAX_DEBUG_SNAPSHOTS (500) breakpoint hits were recorded
+  // and tracing was turned off for the rest of the run -- the cell's
+  // function still ran to completion either way (see _debug_run_one's
+  // own docstring: this only stops RECORDING further snapshots, never
+  // aborts execution), so `truncated` is purely an informational flag
+  // for the UI to show a "stopped recording after 500 hits" notice.
+  truncated: boolean
+  finalValue?: unknown
+  finalKind?: 'text' | 'markdown' | 'image' | 'dataframe' | null
+  finalData?: unknown
+}
+
 // TODO.md #64/PROPOSAL_pyscript_execution.md section 7: kernel.py's own
 // run_tests result shape (ARCHITECTURE.md section 3b) -- status is
 // "pass"/"fail"/"error" (never "idle", unlike PyodideCellResult: a
@@ -234,6 +271,7 @@ import base64
 import io
 import json
 import contextlib
+import sys
 import textwrap
 import traceback
 
@@ -433,6 +471,168 @@ def _execute_one(cell_name, source, elements):
             {"elementName": w.element_name, "kind": w.kind, "content": w.content} for w in writes
         ],
     }
+
+_MAX_DEBUG_SNAPSHOTS = 500
+
+def _debug_run_one(cell_name, source, elements, breakpoint_lines):
+    """Time-travel debugger run (step-through-via-arrows feature, not a
+    live pause/resume debugger -- Pyodide's runPythonAsync can't suspend
+    arbitrary synchronous Python mid-call and resume later on a JS event,
+    see this file's own ensureMatplotlibIfNeeded comment for the same
+    limitation hit elsewhere). The cell's function still runs exactly
+    once, uninterrupted, to completion -- sys.settrace's own 'line' trace
+    events (fired before each source line in the traced function/its own
+    nested calls executes) are used only to RECORD a snapshot (line
+    number, a repr() of every local variable, and stdout captured so far)
+    each time execution reaches a line in breakpoint_lines, never to
+    pause anything. The caller then scrubs through the recorded list
+    after the fact with plain array indexing (App.tsx/Cell.tsx) -- no
+    worker, no Atomics, no suspend/resume bridge needed.
+
+    Deliberately a separate function from _execute_one rather than a
+    flag added to it: _execute_one is also used by the ordinary Shift+
+    Enter/run-all/element-changed paths, none of which have any use for
+    tracing overhead or a breakpoint_lines argument, and keeping this
+    entirely separate means a normal run's performance/behavior is
+    unaffected by this feature ever existing.
+
+    Only ever called directly for the ONE cell the user asked to debug
+    (Cell.tsx's own "Run with breakpoints" action) -- unlike
+    run_cell_and_dependents_b64, this never computes or runs a
+    dependency/upstream set; the caller is expected to have already run
+    the deck normally (ordinary Shift+Enter/run-all) so every upstream
+    name this cell's function reads already exists in _namespace, exactly
+    the same precondition an ordinary function call in a Python REPL
+    would need.
+
+    Local variables are captured as repr() strings (never the live
+    objects themselves): a snapshot is a JSON-serializable record for the
+    JS side to store and scroll through, not a live reference into a
+    namespace that keeps mutating after the snapshot was taken -- a repr
+    also survives objects that plain JSON can't encode at all (a turtle
+    Canvas, a DataFrame, a custom class instance) with a readable
+    display value instead of an encoding error aborting the whole debug
+    run. A repr() that itself raises (a buggy __repr__) is caught
+    per-variable so one bad object can't blow up the entire snapshot."""
+    stdout, stderr = io.StringIO(), io.StringIO()
+    turtle_element = _find_turtle_canvas(elements)
+    snapshots = []
+    truncated = {"value": False}
+
+    def _safe_repr(value):
+        try:
+            return repr(value)
+        except Exception as exc:
+            return f"<repr() failed: {exc!r}>"
+
+    cell_filename = f"<cell:{cell_name}>"
+
+    def _tracer(frame, event, arg):
+        # Only trace frames whose code was compiled from THIS cell's own
+        # source -- a breakpoint line number is only ever meaningful
+        # relative to this cell's own text, so a call into cs.*/turtle.*/
+        # any other module's code (different co_filename) is never
+        # checked against breakpoint_lines, just allowed to run
+        # unobserved. Returning _tracer itself (not None) from a 'call'
+        # event is what makes sys.settrace keep tracing 'line' events
+        # inside a nested function DEFINED in this cell's own source
+        # (e.g. a helper def'd inside the cell) -- without this, only the
+        # outermost frame would ever be traced.
+        if frame.f_code.co_filename != cell_filename:
+            return None
+        if event == "call":
+            return _tracer
+        if event == "line" and not truncated["value"]:
+            line_no = frame.f_lineno
+            if line_no in breakpoint_lines:
+                if len(snapshots) >= _MAX_DEBUG_SNAPSHOTS:
+                    truncated["value"] = True
+                    return None
+                snapshots.append({
+                    "line": line_no,
+                    "variables": {k: _safe_repr(v) for k, v in frame.f_locals.items()},
+                    "stdoutSoFar": stdout.getvalue(),
+                })
+        return _tracer
+
+    try:
+        return_names = _return_names_for(source)
+        exec(compile(source, cell_filename, "exec"), _namespace)
+        fn = _namespace[cell_name]
+        kwargs = _kwargs_for(cell_name, fn, elements)
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(contextlib.redirect_stdout(stdout))
+            stack.enter_context(contextlib.redirect_stderr(stderr))
+            writes = stack.enter_context(cs.execution_context())
+            turtle_commands = (
+                stack.enter_context(turtle.execution_context()) if turtle_element is not None else None
+            )
+            if breakpoint_lines:
+                sys.settrace(_tracer)
+            try:
+                value = fn(**kwargs)
+            finally:
+                sys.settrace(None)
+        if len(return_names) == 1:
+            _namespace[return_names[0]] = value
+        elif len(return_names) > 1:
+            values = value if isinstance(value, tuple) else (value,)
+            if len(values) != len(return_names):
+                raise ValueError(
+                    f"cell {cell_name!r} returned {len(values)} values for {len(return_names)} names"
+                )
+            for name, item in zip(return_names, values):
+                _namespace[name] = item
+        if turtle_commands and turtle_element is not None:
+            writes.append(cs.ElementWrite(element_name=turtle_element, kind="turtle", content=turtle_commands))
+        element_names = {e.name for e in elements}
+        for write in writes:
+            if write.element_name not in element_names:
+                raise RuntimeError(
+                    f"cell {cell_name!r} called cs.{write.kind}({write.element_name!r}, ...) "
+                    f"but has no element named {write.element_name!r}"
+                )
+    except Exception:
+        return {
+            "status": "error",
+            "error": traceback.format_exc(),
+            "stdout": stdout.getvalue(),
+            "stderr": stderr.getvalue(),
+            "snapshots": snapshots,
+            "truncated": truncated["value"],
+        }
+    resolved = _output.resolve_output(value)
+    return {
+        "status": "idle",
+        "error": None,
+        "stdout": stdout.getvalue(),
+        "stderr": stderr.getvalue(),
+        "snapshots": snapshots,
+        "truncated": truncated["value"],
+        "finalValue": _output.wire_safe_value(value),
+        "finalKind": resolved.kind,
+        "finalData": resolved.data,
+    }
+
+def run_cell_with_breakpoints_b64(cell_name_b64, cells_json_b64, breakpoint_lines_json_b64):
+    """App.tsx's entry point for the step-through debugger's "Run with
+    breakpoints" action. breakpoint_lines_json_b64 decodes to a JSON
+    array of 1-indexed line numbers (Cell.tsx's own breakpointLines Set,
+    same shape as CodeEditor's highlightedLines), matching against
+    frame.f_lineno inside the cell's own source exactly like a normal
+    IDE gutter breakpoint would. Runs ONLY this one cell (via
+    _debug_run_one) -- never its dependents/upstream, unlike
+    run_cell_and_dependents_b64 -- since a debug run's purpose is
+    inspecting how the CELL ITSELF gets from start to its return value,
+    not re-propagating that value through the rest of the deck (the
+    caller can always follow up with an ordinary run to do that)."""
+    cell_name = _decode(cell_name_b64)
+    deck = _build_deck(cells_json_b64)
+    cell = deck.cells[cell_name]
+    breakpoint_lines = set(json.loads(_decode(breakpoint_lines_json_b64)))
+    result = _debug_run_one(cell_name, cell.source, cell.elements, breakpoint_lines)
+    _run_once.add(cell_name)
+    return json.dumps(result)
 
 def _define_one(cell_name, source):
     """Mirrors kernel.py's define_cell: compile the cell's function and
@@ -954,6 +1154,29 @@ export async function onElementChangedClientSide(
 // "test source has no reads/writes of its own to the graph" rule
 // on_tests_edited's own docstring gives for skipping any graph
 // recomputation.
+// Step-through debugger's "Run with breakpoints" action (Cell.tsx). Runs
+// only `cellName` itself (never its dependents/upstream -- see
+// run_cell_with_breakpoints_b64's own docstring for why); the caller is
+// expected to have already run the deck normally at least once so this
+// cell's own upstream reads already resolve, exactly the same
+// precondition runCellClientSide's own missing-upstream backfill exists
+// for on an ordinary run, just not replicated here since a debug run's
+// whole point is a single cell's own internal step-by-step state, not
+// full-deck reactivity.
+export async function runCellWithBreakpointsClientSide(
+  cellName: string,
+  allCells: Record<string, PyodideCellInput>,
+  breakpointLines: ReadonlySet<number>,
+): Promise<PyodideDebugRunResult> {
+  const pyodide = await getPyodide()
+  await ensureMatplotlibIfNeeded(pyodide, allCells)
+  const cellsB64 = toBase64(JSON.stringify(allCells))
+  const breakpointLinesB64 = toBase64(JSON.stringify([...breakpointLines]))
+  const call = `run_cell_with_breakpoints_b64(${JSON.stringify(toBase64(cellName))}, ${JSON.stringify(cellsB64)}, ${JSON.stringify(breakpointLinesB64)})`
+  const resultJson = await pyodide.runPythonAsync(call)
+  return JSON.parse(resultJson as string) as PyodideDebugRunResult
+}
+
 export async function runTestClientSide(
   cellName: string,
   testSource: string,
