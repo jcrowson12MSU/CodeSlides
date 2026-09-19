@@ -1,141 +1,210 @@
-# College Application Reviewer
-#
-# Sample solution for labs/chapter4-lab-ideas.md.
-#
-# Rules followed: no loops, no functions, no lists/dicts/tuples/sets.
-# Every decision is made with if/elif/else on strings (or, where noted,
-# on a length/int derived from a string). Home state for the in-state
-# tuition check is Michigan ("MI").
+# College Application Evaluator
 
-applicant_name = input("Applicant name: ")
-state = input("State (2-letter code): ")
-intended_major = input("Intended major: ")
-gpa_text = input("GPA (format X.XX, e.g. 3.85): ")
-test_score_text = input("Test score: ")
-essay = input("Short essay (one paragraph, one line): ")
-recommendation_text = input("Line from a letter of recommendation: ")
-activities = input("Extracurriculars (comma-separated): ")
-email = input("Email address: ")
-special_program_code = input("Special program code (or leave blank): ")
-
-print()
-print("===== Admissions Decision Letter =====")
-print("Applicant:", applicant_name)
+print("========================================")
+print("College Application Evaluator")
+print("========================================")
 print()
 
-# --- 1. Name formatting check ---
-if "," in applicant_name:
-    print("1. Please resubmit your name in 'First Last' format.")
+# ---------------------------------------------------------
+# Get applicant information
+# ---------------------------------------------------------
+
+name = input("Applicant name: ")
+state = input("State of residence: ")
+gpa = float(input("High school GPA: "))
+act = int(input("ACT score: "))
+math_act = int(input("ACT Math score: "))
+english_act = int(input("ACT English score: "))
+service_hours = int(input("Community service hours: "))
+activities = int(input("Number of extracurricular activities: "))
+first_generation = input("First-generation college student? (yes/no): ")
+major = input("Intended major: ")
+
+print()
+print("Application Results for", name)
+print("----------------------------------------")
+
+
+# ---------------------------------------------------------
+# 1. Basic GPA requirement
+# ---------------------------------------------------------
+
+if gpa >= 2.5:
+    print("GPA requirement: MET")
 else:
-    print("1. Name on file:", applicant_name)
+    print("GPA requirement: NOT MET")
 
-# --- 2. In-state vs. out-of-state ---
-if state.upper() == "MI":
-    print("2. In-state tuition rate applies.")
+
+# ---------------------------------------------------------
+# 2. Basic ACT requirement
+# ---------------------------------------------------------
+
+if act >= 18:
+    print("ACT requirement: MET")
 else:
-    print("2. Out-of-state tuition rate applies.")
+    print("ACT requirement: NOT MET")
 
-# --- 3. Major recognized or "Undeclared" fallback ---
-if intended_major.strip() == "":
-    print("3. No major entered -- you will start as Undeclared.")
-else:
-    print("3. Intended major on file:", intended_major)
 
-# --- 4. STEM vs. non-STEM welcome message ---
-print("4. Welcome to the university!")
-major_lower = intended_major.lower()
-if "computer" in major_lower:
-    print("4. Welcome to the College of Engineering and Computing!")
-if "engineer" in major_lower:
-    print("4. Welcome to the College of Engineering and Computing!")
-if "math" in major_lower:
-    print("4. Welcome to the College of Natural Science!")
-if "bio" in major_lower:
-    print("4. Welcome to the College of Natural Science!")
+# ---------------------------------------------------------
+# 3. Admission decision
+#
+# Students need both the minimum GPA and ACT.
+# Nested if statements are used instead of "and".
+# ---------------------------------------------------------
 
-# --- 5. GPA band (string comparison, no float conversion) ---
-if gpa_text >= "3.9":
-    gpa_band = "Highest Honors"
-elif gpa_text >= "3.5":
-    gpa_band = "Honors"
-elif gpa_text >= "2.0":
-    gpa_band = "Standard"
-else:
-    gpa_band = "Needs Review"
-print("5. GPA band:", gpa_band)
-
-# --- 6. Test score sanity check ---
-if not test_score_text.isdigit():
-    print("6. Test score must be numeric -- skipping test score review.")
-    test_score_ok = False
-else:
-    test_score_ok = True
-    test_score = int(test_score_text)
-    print("6. Test score on file:", test_score)
-
-# --- 7. Essay length gate ---
-if len(essay) < 50:
-    print("7. Your essay seems short -- consider expanding it.")
-else:
-    print("7. Essay length is sufficient.")
-
-# --- 8. Recommendation sentiment keyword check ---
-recommendation_lower = recommendation_text.lower()
-flagged_recommendation = False
-if "exceptional" in recommendation_lower:
-    flagged_recommendation = True
-if "outstanding" in recommendation_lower:
-    flagged_recommendation = True
-if "one of the best" in recommendation_lower:
-    flagged_recommendation = True
-
-if flagged_recommendation:
-    print("8. Recommendation flagged for scholarship review.")
-else:
-    print("8. Recommendation on file, no special flag.")
-
-# --- 9. Extracurricular count via .count() ---
-activity_count = activities.count(",")
-if activity_count == 0:
-    print("9. Consider listing at least one activity.")
-elif activity_count == 1:
-    print("9. Nice start -- consider getting involved further.")
-else:
-    print("9. Well-rounded applicant.")
-
-# --- 10. Email format check ---
-if "@" not in email or (not email.endswith(".com") and not email.endswith(".edu") and not email.endswith(".org")):
-    print("10. Email address looks malformed and won't be used for correspondence.")
-else:
-    print("10. Email on file:", email)
-
-# --- 11. Optional scholarship code, nested if ---
-if special_program_code.strip() != "":
-    if special_program_code == "FIRSTGEN":
-        print("11. Flagged for First-Generation Student scholarship review.")
-    elif special_program_code == "VETERAN":
-        print("11. Flagged for Veteran scholarship review.")
-    elif special_program_code == "LEGACY":
-        print("11. Flagged for Legacy scholarship review.")
+if gpa >= 2.5:
+    if act >= 18:
+        print("Admission status: ADMITTED")
     else:
-        print("11. Unrecognized program code -- no scholarship review triggered.")
+        print("Admission status: NOT ADMITTED")
 else:
-    print("11. No special program code entered.")
+    print("Admission status: NOT ADMITTED")
 
-# --- 12. Overall decision line combining multiple conditions ---
-honors_or_above = False
-if gpa_band == "Highest Honors":
-    honors_or_above = True
-if gpa_band == "Honors":
-    honors_or_above = True
 
-if honors_or_above and flagged_recommendation:
-    decision = "Admit with Distinction"
-elif honors_or_above or flagged_recommendation:
-    decision = "Admit"
+# ---------------------------------------------------------
+# 4. Automatic admission
+#
+# Strong applicants can qualify automatically.
+# ---------------------------------------------------------
+
+if gpa >= 3.5:
+    if act >= 24:
+        print("Automatic admission: YES")
+    else:
+        print("Automatic admission: NO")
 else:
-    decision = "Refer to Committee"
+    print("Automatic admission: NO")
+
+
+# ---------------------------------------------------------
+# 5. Academic scholarship
+#
+# Cascade from the highest scholarship downward.
+# ---------------------------------------------------------
+
+scholarship = 0
+
+if gpa >= 3.9:
+    if act >= 32:
+        scholarship = 12000
+
+if scholarship == 0:
+    if gpa >= 3.7:
+        if act >= 28:
+            scholarship = 8000
+
+if scholarship == 0:
+    if gpa >= 3.5:
+        if act >= 25:
+            scholarship = 5000
+
+if scholarship == 0:
+    if gpa >= 3.2:
+        if act >= 22:
+            scholarship = 2000
+
+print("Academic scholarship: $", scholarship, sep="")
+
+
+# ---------------------------------------------------------
+# 6. Honors College eligibility
+# ---------------------------------------------------------
+
+if gpa >= 3.7:
+    if act >= 28:
+        print("Honors College: ELIGIBLE")
+    else:
+        print("Honors College: NOT ELIGIBLE")
+else:
+    print("Honors College: NOT ELIGIBLE")
+
+
+# ---------------------------------------------------------
+# 7. Engineering placement
+#
+# Engineering students need a minimum math ACT.
+# ---------------------------------------------------------
+
+if major.lower() == "engineering":
+    if math_act >= 24:
+        print("Engineering placement: READY FOR CALCULUS TRACK")
+    else:
+        print("Engineering placement: MATH PLACEMENT REQUIRED")
+
+
+# ---------------------------------------------------------
+# 8. English placement
+# ---------------------------------------------------------
+
+if english_act >= 26:
+    print("English placement: ADVANCED COMPOSITION")
+elif english_act >= 20:
+    print("English placement: COMPOSITION I")
+else:
+    print("English placement: DEVELOPMENTAL SUPPORT RECOMMENDED")
+
+
+# ---------------------------------------------------------
+# 9. Community leadership award
+# ---------------------------------------------------------
+
+if service_hours >= 100:
+    if activities >= 3:
+        print("Leadership award: ELIGIBLE")
+    else:
+        print("Leadership award: NOT ELIGIBLE")
+else:
+    print("Leadership award: NOT ELIGIBLE")
+
+
+# ---------------------------------------------------------
+# 10. First-generation student program
+# ---------------------------------------------------------
+
+if first_generation.lower() == "yes":
+    print("First-generation support program: ELIGIBLE")
+else:
+    print("First-generation support program: NOT ELIGIBLE")
+
+
+# ---------------------------------------------------------
+# 11. Out-of-state tuition status
+# ---------------------------------------------------------
+
+if state.lower() == "mississippi":
+    print("Tuition classification: IN-STATE")
+else:
+    print("Tuition classification: OUT-OF-STATE")
+
+
+# ---------------------------------------------------------
+# 12. Out-of-state tuition scholarship
+# ---------------------------------------------------------
+
+if state.lower() != "mississippi":
+    if gpa >= 3.5:
+        if act >= 26:
+            print("Out-of-state tuition waiver: ELIGIBLE")
+        else:
+            print("Out-of-state tuition waiver: NOT ELIGIBLE")
+    else:
+        print("Out-of-state tuition waiver: NOT ELIGIBLE")
+
+
+# ---------------------------------------------------------
+# 13. Presidential scholarship interview
+# ---------------------------------------------------------
+
+if gpa >= 3.9:
+    if act >= 30:
+        if service_hours >= 50:
+            print("Presidential Scholarship interview: INVITED")
+
+
+# ---------------------------------------------------------
+# Final message
+# ---------------------------------------------------------
 
 print()
-print("12. Final decision:", decision)
-print("=======================================")
+print("Application evaluation complete.")
+
