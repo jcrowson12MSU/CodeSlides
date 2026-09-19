@@ -1,10 +1,10 @@
 # LAB ACTIVITY: College Application Evaluator
 
-## Lab: College Application Evaluator
+## Lab 2: College Application Evaluator
 
 ### Overview
 
-You'll write a single Python script that models how a university might
+You'll write a single Python script that models how a college might
 screen an incoming application: minimum admission requirements,
 automatic admission, a tiered academic scholarship, Honors College
 eligibility, major-based placement, a leadership award, a
@@ -16,13 +16,9 @@ handling.
 
 ### Required Sections
 
-Your script must contain **Milestones 2-6**, in order, on one file.
+Your script must contain **Milestones 1-5**, in order, on one file.
 
-#### Milestone 1 (10 pts): IDE setup
-
-To get credit, you need to have an IDE installed.
-
-#### Milestone 2 (15 pts): Applicant Information
+#### Milestone 1 (20 pts): Applicant Information
 
 1) Prompt for:
 
@@ -41,7 +37,7 @@ To get credit, you need to have an IDE installed.
 3) Generate output to match the example below, including the
    `Application Results for <name>` header.
 
-#### Milestone 3 (15 pts): Basic Requirements and Admission Decision
+#### Milestone 2 (20 pts): Basic Requirements and Admission Decision
 
 1) Check the **GPA requirement**: met if GPA is 2.5 or higher.
 
@@ -54,7 +50,7 @@ To get credit, you need to have an IDE installed.
 
 4) Generate output to match the example below.
 
-#### Milestone 4 (20 pts): Automatic Admission and Academic Scholarship
+#### Milestone 3 (20 pts): Automatic Admission and Academic Scholarship
 
 1) Determine **automatic admission**: `YES` only if GPA is 3.5 or
    higher *and* ACT is 24 or higher (nested `if`, not `and`).
@@ -76,7 +72,7 @@ To get credit, you need to have an IDE installed.
 
 3) Generate output to match the example below.
 
-#### Milestone 5 (20 pts): Placement and Recognition
+#### Milestone 4 (20 pts): Placement and Recognition
 
 1) Determine **Honors College** eligibility: `ELIGIBLE` only if GPA is
    3.7 or higher *and* ACT is 28 or higher.
@@ -100,7 +96,7 @@ To get credit, you need to have an IDE installed.
 
 6) Generate output to match the example below.
 
-#### Milestone 6 (20 pts): Tuition and Presidential Scholarship
+#### Milestone 5 (20 pts): Tuition and Presidential Scholarship
 
 1) Determine **tuition classification**: `IN-STATE` if the applicant's
    state (compared case-insensitively) is your home state, otherwise
@@ -118,36 +114,23 @@ To get credit, you need to have an IDE installed.
 
 4) Generate output to match the example below.
 
-### Formatting requirements
-
-- Use a clear banner/header (`====...====`) at the top and a
-  `Application Results for <name>` header before the decision output.
-- Every decision line should read as `<Label>: <RESULT>`, with the
-  result in capital letters (e.g. `GPA requirement: MET`), except the
-  scholarship dollar amount, which should print as `$<amount>` with no
-  decimal places (e.g. `$8000`).
-- End the program with a clear "evaluation complete" closing line.
-
 ### Deliverables
 
 Submit all of the following together:
 
-1) **One `.py` file** containing all six sections, including comments
+1) **One `.py` file** containing all five sections, including comments
    and blank lines for spacing.
 2) Your code should be commented. Not commenting your code will
    result in -10 points. Comment headers should mark each numbered
-   requirement (matching Milestones 3-6 above) so a grader can find
+   requirement (matching Milestones 2-5 above) so a grader can find
    each one quickly.
-3) Each submission should have a description of what you changed for
-   each submission. Not doing this counts the same as not commenting
-   your code.
-4) To receive credit for the assignment, you need to complete a check
+3) To receive credit for the assignment, you need to complete a check
    off with one of the lab TAs.
    - The TA will ask you questions about your code. If you cannot
      answer the TA's questions, you will not receive credit for the
      assignment. Checkoffs can be attempted multiple times.
 
-### Example Output
+### Example Output 1
 
 ```text
 Applicant name: Taylor Morgan
@@ -189,9 +172,99 @@ what the program asks for — in your actual program, `print()` the
 banner first, then prompt for input, matching the order in Milestone
 2.)*
 
-### Before you submit: self-check
+Example 1 is a strong out-of-state applicant, so it shows what
+happens when almost every branch's best-case line prints, including
+the Presidential Scholarship invitation and a full $12,000 scholarship
+award.
 
-- All six Milestones are present, in order, and clearly labeled.
+### Example Output 2
+
+```text
+Applicant name: Priya Nair
+State of residence: Mississippi
+High school GPA: 3.6
+ACT score: 25
+ACT Math score: 21
+ACT English score: 24
+Community service hours: 80
+Number of extracurricular activities: 2
+First-generation college student? (yes/no): yes
+Intended major: Biology
+
+========================================
+College Application Evaluator
+========================================
+
+Application Results for Priya Nair
+----------------------------------------
+GPA requirement: MET
+ACT requirement: MET
+Admission status: ADMITTED
+Automatic admission: YES
+Academic scholarship: $5000
+Honors College: NOT ELIGIBLE
+English placement: COMPOSITION I
+Leadership award: NOT ELIGIBLE
+First-generation support program: ELIGIBLE
+Tuition classification: IN-STATE
+
+Application evaluation complete.
+```
+
+Example 2 is an in-state, non-Engineering applicant whose GPA and ACT
+land in the middle of the scholarship table. Notice two things this
+example demonstrates that Example 1 doesn't: the **Engineering
+placement** line is completely absent (the major isn't Engineering, so
+that section prints nothing), and there's no out-of-state tuition
+waiver or Presidential Scholarship line at all, because both of those
+sections only ever print for an out-of-state applicant.
+
+### Example Output 3
+
+```text
+Applicant name: Devon Marsh
+State of residence: Tennessee
+High school GPA: 2.0
+ACT score: 16
+ACT Math score: 18
+ACT English score: 17
+Community service hours: 20
+Number of extracurricular activities: 1
+First-generation college student? (yes/no): no
+Intended major: Undecided
+
+========================================
+College Application Evaluator
+========================================
+
+Application Results for Devon Marsh
+----------------------------------------
+GPA requirement: NOT MET
+ACT requirement: NOT MET
+Admission status: NOT ADMITTED
+Automatic admission: NO
+Academic scholarship: $0
+Honors College: NOT ELIGIBLE
+English placement: DEVELOPMENTAL SUPPORT RECOMMENDED
+Leadership award: NOT ELIGIBLE
+First-generation support program: NOT ELIGIBLE
+Tuition classification: OUT-OF-STATE
+Out-of-state tuition waiver: NOT ELIGIBLE
+
+Application evaluation complete.
+```
+
+Example 3 is the required "fails the basic requirements" case from the
+self-check below. It's also out-of-state, so unlike Example 2, the
+out-of-state tuition waiver line *does* print here — just as `NOT
+ELIGIBLE`, since the GPA/ACT minimums for the waiver aren't met either.
+This is the example to compare your own output against if a section
+you expect to see is missing or a section you expect to be silent is
+printing anyway.
+
+### self-check
+
+- All 5 Milestones are present, in order, and clearly labeled.
 - Every scholarship tier is checked from highest to lowest, and only
   one tier is ever awarded.
 - Nested `if` statements, not `and`, are used everywhere a milestone
@@ -199,6 +272,6 @@ banner first, then prompt for input, matching the order in Milestone
 - The Engineering placement section prints nothing for a non-Engineering
   major, and the Presidential Scholarship line prints nothing when the
   applicant doesn't qualify.
-- You ran the script at least twice with different inputs — including
-  once with an applicant who fails the basic GPA/ACT requirements —
-  and verified the outputs.
+- You ran the script at least three times with different inputs —
+  including once with an applicant who fails the basic GPA/ACT
+  requirements — and verified the outputs against Examples 1-3 above.
