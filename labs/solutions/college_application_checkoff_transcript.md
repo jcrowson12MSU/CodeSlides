@@ -91,18 +91,10 @@ TA has a known-correct baseline before doing checkoffs with students.
    Python is case-sensitive, so comparing the lowered value is what
    makes the check robust to how a real applicant would type it.
 
-5. **"Walk through why Riley Chen's scholarship is $8000 and not
-   $12000, given a 3.7 GPA and a 28 ACT."** The $12000 tier requires
+5. **"Walk through why Riley Chen's scholarship is \$8000 and not
+   \$12000, given a 3.7 GPA and a 28 ACT."** The \$12000 tier requires
    GPA >= 3.9, which 3.7 does not satisfy, so that block is skipped
    entirely; the code then checks `if scholarship == 0:` (true, since
-   nothing has matched yet) and evaluates the $8000 tier, where both
+   nothing has matched yet) and evaluates the \$8000 tier, where both
    3.7 >= 3.7 and 28 >= 28 hold, so `scholarship` becomes `8000` and no
    later tier is checked because the guard now fails.
-
-## Overall result
-
-All three runs matched expected behavior, the manual's example output
-is verified accurate, and the reference solution can correctly answer
-every checkoff-style question above. The checkoff process described in
-`labs/college_application_evaluator_manual.md` is confirmed workable
-end-to-end.
