@@ -50,6 +50,8 @@ Your script must contain **Milestones 1-5**, in order, on one file.
 
 4) Generate output to match the example below.
 
+\newpage
+
 #### Milestone 3 (20 pts): Automatic Admission and Academic Scholarship
 
 1) Determine **automatic admission**: `YES` only if GPA is 3.5 or
@@ -95,6 +97,8 @@ Your script must contain **Milestones 1-5**, in order, on one file.
    case-insensitively).
 
 6) Generate output to match the example below.
+
+\newpage
 
 #### Milestone 5 (20 pts): Tuition and Presidential Scholarship
 
