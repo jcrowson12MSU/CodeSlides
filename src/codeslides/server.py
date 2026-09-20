@@ -138,6 +138,21 @@ def create_app(
         title = Path(api.state.deck_path).stem if api.state.deck_path else "Untitled deck"
         return {
             "title": title,
+            # The literal source text of every top-level `import`/`from
+            # ... import` statement in the deck's own .py file (empty for
+            # a Deck with no backing file, e.g. this test suite's
+            # in-process App() decks -- same case `deck.imports` itself
+            # is empty in). `deck.imports` (the *resolved* name->object
+            # dict loader.py also builds from this same source) is
+            # deliberately NOT sent here -- it holds live objects
+            # (an actual `random` module, ...) meaningful only inside
+            # this server process, with no JSON encoding. pyodideKernel.ts
+            # instead executes this text itself, once, in its own
+            # Pyodide interpreter, binding the same names to Pyodide's
+            # own copies of those modules -- the client-side equivalent
+            # of kernel.py's execute_cell merging `deck.imports` into
+            # every cell's globals.
+            "module_import_source": d.module_import_source,
             "cells": {
                 name: {
                     "instance": cell.instance,

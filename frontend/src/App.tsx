@@ -9,6 +9,7 @@ import {
   runAllClientSide,
   runCellClientSide,
   runTestClientSide,
+  setDeckImportsClientSide,
   subscribePyodideStatus,
   type PyodideCellInput,
   type PyodideCellResult,
@@ -30,6 +31,12 @@ interface DeckSummary {
   title: string
   cells: Record<string, CellMeta>
   slides: SlideMeta[]
+  // The deck's own top-level import/from...import statements, exactly
+  // as server.py's /api/deck sends them (deck.module_import_source,
+  // loader.py) -- "" for a Deck with no backing file. Applied once,
+  // client-side, via setDeckImportsClientSide right after this response
+  // arrives (see that function's own docstring for why).
+  module_import_source: string
 }
 
 type ViewMode = 'cells' | 'slides'
@@ -409,7 +416,17 @@ function App() {
   useEffect(() => {
     fetch('/api/deck')
       .then((r) => r.json())
-      .then(setDeck)
+      .then((json: DeckSummary) => {
+        // Applied before setDeck (below) so it's already in effect by
+        // the time the `sessionId && deck` auto-run effect further down
+        // fires handleRunAll() off this same `deck` state update -- a
+        // cell reading a deck-level import (examples/marchingSquares.py's
+        // createMatrix reading `random`) must resolve it on that very
+        // first run, not just on some later re-run. set_deck_imports_b64
+        // is idempotent and a no-op on "", so this is always safe to
+        // call, including for a Deck with no backing file.
+        setDeckImportsClientSide(json.module_import_source ?? '').finally(() => setDeck(json))
+      })
       .catch(() => setDeck(null))
   }, [])
 

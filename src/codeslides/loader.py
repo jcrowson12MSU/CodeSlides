@@ -38,6 +38,78 @@ def _module_level_import_names(source: str) -> set[str]:
     return names
 
 
+def _module_level_import_source(source: str) -> str:
+    """The exact on-disk source text of every top-level `import`/`from
+    ... import` statement in `source` that imports something OTHER than
+    the `codeslides` package itself (see below), minus any bare, noop
+    `import turtle` too, one per line, in file order -- the client-side
+    (Pyodide) equivalent of `_module_level_import_names` above: rather
+    than resolving names to live Python objects (only meaningful in
+    *this* process), this hands the browser's own, separate Python
+    interpreter the literal statements to execute itself, so it binds
+    the same names to ITS OWN copies of those modules.
+
+    Every deck's on-disk source begins with some spelling of `from
+    codeslides import App, cs, turtle, ui` (confirmed by grep across
+    every example/lecture/lab deck in this repo -- there is no
+    exception). Executing that line for real client-side, the way this
+    function's own name suggests, is impossible and unnecessary at
+    once: Pyodide's own `codeslides` package (frontend/public/
+    codeslides_pyscript/, synced by sync-pyscript-modules.mjs) is
+    deliberately a minimal subset with no `app`/`ui` module at all --
+    `App`/`ui` are server-side, deck-*authoring* concerns (building the
+    Deck's structure from `@app.cell`/`@app.slide` decorators), already
+    fully resolved into plain `Cell`/`Element`/`Deck` objects by the time
+    anything reaches the browser, and genuinely meaningless inside a
+    cell body regardless. `cs`/`turtle` from that same line are already
+    separately seeded into every cell's globals by name, not by import
+    (this module's own `_namespace["cs"]`/`_namespace["turtle"]`) --
+    so a deck-authoring `from codeslides import ...` line has nothing
+    left in it this function needs to forward at all. Filtering by
+    `alias.name.split(".")[0] == "codeslides"` (covers `import
+    codeslides`/`import codeslides.cs as cs`/`from codeslides import
+    ...` alike) drops exactly that boilerplate line and nothing else --
+    a genuine third-party/stdlib import (`import random`, `from math
+    import sqrt`) still passes through untouched, which is the entire
+    point of this function.
+
+    `strip_noop_turtle_imports` IS also applied, same as `load_deck`'s
+    own use of it below for this same source -- unlike a cell body's
+    `import turtle` (already handled client-side by pyodideKernel.ts's
+    own `_compile_cell`), a deck can also have a bare top-level `import
+    turtle` outside any cell (examples/originalMarchingSquares.py does,
+    confirmed by grep, though that particular file turns out not to be
+    a loadable deck at all -- no `App()` -- the precaution still holds
+    for any deck that legitimately mixes the two). Forwarding that
+    statement's literal text to the client and exec'ing it for real
+    would just move the original ModuleNotFoundError from cell-execution
+    time to deck-load time instead of actually fixing it -- Pyodide has
+    no real `turtle` module to import either way."""
+    tree = ast.parse(source)
+    tree.body = strip_noop_turtle_imports(tree.body)
+    lines = []
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            # `import a, b` on one line, all(...) here, is deliberately
+            # all-or-nothing rather than dropping just the codeslides
+            # alias out of a mixed line -- confirmed by grep, no deck in
+            # this repo writes e.g. "import codeslides.cs, random" on one
+            # line (every codeslides import is its own statement), so
+            # reconstructing a partial import from a split alias list
+            # isn't worth the complexity for a shape nothing produces.
+            if all(alias.name.split(".")[0] == "codeslides" for alias in node.names):
+                continue
+        elif isinstance(node, ast.ImportFrom):
+            if node.module is not None and node.module.split(".")[0] == "codeslides":
+                continue
+        else:
+            continue
+        segment = ast.get_source_segment(source, node)
+        if segment is not None:
+            lines.append(segment)
+    return "\n".join(lines)
+
+
 def load_deck(path: str) -> Deck:
     """Import a deck .py file as a module and return its App's Deck.
     The file must define exactly one module-level `codeslides.App`
@@ -100,4 +172,5 @@ def load_deck(path: str) -> Deck:
     # already does for `cs`/`turtle`.
     import_names = _module_level_import_names(source)
     deck.imports = {name: module.__dict__[name] for name in import_names if name in module.__dict__}
+    deck.module_import_source = _module_level_import_source(source)
     return deck
