@@ -120,6 +120,52 @@ def _return_names_for(source):
         raise ValueError(f"expected exactly one function definition, found {len(func_defs)}")
     return extract_return_names(func_defs[0])
 
+def _strip_noop_turtle_imports(stmts):
+    """Port of kernel.py's strip_noop_turtle_imports: drop every bare
+    'import turtle' statement (not 'import turtle as t', not 'from
+    turtle import forward') from a cell function's body before it's
+    compiled/exec'd. _namespace["turtle"] (see above) already IS
+    codeslides.turtle for every cell -- a real 'import turtle' executing
+    here would try to import the actual stdlib module, which doesn't
+    exist at all in this Pyodide runtime (no tkinter), turning any cell
+    whose on-disk source keeps 'import turtle' for its OWN "also runs
+    standalone via python3 my_lesson.py" purpose (examples/
+    marchingSquares.py's setup cell, among others) into a guaranteed
+    ModuleNotFoundError the moment it runs in-app. kernel.py's server-side
+    _compile_cell_function already stripped this same statement before
+    the client-side Pyodide port (TODO.md #64) replaced it; porting the
+    exec call without also porting this step is exactly what let the
+    ModuleNotFoundError back in here."""
+    return [
+        stmt
+        for stmt in stmts
+        if not (
+            isinstance(stmt, ast.Import)
+            and len(stmt.names) == 1
+            and stmt.names[0].name == "turtle"
+            and stmt.names[0].asname is None
+        )
+    ]
+
+def _compile_cell(source, filename):
+    """Parse a cell's source, strip any noop 'import turtle' from its
+    one function's body (_strip_noop_turtle_imports), and compile the
+    result -- the exact AST-level equivalent of what kernel.py's
+    _compile_cell_function does server-side, replicated here (rather
+    than reused) because that function also rebuilds a fresh
+    types.FunctionType bound to a different __globals__ dict, a step
+    every call site here already does its own way via plain
+    exec(..., _namespace). Every site that exec(compile(source, ...))s
+    a CELL's own source (never a test box's source -- kernel.py's own
+    run_tests never strips this either, see its docstring) should call
+    this instead of compile() directly."""
+    tree = ast.parse(source)
+    func_defs = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    if len(func_defs) == 1:
+        func_defs[0].body = _strip_noop_turtle_imports(func_defs[0].body)
+        ast.fix_missing_locations(tree)
+    return compile(tree, filename, "exec")
+
 _INPUT_KINDS = {"slider", "button", "text_input"}
 
 def _kwargs_for(cell_name, fn, elements):
@@ -180,7 +226,7 @@ def _execute_one(cell_name, source, elements):
     turtle_element = _find_turtle_canvas(elements)
     try:
         return_names = _return_names_for(source)
-        exec(compile(source, f"<cell:{cell_name}>", "exec"), _namespace)
+        exec(_compile_cell(source, f"<cell:{cell_name}>"), _namespace)
         fn = _namespace[cell_name]
         kwargs = _kwargs_for(cell_name, fn, elements)
         with contextlib.ExitStack() as stack:
@@ -403,7 +449,7 @@ def _debug_run_one(cell_name, source, elements, breakpoint_lines):
 
     try:
         return_names = _return_names_for(source)
-        exec(compile(source, cell_filename, "exec"), _namespace)
+        exec(_compile_cell(source, cell_filename), _namespace)
         fn = _namespace[cell_name]
         kwargs = _kwargs_for(cell_name, fn, elements)
         with contextlib.ExitStack() as stack:
@@ -498,7 +544,7 @@ def _define_one(cell_name, source):
     TypeError from. A test's own call into the function (with whatever
     arguments IT chooses) is the only thing that ever actually invokes
     a tested cell's body, exactly like the server-side flow."""
-    exec(compile(source, f"<cell:{cell_name}>", "exec"), _namespace)
+    exec(_compile_cell(source, f"<cell:{cell_name}>"), _namespace)
 
 _READABLE_INPUT_KINDS = ("text_input", "slider")
 
