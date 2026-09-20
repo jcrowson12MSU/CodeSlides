@@ -220,6 +220,21 @@ class Deck:
     # works the way it would in an ordinary script, instead of needing
     # every cell that uses it to repeat its own local import.
     imports: dict[str, Any] = field(default_factory=dict)
+    # The exact on-disk source text of every top-level import statement
+    # `imports` above was resolved from (also populated by loader.py's
+    # `load_deck`, empty in the same cases `imports` is) -- e.g.
+    # "import random\nfrom math import sqrt, pi". `imports` itself holds
+    # live Python *objects* (the actual `random` module, `sqrt`
+    # function, ...), which only ever means something inside this same
+    # server process/its own Python interpreter -- there's no way to
+    # serialize a module object over `/api/deck`'s JSON response to the
+    # browser's own, separate Pyodide interpreter. This field is the
+    # client-side equivalent: server.py's `/api/deck` sends this text
+    # straight through, and pyodideKernel.ts executes it once, itself,
+    # in its own `_namespace`, so the browser ends up with the very same
+    # *names* bound (to Pyodide's own `random`/`math` module objects,
+    # not this process's), the same way loader.py gets `imports` here.
+    module_import_source: str = ""
 
     def add_cell(self, cell: Cell) -> None:
         if cell.name in self.cells:

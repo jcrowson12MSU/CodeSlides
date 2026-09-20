@@ -306,8 +306,11 @@ _namespace = {}
 # codeslides as cs" isn't how a cell's source actually gets cs/turtle
 # at all; the deck author's source never imports them itself (see
 # examples/live_demo.py), the runtime injects them by name instead.
-# deck_imports (the third thing kernel.py seeds alongside these) isn't
-# ported yet -- out of scope for this slice, same as elements/kwargs.
+# deck_imports (the third thing kernel.py seeds alongside these) is
+# handled separately, by set_deck_imports_b64 below -- unlike cs/turtle,
+# it isn't known yet at this point (it comes from the deck's own .py
+# file, fetched over /api/deck, which resolves after this module already
+# finished loading), so it can't be seeded here.
 _namespace["cs"] = cs
 _namespace["turtle"] = turtle
 
@@ -365,6 +368,62 @@ _element_values = {}
 def _decode(b64):
     return base64.b64decode(b64).decode("utf-8")
 
+# Whether set_deck_imports_b64 (below) has already run once in this
+# tab. deck.module_import_source (server.py's /api/deck) is static for
+# the lifetime of a page load -- the same deck file's own top-level
+# imports never change between an ordinary cell run and the next -- so
+# there's nothing to gain by re-exec'ing the same statements on every
+# single run_all/run_cell call the way App.tsx's callers already do for
+# _build_deck's own cells_json_b64 (which genuinely does change on every
+# call, as the user edits). Guarding this means the *caller* doesn't
+# need its own bookkeeping for "have I already called this" -- it's
+# always safe (and a no-op past the first call) to call
+# set_deck_imports_b64 again, which matters because App.tsx fetches
+# /api/deck (and so learns module_import_source) asynchronously,
+# possibly interleaved with the very first run_all triggered by the
+# same page load.
+_deck_imports_applied = False
+
+def set_deck_imports_b64(module_import_source_b64):
+    """The client-side equivalent of kernel.py's deck_imports seeding
+    (execute_cell/run_tests/run_all's own '**(deck_imports or {})'):
+    exec module_import_source_b64 (deck.module_import_source, server.py's
+    /api/deck -- the deck's own top-level import/from...import
+    statements, exactly as written in its .py file, already stripped of
+    any noop 'import turtle' by loader.py's own
+    _module_level_import_source) directly into _namespace, so every cell
+    sees the same names a deck-wide 'import random' at the top of the
+    file would bind in an ordinary script -- instead of only whichever
+    cell happens to import random itself (previously the ONLY way any
+    cell got a deck-level import client-side, since this function didn't
+    exist -- confirmed by hand: examples/marchingSquares.py's
+    createMatrix reads random.randint(...) but never imports random
+    itself, relying entirely on the file's own top-level 'import random'
+    the same way any other cell already relies on cs/turtle being
+    present without importing them).
+
+    Also folds the newly-bound names into _NAMESPACE_BASELINE_KEYS (the
+    "not a test's own variable" snapshot _debug_run_test's tracer
+    filtering relies on) -- without this, a deck-level random would be
+    wrongly reported as if a test itself had just assigned it, the exact
+    failure mode that constant's own docstring already describes for
+    cs/turtle, just reached through a different seeding path.
+
+    Idempotent (via _deck_imports_applied) and safe to call with an
+    empty string (an in-process-only Deck with no backing file, or the
+    empty default before /api/deck resolves) -- exec("", ...) is a
+    harmless no-op, so callers never need to special-case "nothing to
+    import" themselves."""
+    global _deck_imports_applied, _NAMESPACE_BASELINE_KEYS
+    if _deck_imports_applied:
+        return
+    source = _decode(module_import_source_b64)
+    before = set(_namespace.keys())
+    exec(compile(source, "<deck-imports>", "exec"), _namespace)  # noqa: S102 - deck's own trusted source
+    new_keys = set(_namespace.keys()) - before
+    _NAMESPACE_BASELINE_KEYS = frozenset(_NAMESPACE_BASELINE_KEYS | new_keys)
+    _deck_imports_applied = True
+
 def _build_deck(cells_json_b64):
     """cells_json_b64 decodes to a JSON object of
     {cell_name: {"source": str, "elements": [{"name", "kind", "config"}]}}
@@ -396,6 +455,52 @@ def _return_names_for(source):
     if len(func_defs) != 1:
         raise ValueError(f"expected exactly one function definition, found {len(func_defs)}")
     return extract_return_names(func_defs[0])
+
+def _strip_noop_turtle_imports(stmts):
+    """Port of kernel.py's strip_noop_turtle_imports: drop every bare
+    'import turtle' statement (not 'import turtle as t', not 'from
+    turtle import forward') from a cell function's body before it's
+    compiled/exec'd. _namespace["turtle"] (see above) already IS
+    codeslides.turtle for every cell -- a real 'import turtle' executing
+    here would try to import the actual stdlib module, which doesn't
+    exist at all in this Pyodide runtime (no tkinter), turning any cell
+    whose on-disk source keeps 'import turtle' for its OWN "also runs
+    standalone via python3 my_lesson.py" purpose (examples/
+    marchingSquares.py's setup cell, among others) into a guaranteed
+    ModuleNotFoundError the moment it runs in-app. kernel.py's server-side
+    _compile_cell_function already stripped this same statement before
+    the client-side Pyodide port (TODO.md #64) replaced it; porting the
+    exec call without also porting this step is exactly what let the
+    ModuleNotFoundError back in here."""
+    return [
+        stmt
+        for stmt in stmts
+        if not (
+            isinstance(stmt, ast.Import)
+            and len(stmt.names) == 1
+            and stmt.names[0].name == "turtle"
+            and stmt.names[0].asname is None
+        )
+    ]
+
+def _compile_cell(source, filename):
+    """Parse a cell's source, strip any noop 'import turtle' from its
+    one function's body (_strip_noop_turtle_imports), and compile the
+    result -- the exact AST-level equivalent of what kernel.py's
+    _compile_cell_function does server-side, replicated here (rather
+    than reused) because that function also rebuilds a fresh
+    types.FunctionType bound to a different __globals__ dict, a step
+    every call site here already does its own way via plain
+    exec(..., _namespace). Every site that exec(compile(source, ...))s
+    a CELL's own source (never a test box's source -- kernel.py's own
+    run_tests never strips this either, see its docstring) should call
+    this instead of compile() directly."""
+    tree = ast.parse(source)
+    func_defs = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    if len(func_defs) == 1:
+        func_defs[0].body = _strip_noop_turtle_imports(func_defs[0].body)
+        ast.fix_missing_locations(tree)
+    return compile(tree, filename, "exec")
 
 _INPUT_KINDS = {"slider", "button", "text_input"}
 
@@ -457,7 +562,7 @@ def _execute_one(cell_name, source, elements):
     turtle_element = _find_turtle_canvas(elements)
     try:
         return_names = _return_names_for(source)
-        exec(compile(source, f"<cell:{cell_name}>", "exec"), _namespace)
+        exec(_compile_cell(source, f"<cell:{cell_name}>"), _namespace)
         fn = _namespace[cell_name]
         kwargs = _kwargs_for(cell_name, fn, elements)
         with contextlib.ExitStack() as stack:
@@ -680,7 +785,7 @@ def _debug_run_one(cell_name, source, elements, breakpoint_lines):
 
     try:
         return_names = _return_names_for(source)
-        exec(compile(source, cell_filename, "exec"), _namespace)
+        exec(_compile_cell(source, cell_filename), _namespace)
         fn = _namespace[cell_name]
         kwargs = _kwargs_for(cell_name, fn, elements)
         with contextlib.ExitStack() as stack:
@@ -775,7 +880,7 @@ def _define_one(cell_name, source):
     TypeError from. A test's own call into the function (with whatever
     arguments IT chooses) is the only thing that ever actually invokes
     a tested cell's body, exactly like the server-side flow."""
-    exec(compile(source, f"<cell:{cell_name}>", "exec"), _namespace)
+    exec(_compile_cell(source, f"<cell:{cell_name}>"), _namespace)
 
 _READABLE_INPUT_KINDS = ("text_input", "slider")
 
@@ -1374,6 +1479,26 @@ function toBase64(text: string): string {
   let binary = ''
   for (const byte of bytes) binary += String.fromCharCode(byte)
   return btoa(binary)
+}
+
+// Applies the deck's own top-level import/from...import statements
+// (server.py's /api/deck, deck.module_import_source -- see loader.py's
+// _module_level_import_source and this module's own Python-side
+// set_deck_imports_b64 for the full story) into this tab's shared
+// _namespace, exactly once -- the client-side equivalent of kernel.py
+// seeding deck_imports into every cell's globals. App.tsx calls this
+// right after its own fetch('/api/deck') resolves, before the first
+// runAllClientSide it triggers, so a cell reading a deck-level name
+// (examples/marchingSquares.py's createMatrix reading `random`, bound by
+// the file's own top-level `import random`, never its own) resolves it
+// correctly on the very first run, not just on some later re-run.
+// set_deck_imports_b64 is itself idempotent and safe to call with an
+// empty string, so this can be called unconditionally on every /api/deck
+// fetch (including a later reload) with no extra bookkeeping here.
+export async function setDeckImportsClientSide(moduleImportSource: string): Promise<void> {
+  const pyodide = await getPyodide()
+  const sourceB64 = toBase64(moduleImportSource)
+  await pyodide.runPythonAsync(`set_deck_imports_b64(${JSON.stringify(sourceB64)})`)
 }
 
 // Every entry point below takes `allCells` -- the caller's full current
