@@ -64,13 +64,7 @@ These are the kind of questions the manual's Deliverable #4 says a TA
 will ask. Each is answered here against the reference solution, so a
 TA has a known-correct baseline before doing checkoffs with students.
 
-1. **"Why is a nested `if` used for admission status instead of
-   `and`?"** Because Milestone 3 explicitly requires nested `if`
-   statements in place of `and`/`or` — the outer `if gpa >= 2.5:`
-   contains an inner `if act >= 18:`, with a `NOT ADMITTED` `else` at
-   both levels so every path prints exactly one admission line.
-
-2. **"Why does the scholarship section start `scholarship = 0` and
+1. **"Why does the scholarship section start `scholarship = 0` and
    check `if scholarship == 0:` before each lower tier?"** Because the
    tiers must be evaluated highest to lowest without falling through
    to a lower tier once a higher one has already matched. Guarding each
@@ -78,20 +72,20 @@ TA has a known-correct baseline before doing checkoffs with students.
    3.95 GPA/32 ACT applicant from also being overwritten down to a
    lower tier by a later check.
 
-3. **"Why does the Engineering placement section have no `else` at the
+2. **"Why does the Engineering placement section have no `else` at the
    outer level?"** Because Milestone 5 requires it to print *nothing*
    for a non-Engineering major, not a "not applicable" message — the
    outer `if major.lower() == "engineering":` has no matching `else`,
    only the inner MET/NOT MET branches have one.
 
-4. **"Why is `.lower()` used on `major`, `first_generation`, and
+3. **"Why is `.lower()` used on `major`, `first_generation`, and
    `state` before comparing?"** So that capitalization in the
    applicant's typed answer (`"Engineering"`, `"ENGINEERING"`,
    `"engineering"`) doesn't change the outcome — string equality in
    Python is case-sensitive, so comparing the lowered value is what
    makes the check robust to how a real applicant would type it.
 
-5. **"Walk through why Riley Chen's scholarship is \$8000 and not
+4. **"Walk through why Riley Chen's scholarship is \$8000 and not
    \$12000, given a 3.7 GPA and a 28 ACT."** The \$12000 tier requires
    GPA >= 3.9, which 3.7 does not satisfy, so that block is skipped
    entirely; the code then checks `if scholarship == 0:` (true, since

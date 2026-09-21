@@ -46,7 +46,6 @@ Your script must contain **Milestones 1-5**, in order, on one file.
 
 3) Determine the overall **admission status** — a student is
    `ADMITTED` only if *both* the GPA and ACT requirements are met.
-   Use **nested `if` statements** for this check instead of `and`.
 
 4) Generate output to match the example below.
 
@@ -55,7 +54,7 @@ Your script must contain **Milestones 1-5**, in order, on one file.
 #### Milestone 3 (20 pts): Automatic Admission and Academic Scholarship
 
 1) Determine **automatic admission**: `YES` only if GPA is 3.5 or
-   higher *and* ACT is 24 or higher (nested `if`, not `and`).
+   higher *and* ACT is 24 or higher.
 
 2) Determine the applicant's **academic scholarship** using the
    following tiers, checked from highest to lowest so that only the
@@ -271,8 +270,6 @@ printing anyway.
 - All 5 Milestones are present, in order, and clearly labeled.
 - Every scholarship tier is checked from highest to lowest, and only
   one tier is ever awarded.
-- Nested `if` statements, not `and`, are used everywhere a milestone
-  asks for them.
 - The Engineering placement section prints nothing for a non-Engineering
   major, and the Presidential Scholarship line prints nothing when the
   applicant doesn't qualify.
