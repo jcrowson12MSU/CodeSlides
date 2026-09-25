@@ -1,24 +1,30 @@
 import { useEffect, useRef, useState } from 'react'
-import type { PyodideIterationTable } from '../pyodideKernel'
-import { isPathPrefixOf, samePath, type IterationStepPath } from './iterationSteps'
+import type { PyodideIterationRow, PyodideIterationTable } from '../pyodideKernel'
+import { isPathPrefixOf, samePath, type IterationStep, type IterationStepPath } from './iterationSteps'
 
-// Renders a debug run's row-per-loop-iteration trace (pyodideKernel.ts's
-// _make_loop_tracer/_new_loop_table, PyodideIterationTable's own
+// Renders a debug run's row-per-loop-iteration, snapshot-per-
+// breakpoint-hit trace (pyodideKernel.ts's _make_loop_tracer/
+// _new_loop_table/_new_iteration_row, PyodideIterationTable's own
 // docstring) -- shared between Cell.tsx's own "Run with breakpoints"
 // panel and TestsElementWidget.tsx's, since both now feed the SAME
 // recursive table shape into this one component rather than each
 // re-implementing the nesting/collapsing logic separately.
 //
-// Unlike the debugger's earlier step-scrubber (one snapshot visible at
-// a time, stepped through with prev/next arrows -- still present, just
-// unused, in Cell.tsx/TestsElementWidget.tsx as their own commented-out
-// fallback, per this feature's own accepted design: ship the new view
-// as the only ACTIVE one, but never delete the old rendering code, so
-// reverting later is a small diff, not a rewrite from scratch), this
-// renders every recorded row at once, top to bottom -- "a history of
-// how the loop updates the variables" (the feature's own original ask)
-// reads naturally as a table a person scans up and down, not a single
-// frame flipped through one step at a time.
+// Two things happen together as the step cursor advances, both driven
+// by the SAME `currentStep`/`revealIndex` pair (iterationSteps.ts):
+// 1. A row's own DISPLAYED values update live as stepping moves
+//    through that row's own snapshots (one step per breakpoint hit),
+//    without the row itself changing position or a NEW row appearing.
+// 2. A row doesn't render AT ALL until stepping has reached it --
+//    rows are added to the visible table one at a time as the cursor
+//    advances into a new iteration, and disappear again when stepping
+//    backward past their own first step (see rowVisible below). A row
+//    with ZERO breakpoint hits contributes no step of its own (see
+//    iterationSteps.ts's own docstring for why the total step count
+//    is exactly the number of real breakpoint hits, nothing more) but
+//    still becomes visible -- blank -- the moment stepping reaches
+//    wherever it would have been, so the row/iteration COUNT stays
+//    visible even for iterations nothing was inspected during.
 //
 // A table with loopId === null is the single synthetic root every
 // debug run starts with (see PyodideIterationTable's own docstring) --
@@ -51,19 +57,44 @@ export interface IterationTableProps {
   // has no hide_def concept at all) and simply omits this, defaulting
   // to 0.
   lineOffset?: number
-  // The row the step-cursor is currently on (Cell.tsx/TestsElementWidget.
-  // tsx's own step state, built via iterationSteps()/indexed by
-  // debugStepIndex) -- an empty array means the root's own single row
-  // is current, undefined/omitted means no stepping is active at all
-  // (nothing highlighted, nothing force-expanded, matching this
-  // component's original no-stepping behavior exactly). A row ON this
-  // path (not just the exact match) is force-expanded even if the
-  // user collapsed it locally, so stepping into a nested loop always
-  // reveals it -- see ExpandableRow's own isOnPath handling.
-  currentStepPath?: IterationStepPath
+  // The step the cursor is currently on (Cell.tsx/TestsElementWidget.
+  // tsx's own step state -- iterationSteps()'s own .steps[stepIndex]),
+  // and the matching .revealIndex map from that SAME iterationSteps()
+  // call -- both undefined together means no stepping is active at all
+  // (every row shows its LAST snapshot, or renders blank if it has
+  // none, matching this component's original no-stepping "show
+  // everything settled" behavior).
+  currentStep?: IterationStep
+  revealIndex?: WeakMap<PyodideIterationRow, number>
 }
 
-export function IterationTable({ table, highlightLines, lineOffset = 0, currentStepPath }: IterationTableProps) {
+// True once stepping has reached `row` at all -- see iterationSteps.ts's
+// own revealIndex docstring for the exact derivation. With no stepping
+// active (currentGlobalIndex undefined), every row is always visible.
+function rowVisible(row: PyodideIterationRow, revealIndex: WeakMap<PyodideIterationRow, number> | undefined, currentGlobalIndex: number | undefined): boolean {
+  if (currentGlobalIndex == null || !revealIndex) return true
+  const reveal = revealIndex.get(row) ?? Infinity
+  return currentGlobalIndex >= reveal - Math.max(1, row.snapshots.length)
+}
+
+// The snapshot to actually display for `row` right now: if the step
+// cursor is CURRENTLY on this exact row, its own snapshotIndex (live
+// update as stepping moves within it); otherwise (stepping inactive,
+// or the cursor has already moved past this row) its LAST snapshot --
+// the settled, final value this row ever reached. `{}` for a row with
+// no snapshots at all (rendered blank).
+function currentSnapshot(row: PyodideIterationRow, isCurrentRow: boolean, currentStep: IterationStep | undefined): Record<string, string> {
+  const index = isCurrentRow ? (currentStep?.snapshotIndex ?? 0) : row.snapshots.length - 1
+  return row.snapshots[index] ?? {}
+}
+
+export function IterationTable({
+  table,
+  highlightLines,
+  lineOffset = 0,
+  currentStep,
+  revealIndex,
+}: IterationTableProps) {
   // table is ALWAYS the synthetic root (loopId === null, exactly one
   // row -- see PyodideIterationTable's own docstring) -- rendered
   // flat, with NO surrounding chrome (no "loop N" label, no collapse
@@ -76,30 +107,31 @@ export function IterationTable({ table, highlightLines, lineOffset = 0, currentS
   // one synthetic row as if it were a real loop's own iteration row,
   // with the actual loop showing up as a misleading "nested" table
   // under it instead of as the top-level loop it really is).
-  const row = table.rows[0] ?? {}
-  const columns = table.columns
+  const rootRow = table.rows[0]
   const topLevelLoops = table.childTables['0'] ?? []
-  const rootIsCurrentStep = currentStepPath != null && currentStepPath.length === 0
+  const rootIsCurrentRow = currentStep != null && currentStep.path.length === 0
+  const rootVisible = rootRow != null && rowVisible(rootRow, revealIndex, currentStep?.globalIndex)
+  const rootSnapshot = rootRow ? currentSnapshot(rootRow, rootIsCurrentRow, currentStep) : {}
 
   return (
     <>
-      {columns.length > 0 && (
+      {rootVisible && table.columns.length > 0 && (
         <table
           className={`cs-iteration-table cs-iteration-table-root${
-            rootIsCurrentStep ? ' cs-iteration-row-current' : ''
+            rootIsCurrentRow ? ' cs-iteration-row-current' : ''
           }`}
         >
           <thead>
             <tr>
-              {columns.map((col) => (
+              {table.columns.map((col) => (
                 <th key={col}>{col}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             <tr>
-              {columns.map((col) => (
-                <td key={col}>{col in row ? String(row[col]) : ''}</td>
+              {table.columns.map((col) => (
+                <td key={col}>{col in rootSnapshot ? String(rootSnapshot[col]) : ''}</td>
               ))}
             </tr>
           </tbody>
@@ -111,12 +143,13 @@ export function IterationTable({ table, highlightLines, lineOffset = 0, currentS
           table={loopTable}
           highlightLines={highlightLines}
           lineOffset={lineOffset}
-          currentStepPath={currentStepPath}
+          currentStep={currentStep}
+          revealIndex={revealIndex}
           path={[]}
           depth={0}
         />
       ))}
-      {columns.length === 0 && topLevelLoops.length === 0 && (
+      {rootVisible && table.columns.length === 0 && topLevelLoops.length === 0 && (
         <p className="cs-iteration-table-empty">No variables recorded yet.</p>
       )}
     </>
@@ -127,19 +160,21 @@ function LoopTable({
   table,
   highlightLines,
   lineOffset,
-  currentStepPath,
+  currentStep,
+  revealIndex,
   path,
   depth,
 }: {
   table: PyodideIterationTable
   highlightLines?: ReadonlySet<number>
   lineOffset: number
-  // The current step's full path, or undefined if stepping is
+  // The step the cursor is currently on, or undefined if stepping is
   // inactive -- passed straight through to ExpandableRow unchanged;
   // LoopTable itself doesn't compare against it directly (a LOOP
   // table's own identity/position isn't itself "a step," only its
   // individual ROWS are).
-  currentStepPath?: IterationStepPath
+  currentStep?: IterationStep
+  revealIndex?: WeakMap<PyodideIterationRow, number>
   // The path from the root down to (but not including) THIS table's
   // own rows -- i.e. exactly what ExpandableRow below appends its own
   // {table, rowIndex} onto to build each row's full path.
@@ -148,6 +183,13 @@ function LoopTable({
 }) {
   const highlighted = table.startLine != null && highlightLines?.has(table.startLine)
   const displayLine = table.startLine != null ? table.startLine + lineOffset : null
+
+  // Only rows stepping has actually REACHED are rendered at all --
+  // see this file's own module docstring, point 2.
+  const visibleRows = table.rows
+    .map((row, rowIndex) => ({ row, rowIndex }))
+    .filter(({ row }) => rowVisible(row, revealIndex, currentStep?.globalIndex))
+
   if (table.rows.length === 0) {
     // A loop whose body never ran even once (e.g. `while False:`) --
     // still worth a one-line note rather than rendering nothing at
@@ -160,19 +202,29 @@ function LoopTable({
     )
   }
 
+  if (visibleRows.length === 0) {
+    // The loop exists and WILL run, but stepping hasn't reached its
+    // first iteration yet -- render nothing at all (not even the
+    // "Loop at line N" label) rather than an empty shell, so a loop
+    // stepping hasn't reached yet doesn't visually clutter the table
+    // ahead of when it actually starts.
+    return null
+  }
+
   return (
     <div className={`cs-iteration-loop${highlighted ? ' cs-iteration-loop-highlighted' : ''}`}>
       {displayLine != null && <p className="cs-iteration-loop-label">Loop at line {displayLine}</p>}
       <table className="cs-iteration-table" style={{ marginLeft: depth > 0 ? '1rem' : 0 }}>
         <thead>
           <tr>
+            <th>iteration</th>
             {table.columns.map((col) => (
               <th key={col}>{col}</th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {table.rows.map((row, rowIndex) => {
+          {visibleRows.map(({ row, rowIndex }) => {
             const children = table.childTables[String(rowIndex)]
             return (
               <ExpandableRow
@@ -182,7 +234,8 @@ function LoopTable({
                 children={children}
                 highlightLines={highlightLines}
                 lineOffset={lineOffset}
-                currentStepPath={currentStepPath}
+                currentStep={currentStep}
+                revealIndex={revealIndex}
                 rowPath={[...path, { table, rowIndex }]}
                 depth={depth}
               />
@@ -200,19 +253,21 @@ function ExpandableRow({
   children,
   highlightLines,
   lineOffset,
-  currentStepPath,
+  currentStep,
+  revealIndex,
   rowPath,
   depth,
 }: {
-  row: Record<string, string | number>
+  row: PyodideIterationRow
   columns: string[]
   children?: PyodideIterationTable[]
   highlightLines?: ReadonlySet<number>
   lineOffset: number
-  currentStepPath?: IterationStepPath
+  currentStep?: IterationStep
+  revealIndex?: WeakMap<PyodideIterationRow, number>
   // This row's own full path (built by LoopTable as
   // [...parentPath, {table: thisLoopTable, rowIndex: thisRow}]) --
-  // compared against currentStepPath to decide both whether THIS row
+  // compared against currentStep.path to decide both whether THIS row
   // is the current step (highlight) and whether the step is nested
   // somewhere under it (force-expand).
   rowPath: IterationStepPath
@@ -228,16 +283,17 @@ function ExpandableRow({
   // seeing it expanded even after stepping past it.
   const [expanded, setExpanded] = useState(false)
   const hasChildren = Boolean(children && children.length > 0)
-  const isCurrentStep = currentStepPath != null && samePath(rowPath, currentStepPath)
-  const isOnStepPath = currentStepPath != null && isPathPrefixOf(rowPath, currentStepPath)
+  const isCurrentRow = currentStep != null && samePath(rowPath, currentStep.path)
+  const isOnStepPath = currentStep != null && isPathPrefixOf(rowPath, currentStep.path)
   const effectiveExpanded = expanded || isOnStepPath
   const rowRef = useRef<HTMLTableRowElement>(null)
+  const snapshot = currentSnapshot(row, isCurrentRow, currentStep)
 
   useEffect(() => {
-    if (isCurrentStep) {
+    if (isCurrentRow) {
       rowRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
     }
-  }, [isCurrentStep])
+  }, [isCurrentRow])
 
   return (
     <>
@@ -245,40 +301,42 @@ function ExpandableRow({
         ref={rowRef}
         className={
           `${hasChildren ? 'cs-iteration-row-expandable' : ''}${
-            isCurrentStep ? ' cs-iteration-row-current' : ''
+            isCurrentRow ? ' cs-iteration-row-current' : ''
           }`.trim() || undefined
         }
         onClick={hasChildren ? () => setExpanded((e) => !e) : undefined}
       >
-        {columns.map((col, i) => (
-          <td key={col}>
-            {i === 0 && hasChildren && (
-              <button
-                type="button"
-                className="cs-iteration-row-toggle"
-                aria-label={effectiveExpanded ? 'Collapse nested loop' : 'Expand nested loop'}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setExpanded((ex) => !ex)
-                }}
-              >
-                {effectiveExpanded ? '▾' : '▸'}
-              </button>
-            )}
-            {col in row ? String(row[col]) : ''}
-          </td>
+        <td>
+          {hasChildren && (
+            <button
+              type="button"
+              className="cs-iteration-row-toggle"
+              aria-label={effectiveExpanded ? 'Collapse nested loop' : 'Expand nested loop'}
+              onClick={(e) => {
+                e.stopPropagation()
+                setExpanded((ex) => !ex)
+              }}
+            >
+              {effectiveExpanded ? '▾' : '▸'}
+            </button>
+          )}
+          {row.iteration}
+        </td>
+        {columns.map((col) => (
+          <td key={col}>{col in snapshot ? snapshot[col] : ''}</td>
         ))}
       </tr>
       {hasChildren && effectiveExpanded && (
         <tr>
-          <td colSpan={columns.length} className="cs-iteration-nested-cell">
+          <td colSpan={columns.length + 1} className="cs-iteration-nested-cell">
             {children!.map((childTable, i) => (
               <LoopTable
                 key={i}
                 table={childTable}
                 highlightLines={highlightLines}
                 lineOffset={lineOffset}
-                currentStepPath={currentStepPath}
+                currentStep={currentStep}
+                revealIndex={revealIndex}
                 path={rowPath}
                 depth={depth + 1}
               />

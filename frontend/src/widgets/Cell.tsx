@@ -715,10 +715,16 @@ export function Cell({
 
   // Flattened, depth-first walk of debugResult's own iterationTable
   // (iterationSteps.ts) -- the SAME table IterationTable itself
-  // renders below, just re-derived here as a linear sequence for the
-  // step cursor to index into. Recomputed only when debugResult
+  // renders below, just re-derived here as a linear sequence (one
+  // entry per BREAKPOINT HIT, not per row -- see iterationSteps.ts's
+  // own docstring) for the step cursor to index into, plus the
+  // matching revealIndex map IterationTable uses to decide when
+  // each row becomes visible. Recomputed only when debugResult
   // actually changes.
-  const debugSteps = useMemo(() => (debugResult ? iterationSteps(debugResult.iterationTable) : []), [debugResult])
+  const { steps: debugSteps, revealIndex: debugRevealIndex } = useMemo(
+    () => (debugResult ? iterationSteps(debugResult.iterationTable) : { steps: [], revealIndex: new WeakMap() }),
+    [debugResult],
+  )
   const [debugStepIndex, setDebugStepIndex] = useState(0)
 
   // This app's client-side-only execution model never writes a local
@@ -1140,7 +1146,8 @@ export function Cell({
                 table={debugResult.iterationTable}
                 highlightLines={breakpointLines}
                 lineOffset={lineOffset}
-                currentStepPath={debugSteps[debugStepIndex]?.path}
+                currentStep={debugSteps[debugStepIndex]}
+                revealIndex={debugRevealIndex}
               />
             )}
             {/* Former step-scrubber view (one PyodideDebugSnapshot at a
