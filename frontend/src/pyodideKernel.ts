@@ -888,6 +888,22 @@ def _make_loop_tracer(
     snapshots list -- still shown, just blank, per the accepted design;
     see IterationTable.tsx).
 
+    A breakpoint on a loop's own HEADER line (loop_by_header_line) is a
+    real, gated breakpoint too, not just the row-boundary SIGNAL it also
+    happens to be -- it records a snapshot at every "start of a new
+    iteration" hit (that new row's own FIRST entry, ahead of whatever
+    body breakpoint fires next within the same iteration) AND at the
+    loop's own final exit-check hit (sys.settrace fires the header line
+    once per real iteration PLUS once more for the false/exhausted
+    check that actually ends the loop). That trailing exit hit has no
+    row of its own to live in -- its speculative row gets discarded the
+    same way a genuinely 0-iteration loop's does -- so _pop_last_row
+    rescues its one snapshot onto the loop's own last REAL row as a
+    TRAILING entry instead, which is what shows "the loop is done"
+    highlighted there. Before this, a header-line breakpoint recorded
+    nothing at all: the header-hit branch below always returned before
+    ever reaching _append_snapshot.
+
     root_table is the caller's own mutable dict (not created here, same
     "caller keeps a handle to read after sys.settrace(None)" pattern
     _make_snapshot_tracer already uses for snapshots/truncated) --
@@ -1040,8 +1056,28 @@ def _make_loop_tracer(
 
     def _pop_last_row(loop_id):
         table = current_table.get(loop_id)
-        if table is not None and table["rows"]:
-            table["rows"].pop()
+        if table is None or not table["rows"]:
+            return
+        row = table["rows"].pop()
+        # If the discarded row's own header hit recorded a breakpoint
+        # snapshot -- always its FIRST entry, if present at all, since
+        # the header-hit branch below appends it immediately on
+        # creating the row, before anything else can ever be appended
+        # to a brand new row -- rescue that one snapshot onto whatever
+        # row is now last instead of losing it along with the row
+        # shell. This is what makes a breakpoint on a loop's own
+        # header line show "the loop is done" as a TRAILING entry on
+        # the loop's last REAL row: sys.settrace fires that header
+        # line once more for the final false/exhausted check that
+        # actually ends the loop (confirmed empirically -- a
+        # 3-iteration for-loop's own header line traces 4 times, not
+        # 3), and that trailing hit's own speculative row is exactly
+        # the one this function discards. No rescue happens (the
+        # snapshot is simply dropped) when there's no earlier row left
+        # to attach it to -- a 0-iteration loop's own single header
+        # hit, which has nothing real to highlight against at all.
+        if row["snapshots"] and table["rows"]:
+            table["rows"][-1]["snapshots"].append(row["snapshots"][0])
 
     def _tracer(frame, event, arg):
         if frame.f_code.co_filename != filename:
@@ -1081,6 +1117,18 @@ def _make_loop_tracer(
                 return None
             table["rows"].append(_new_iteration_row(len(table["rows"]) + 1))
             confirmed[loop_id] = False
+            # A breakpoint on the loop's own header line records its
+            # snapshot right here, as this brand new row's FIRST entry
+            # -- "the start of a new iteration" highlighted in real
+            # hit order, ahead of any body breakpoint this same
+            # iteration goes on to hit. If this exact row turns out to
+            # be the loop's own final exit-check hit rather than a
+            # real new iteration (nothing ever confirms it before the
+            # NEXT header hit or the function returns), _pop_last_row
+            # above rescues this one snapshot onto the previous row
+            # instead of losing it -- see its own docstring.
+            if is_breakpoint:
+                _append_snapshot(table, line_no, variables)
             return _tracer
 
         chain = line_to_loop_chain.get(line_no, [])
