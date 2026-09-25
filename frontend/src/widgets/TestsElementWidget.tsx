@@ -81,12 +81,18 @@ export function TestsElementWidget({
 
   // Flattened, depth-first walk of debugResult's own iterationTable
   // (iterationSteps.ts) -- the SAME table IterationTable itself
-  // renders, just re-derived here as a linear sequence for the step
-  // cursor below to index into. Recomputed only when debugResult
+  // renders, just re-derived here as a linear sequence (one entry per
+  // BREAKPOINT HIT, not per row -- see iterationSteps.ts's own
+  // docstring) for the step cursor below to index into, plus the
+  // matching revealIndex map IterationTable uses to decide when
+  // each row becomes visible. Recomputed only when debugResult
   // actually changes (a fresh "Run with breakpoints" click), never on
   // every render/step -- the table itself is immutable once a debug
   // run finishes.
-  const steps = useMemo(() => (debugResult ? iterationSteps(debugResult.iterationTable) : []), [debugResult])
+  const { steps, revealIndex } = useMemo(
+    () => (debugResult ? iterationSteps(debugResult.iterationTable) : { steps: [], revealIndex: new WeakMap() }),
+    [debugResult],
+  )
   const [stepIndex, setStepIndex] = useState(0)
 
   // Unlike Cell.tsx's own runWithBreakpoints, this reads `source` (the
@@ -189,7 +195,8 @@ export function TestsElementWidget({
             <IterationTable
               table={debugResult.iterationTable}
               highlightLines={breakpointLines}
-              currentStepPath={steps[stepIndex]?.path}
+              currentStep={steps[stepIndex]}
+              revealIndex={revealIndex}
             />
           )}
           {/* Former step-scrubber view (one PyodideDebugSnapshot at a

@@ -99,29 +99,49 @@ export interface PyodideCellInput {
   elements: PyodideElementMeta[]
 }
 
-// A debug run's row-per-loop-iteration trace (_make_loop_tracer's own
-// _new_loop_table shape, kernel.py/pyodideKernel.ts's shared Python
-// runner) -- recursive: nestedTables under a given row index holds
-// that SAME shape again for a loop that ran during that one parent
-// iteration, one entry per time that inner loop started fresh within
-// that parent row (almost always one entry in practice, but never
-// assumed -- see _new_loop_table's own docstring on why it's a list,
-// not a single nested table). loopId is null only for the single
-// synthetic root table every debug run starts with (never a real
-// source line), letting TestsElementWidget.tsx/Cell.tsx render "no
-// loop at all" and "inside a loop" through the one same component,
-// rather than a separate branch for each. rows are plain objects
-// keyed by column name (repr() strings, never live values, same
-// reasoning PyodideDebugSnapshot's own docstring gave) -- a row
-// missing a given column entirely (rather than holding an empty
-// string) is what tells the renderer to show a blank cell for a
-// variable not yet assigned as of that iteration.
+// A debug run's row-per-loop-iteration, snapshot-per-breakpoint-hit
+// trace (_make_loop_tracer's own _new_loop_table/_new_iteration_row
+// shapes, pyodideKernel.ts's shared Python runner) -- recursive:
+// childTables under a given row index holds that SAME table shape
+// again for a loop that ran during that one parent iteration, one
+// entry per time that inner loop started fresh within that parent row
+// (almost always one entry in practice, but never assumed -- see
+// _new_loop_table's own docstring on why it's a list, not a single
+// nested table). loopId is null only for the single synthetic root
+// table every debug run starts with (never a real source line),
+// letting TestsElementWidget.tsx/Cell.tsx render "no loop at all" and
+// "inside a loop" through the one same component, rather than a
+// separate branch for each.
 export interface PyodideIterationTable {
   loopId: number | null
   startLine: number | null
+  // Union of every variable name that appeared in ANY snapshot in ANY
+  // row of this table, in first-seen order -- the iteration counter
+  // itself is NEVER a member (it's PyodideIterationRow's own dedicated
+  // `iteration` field, not a snapshot value), so a table with columns
+  // === [] genuinely means "no breakpoint was ever hit in this loop
+  // at all," not "only the counter was ever recorded."
   columns: string[]
-  rows: Record<string, string | number>[]
+  rows: PyodideIterationRow[]
   childTables: Record<string, PyodideIterationTable[]>
+}
+
+// One loop iteration's own trace. `snapshots` is an ORDERED list of
+// {variable: repr string} objects, one per breakpoint hit during this
+// iteration, in hit order -- this is what makes "one step per
+// breakpoint hit within an iteration, not one step per iteration"
+// possible (iterationSteps.ts/IterationTable.tsx): stepping through a
+// row's own snapshots in order updates ITS displayed values live,
+// without the step cursor moving to a different row. `snapshots` can
+// be EMPTY -- an iteration that never hit any breakpoint inside the
+// loop's body still gets a row (for iteration-counting purposes), it's
+// just rendered blank (see IterationTable.tsx). A snapshot missing a
+// given column entirely (rather than holding an empty string) is what
+// tells the renderer to show a blank cell for a variable not yet
+// assigned as of that specific breakpoint hit.
+export interface PyodideIterationRow {
+  iteration: number
+  snapshots: Record<string, string>[]
 }
 
 // run_cell_with_breakpoints_b64's own result shape -- deliberately its
@@ -772,21 +792,36 @@ def _find_loops(source):
     return line_to_loop_chain, loop_first_body_line, loop_header_line, loop_by_header_line, loop_parent_chain
 
 def _new_loop_table(loop_id, start_line):
-    """One loop's own trace: columns in first-seen order (the counter
-    column is inserted by the caller BEFORE this table is ever shown to
-    the tracer, not here -- see _make_loop_tracer's own iterCountKey
-    handling), rows one dict per iteration keyed by column name (a
-    row's own dict, not a parallel list, so a column added mid-loop
-    just leaves earlier rows without that key -- the frontend renders a
-    missing key as a blank cell), and childTables mapping a PARENT
-    row's index (as a str, since this whole structure round-trips
-    through json.dumps/JSON.parse) to the list of nested-loop tables
-    that ran during that one parent iteration -- a list, not a single
-    table, since the same inner loop can start fresh multiple times
-    across different iterations of the outer loop, and each such run is
-    its own independent set of rows, never appended onto a prior run's
-    leftover rows from an earlier outer iteration."""
+    """One loop's own trace: columns in first-seen order (union of
+    every variable name that appeared in ANY snapshot anywhere in this
+    table's own rows -- the counter itself is a dedicated per-row field,
+    never a column, see _new_iteration_row's own docstring), rows one
+    per iteration (_new_iteration_row), and childTables mapping a
+    PARENT row's index (as a str, since this whole structure round-
+    trips through json.dumps/JSON.parse) to the list of nested-loop
+    tables that ran during that one parent iteration -- a list, not a
+    single table, since the same inner loop can start fresh multiple
+    times across different iterations of the outer loop, and each such
+    run is its own independent set of rows, never appended onto a
+    prior run's leftover rows from an earlier outer iteration."""
     return {"loopId": loop_id, "startLine": start_line, "columns": [], "rows": [], "childTables": {}}
+
+def _new_iteration_row(iteration):
+    """One loop iteration's own trace: iteration is the 1-based
+    counter (previously stored as an ordinary column value under a
+    caller-chosen key like "iteration" -- now a dedicated field, since
+    it's the same for every snapshot within this one row and isn't
+    itself a breakpoint-hit snapshot). snapshots is an ORDERED list
+    of {variable: repr string} dicts, one per breakpoint hit that
+    occurred during this iteration, in the order they were hit --
+    empty if no breakpoint inside the loop's body was ever hit during
+    this particular iteration (the row still exists, for iteration-
+    counting purposes, it's just blank when rendered -- see the
+    frontend's own IterationTable.tsx). This is the shape that makes
+    "one step per breakpoint hit, not one step per iteration" possible:
+    stepping through this row's own snapshots in order updates its
+    displayed values live, without changing which ROW is showing."""
+    return {"iteration": iteration, "snapshots": []}
 
 def _make_loop_tracer(
     filename,
@@ -795,7 +830,7 @@ def _make_loop_tracer(
     loop_header_line,
     loop_by_header_line,
     loop_parent_chain,
-    iter_count_key,
+    breakpoint_lines,
     stdout,
     root_table,
     truncated,
@@ -803,35 +838,39 @@ def _make_loop_tracer(
     exclude_dunders=False,
 ):
     """Builds a sys.settrace-compatible tracer recording a ROW-PER-
-    ITERATION trace (not a flat list of breakpoint-hit snapshots -- see
-    this module's own docstring history/kernel.py's run_tests for the
-    older, still-present _make_snapshot_tracer this supersedes for the
-    debugger UI, kept only for TestsElementWidget.tsx's/Cell.tsx's own
-    "restore the old view" escape hatch). Traces EVERY line
-    unconditionally (there is no breakpoint_lines gate here -- see this
-    file's own module-level notes: a user's breakpoints are now just
-    row highlights the frontend applies afterward, never a precondition
-    for recording anything at all), because loop-iteration boundaries
-    have to be detected from every line executed, not from a sparse set
-    of user-chosen lines.
+    ITERATION, SNAPSHOT-PER-BREAKPOINT-HIT trace: every loop iteration
+    still gets its own row (_new_iteration_row), but a row's content is
+    now an ORDERED LIST of snapshots -- one per breakpoint hit during
+    that iteration, in hit order -- rather than one continuously-merged
+    set of values. This is what lets the frontend step through each
+    breakpoint hit individually within a single row (IterationTable.tsx/
+    iterationSteps.ts), updating that row's displayed values live as
+    the step cursor advances through its own snapshots, instead of
+    jumping straight to the row's own final state.
+
+    breakpoint_lines GATES snapshot recording specifically (a line only
+    ever produces a snapshot if it's in this set) -- this reintroduces
+    the precondition PR #55 removed ("no breakpoints set" now once again
+    means "nothing to step through," matching the very original step-
+    scrubber's own contract) -- but iteration-BOUNDARY detection below
+    is intentionally NOT gated by it: every loop still gets a row for
+    every iteration it actually ran, breakpoints or not, so the row/
+    iteration COUNT stays accurate even when a particular iteration
+    never hit a breakpoint at all (that row just ends up with an empty
+    snapshots list -- still shown, just blank, per the accepted design;
+    see IterationTable.tsx).
 
     root_table is the caller's own mutable dict (not created here, same
     "caller keeps a handle to read after sys.settrace(None)" pattern
     _make_snapshot_tracer already uses for snapshots/truncated) --
     ALWAYS a loop-table shape (_new_loop_table), even for code with no
-    real loop at all: every line traced outside any loop is folded into
-    root_table itself as one single, continuously-updated row (never a
-    new row per line -- there's no iteration to delimit it), giving
-    TestsElementWidget.tsx/Cell.tsx one consistent table shape to render
-    regardless of whether the traced code has a loop, per the accepted
-    "single-row fallback, not a separate no-loop view" design.
-
-    iter_count_key is the caller-chosen column name for the always-
-    present, always-first iteration-count column (e.g. "iteration");
-    incremented once per loop, independent of any real counter variable
-    the traced code itself happens to declare -- a genuine counter
-    variable the code assigns still gets its OWN separate column later
-    in first-seen order, this one is never conflated with it.
+    real loop at all: every line traced outside any loop lands in
+    root_table's own single row (never a new row per line -- there's no
+    iteration to delimit it), giving TestsElementWidget.tsx/Cell.tsx one
+    consistent table shape to render regardless of whether the traced
+    code has a loop, per the accepted "single-row fallback, not a
+    separate no-loop view" design -- that one row can still accumulate
+    multiple snapshots, one per breakpoint hit outside any loop.
 
     THE HARD PART -- detecting a genuine new iteration -- is NOT done
     by watching a loop's first body line, even though that sounds like
@@ -853,51 +892,53 @@ def _make_loop_tracer(
     to this tracer's own closure, not part of the table structure
     itself) tracks whether the CURRENT speculative row -- the one
     started at this loop's most recent header hit -- has since been
-    confirmed real by at least one actual body-line execution.
-    current_table[loop_id] caches the ACTUAL table dict object that
-    row currently lives in -- see this closure's own comment just above
-    its declaration for why re-deriving that object on every access
-    (by re-descending root_table's nesting from scratch) is unsound: an
-    ancestor loop's own row count can advance in between two
-    operations meant to target the SAME still-pending row, silently
-    misdirecting a later pop/backfill onto the wrong (not-yet-existing)
-    table:
+    confirmed real by at least one actual body-line execution (this
+    check is INDEPENDENT of breakpoints -- even a body line that's
+    never a breakpoint still confirms the row is real, it just never
+    contributes a snapshot to it). current_table[loop_id] caches the
+    ACTUAL table dict object that row currently lives in -- see this
+    closure's own comment just above its declaration for why re-
+    deriving that object on every access (by re-descending root_table's
+    own nesting from scratch) is unsound: an ancestor loop's own row
+    count can advance in between two operations meant to target the
+    SAME still-pending row, silently misdirecting a later pop onto the
+    wrong (not-yet-existing) table:
 
     - On a header hit for loop_id: if confirmed.get(loop_id) is
       False, the PREVIOUS speculative row was never confirmed (the
       loop just exited without that attempted iteration ever really
       starting) -- pop it from current_table[loop_id] and clear that
       cache entry (the next line below re-derives it fresh, correctly
-      landing under whatever the loop's parent row now is). Otherwise,
-      backfill the row that's genuinely current (current_table[loop_id],
-      if already set) with the live locals -- the real, confirmed
-      final state of the iteration that just finished -- BEFORE
-      starting a new speculative row below (must happen first, or the
-      backfill would land in the wrong, not-yet-real row). Either way,
-      then (re-)descend to loop_id's own table, cache it into
-      current_table[loop_id], append a fresh speculative row (seeded
-      from whatever's now current), and set confirmed[loop_id] = False.
-    - On any ordinary body line: for every loop_id in that line's own
-      line_to_loop_chain, set confirmed[loop_id] = True (this line
-      proves that loop's current speculative row is a real iteration).
-      Merge frame.f_locals into the DEEPEST such loop's own current
-      row, reusing current_table[innermost] if already cached (the
-      ordinary case -- still the same row a recent header hit started)
-      or deriving and caching it fresh otherwise (the first body line
-      of a freshly-started row, which the header-hit branch above
-      already created but this is the first line-event to see it).
+      landing under whatever the loop's parent row now is). Then
+      (re-)descend to loop_id's own table, cache it into
+      current_table[loop_id], append a fresh, empty row (_new_
+      iteration_row -- no seeding from the prior row: unlike the old
+      merged-values design, a snapshot-list row has nothing meaningful
+      to inherit, it just starts empty and accumulates its OWN
+      breakpoint hits from here), and set confirmed[loop_id] = False.
+      No backfill: the old "capture the loop's true final post-body
+      state right before it exits" step doesn't apply any more --
+      there's no single "final state" to capture, only whichever
+      breakpoints actually got hit during that iteration.
+    - On any ordinary line, REGARDLESS of whether it's a breakpoint:
+      for every loop_id in that line's own line_to_loop_chain, set
+      confirmed[loop_id] = True (this line proves that loop's current
+      speculative row is a real iteration). If (and only if) the line
+      IS also in breakpoint_lines, additionally append a snapshot of
+      the live locals to the DEEPEST such loop's own current row (or
+      root_table's row, if line_to_loop_chain is empty), reusing
+      current_table[innermost] if already cached (the ordinary case --
+      still the same row a recent header hit started) or deriving and
+      caching it fresh otherwise (the first line of a freshly-started
+      row, which the header-hit branch above already created but this
+      is the first line-event to see it).
     - On the traced function/module's own 'return' event: any loop
       still showing confirmed[loop_id] is False has a trailing
       speculative row from a header hit that was never followed by
       either a body line OR another header hit (the loop, and the
       function containing it, both ended together) -- pop it too, via
       the same current_table cache, then clear both dicts for the next
-      debug run.
-
-    A line with an EMPTY line_to_loop_chain (not inside any loop) just
-    merges straight into root_table's own current row (root_table
-    starts with exactly one row, seeded by the caller up front, so
-    there's always somewhere for pre-loop/no-loop lines to land)."""
+      debug run."""
 
     def _keep(k):
         if k in exclude_keys:
@@ -906,14 +947,16 @@ def _make_loop_tracer(
             return False
         return True
 
-    def _merge_row(table, variables):
+    def _append_snapshot(table, variables):
         if not table["rows"]:
             return
         row = table["rows"][-1]
+        snapshot = {}
         for name, value in variables.items():
             if name not in table["columns"]:
                 table["columns"].append(name)
-            row[name] = value
+            snapshot[name] = value
+        row["snapshots"].append(snapshot)
 
     def _descend(chain, create):
         """Walk root_table down through chain (a list of loopIds,
@@ -990,7 +1033,8 @@ def _make_loop_tracer(
             return _tracer
 
         line_no = frame.f_lineno
-        variables = {k: _safe_repr(v) for k, v in frame.f_locals.items() if _keep(k)}
+        is_breakpoint = line_no in breakpoint_lines
+        variables = {k: _safe_repr(v) for k, v in frame.f_locals.items() if _keep(k)} if is_breakpoint else None
 
         if line_no in loop_by_header_line:
             loop_id = loop_by_header_line[line_no]
@@ -1002,30 +1046,20 @@ def _make_loop_tracer(
                 # current_table docstring above), so force a fresh
                 # re-descend below rather than reusing it.
                 current_table.pop(loop_id, None)
-            else:
-                # Still backfill the row that's genuinely current
-                # (a real, confirmed prior iteration, or nothing yet)
-                # BEFORE starting a new speculative one -- must use the
-                # SAME cached object this loop was last writing to.
-                table = current_table.get(loop_id)
-                if table is not None:
-                    _merge_row(table, variables)
             table = _descend(loop_parent_chain[loop_id] + [loop_id], create=True)
             current_table[loop_id] = table
             if len(table["rows"]) >= _MAX_DEBUG_ITERATIONS:
                 truncated["value"] = True
                 return None
-            prior = table["rows"][-1] if table["rows"] else {}
-            table["rows"].append(dict(prior))
-            table["rows"][-1][iter_count_key] = len(table["rows"])
-            if iter_count_key not in table["columns"]:
-                table["columns"].insert(0, iter_count_key)
+            table["rows"].append(_new_iteration_row(len(table["rows"]) + 1))
             confirmed[loop_id] = False
             return _tracer
 
         chain = line_to_loop_chain.get(line_no, [])
         for loop_id in chain:
             confirmed[loop_id] = True
+        if not is_breakpoint:
+            return _tracer
         if chain:
             innermost = chain[-1]
             table = current_table.get(innermost)
@@ -1034,7 +1068,7 @@ def _make_loop_tracer(
                 current_table[innermost] = table
         else:
             table = root_table
-        _merge_row(table, variables)
+        _append_snapshot(table, variables)
         return _tracer
 
     return _tracer
@@ -1054,14 +1088,15 @@ def _debug_run_one(cell_name, source, elements, breakpoint_lines):
     after the fact with plain array indexing (App.tsx/Cell.tsx) -- no
     worker, no Atomics, no suspend/resume bridge needed.
 
-    Tracing now runs UNCONDITIONALLY, regardless of breakpoint_lines --
-    this used to be gated behind "at least one breakpoint set" (the
-    older _make_snapshot_tracer's only trigger), but detecting loop-
-    iteration boundaries needs every line traced, not a sparse
-    user-chosen set. breakpoint_lines is still accepted and returned
-    through unchanged (App.tsx/Cell.tsx use it purely to highlight
-    matching rows/lines in the resulting table -- a UI affordance now,
-    not a precondition for recording anything at all).
+    Row/iteration-BOUNDARY detection still runs unconditionally over
+    every traced line, regardless of breakpoint_lines -- a loop's row
+    count must stay accurate even for an iteration that never hits a
+    breakpoint. But actually RECORDING a snapshot into a row is gated
+    on breakpoint_lines once again (see _make_loop_tracer's own
+    docstring): with none set, every row ends up empty, and there's
+    nothing to step through -- this restores breakpoints as a real
+    precondition for inspecting anything, after PR #55 had turned them
+    into pure highlights with no gating effect at all.
 
     Deliberately a separate function from _execute_one rather than a
     flag added to it: _execute_one is also used by the ordinary Shift+
@@ -1095,7 +1130,7 @@ def _debug_run_one(cell_name, source, elements, breakpoint_lines):
         source
     )
     iteration_table = _new_loop_table(None, 1)
-    iteration_table["rows"].append({})
+    iteration_table["rows"].append(_new_iteration_row(0))
     truncated = {"value": False}
     _tracer = _make_loop_tracer(
         cell_filename,
@@ -1104,7 +1139,7 @@ def _debug_run_one(cell_name, source, elements, breakpoint_lines):
         loop_header_line,
         loop_by_header_line,
         loop_parent_chain,
-        "iteration",
+        breakpoint_lines,
         stdout,
         iteration_table,
         truncated,
@@ -1403,7 +1438,7 @@ def _debug_run_test(test_source, cell_name, elements, breakpoint_lines, all_cell
         test_source
     )
     iteration_table = _new_loop_table(None, 1)
-    iteration_table["rows"].append({})
+    iteration_table["rows"].append(_new_iteration_row(0))
     truncated = {"value": False}
     result = {
         "status": "pass",
@@ -1437,7 +1472,7 @@ def _debug_run_test(test_source, cell_name, elements, breakpoint_lines, all_cell
         loop_header_line,
         loop_by_header_line,
         loop_parent_chain,
-        "iteration",
+        breakpoint_lines,
         stdout,
         iteration_table,
         truncated,

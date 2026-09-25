@@ -1,4 +1,4 @@
-import type { PyodideIterationTable } from '../pyodideKernel'
+import type { PyodideIterationRow, PyodideIterationTable } from '../pyodideKernel'
 
 // A single step in a debug run's flattened, depth-first walk of its
 // PyodideIterationTable -- built by iterationSteps() below, consumed by
@@ -6,6 +6,15 @@ import type { PyodideIterationTable } from '../pyodideKernel'
 // IterationTable.tsx's currentStepPath prop (which is exactly this
 // step's own `path`, re-used directly rather than recomputed, so the
 // two stay in sync by construction).
+//
+// One step = one BREAKPOINT HIT (or, for a row with zero breakpoint
+// hits, one step for the row's own existence -- see snapshotIndex's
+// own docstring below) -- NOT one step per iteration/row the way an
+// earlier version of this file had it. An iteration that hits 3
+// breakpoints produces 3 steps, all pointing at the SAME row (same
+// `path`, incrementing `snapshotIndex`), so stepping through them
+// updates that one row's displayed values live rather than moving to
+// a different row each time.
 //
 // `path` identifies ONE row anywhere in the (possibly deeply nested)
 // table by the sequence of {loopTable, rowIndex} pairs you'd walk from
@@ -30,33 +39,92 @@ export type IterationStepPath = IterationStepPathEntry[]
 export interface IterationStep {
   // Empty path = the synthetic root's own single row (pre/post-loop
   // straight-line state) -- only ever the very first and/or very last
-  // step, never in the middle, since the root has exactly one row.
+  // step(s), never in the middle, since the root has exactly one row
+  // (which can still carry multiple snapshots of its own, one per
+  // breakpoint hit outside any loop -- see snapshotIndex below).
   path: IterationStepPath
+  // Which of this step's own row's `snapshots` is displayed once the
+  // cursor reaches this step -- 0-based, matching PyodideIterationRow.
+  // snapshots' own array index directly.
+  snapshotIndex: number
+  // This step's own 0-based index in the overall flattened list
+  // iterationSteps() returns (steps[i].globalIndex === i, always --
+  // stored per-step so IterationTable.tsx can compare "has stepping
+  // reached this row yet" via a row's own revealIndex, see below,
+  // without needing the whole steps array threaded down through every
+  // component just to look up one index).
+  globalIndex: number
 }
 
 // Walks `root` (always the synthetic root -- PyodideIterationTable's
 // own docstring: loopId === null, exactly one row) depth-first in the
-// SAME order sys.settrace itself visited these rows while recording
-// them (pyodideKernel.ts's _make_loop_tracer), so stepping through the
-// returned list reads as "what happened, in the order it happened" --
-// never re-traces anything, just replays the shape already recorded.
+// SAME order sys.settrace itself visited these rows/snapshots while
+// recording them (pyodideKernel.ts's _make_loop_tracer), so stepping
+// through the returned list reads as "what happened, in the order it
+// happened" -- never re-traces anything, just replays the shape
+// already recorded.
 //
-// Order: the root's own row first (step 0 -- there's nothing before
-// any loop has started, or this IS the whole trace for no-loop code),
-// then for each top-level loop table (root.childTables['0'], in
-// array order -- see LoopTable's own "sequential sibling loops" case
-// in IterationTable.tsx), each of ITS rows in order, recursing into
-// any child loop table nested under that row (childTables[String(
-// rowIndex)]) BEFORE moving to the row's own next sibling -- i.e. a
-// nested loop's entire run is fully stepped through in between its
-// parent's row N and row N+1, exactly when it actually executed.
-export function iterationSteps(root: PyodideIterationTable): IterationStep[] {
-  const steps: IterationStep[] = [{ path: [] }]
+// A row with ZERO snapshots (no breakpoint was ever hit during that
+// iteration) produces NO step of its own -- the total step count is
+// exactly the number of real breakpoint hits recorded, nothing added
+// for "the row exists." Order: the root's own row's own snapshots
+// first (there's nothing before any loop has started, or this IS the
+// whole trace for no-loop code), then for each top-level loop table
+// (root.childTables['0'], in array order -- see LoopTable's own
+// "sequential sibling loops" case in IterationTable.tsx), each of ITS
+// rows in order (one step per that row's own snapshot), recursing
+// into any child loop table nested under that row (childTables[
+// String(rowIndex)]) BEFORE moving to the row's own next sibling --
+// i.e. a nested loop's entire run (all of ITS rows' own snapshot-
+// steps) is fully stepped through in between its parent's row N and
+// row N+1, exactly when it actually executed.
+//
+// revealIndex maps EVERY row object encountered (identity-keyed, via
+// a WeakMap -- never mutating the row data itself, which still round-
+// trips through JSON.parse/postMessage elsewhere), INCLUDING one with
+// zero snapshots, to steps.length AT THE MOMENT the walk reached that
+// row -- i.e. the globalIndex of whichever step comes immediately
+// AFTER this row in the overall order (that row's own first step, if
+// it has any; otherwise the very next OTHER row's first step, or
+// steps.length itself if this is the very last row of the whole
+// trace). IterationTable.tsx uses this to decide row VISIBILITY ("has
+// stepping reached this row yet") by checking currentStep.globalIndex
+// >= revealIndex - 1 for a row that reached the display state itself,
+// or more simply: a row is visible once the cursor's globalIndex is
+// at or past (revealIndex - 1) for a row WITH steps, or at or past
+// revealIndex for a EMPTY row (see IterationTable.tsx's own
+// rowVisible computation, which handles both cases uniformly by
+// comparing against max(0, revealIndex - 1) so an empty row becomes
+// visible the moment stepping reaches whatever comes right after it).
+export interface IterationStepsResult {
+  steps: IterationStep[]
+  revealIndex: WeakMap<PyodideIterationRow, number>
+}
+
+export function iterationSteps(root: PyodideIterationTable): IterationStepsResult {
+  const steps: IterationStep[] = []
+  const revealIndex = new WeakMap<PyodideIterationRow, number>()
+
+  function pushRowSteps(path: IterationStepPath, row: PyodideIterationRow) {
+    for (let snapshotIndex = 0; snapshotIndex < row.snapshots.length; snapshotIndex++) {
+      steps.push({ path, snapshotIndex, globalIndex: steps.length })
+    }
+    // Recorded AFTER pushing this row's own steps: for a row with >=1
+    // snapshot, revealIndex ends up ONE PAST its own first step (see
+    // the module docstring's "revealIndex - 1" note above); for an
+    // empty row, it's simply wherever the walk had gotten to by the
+    // time this row was reached, i.e. the next step in the overall
+    // sequence, from whatever row comes next.
+    revealIndex.set(row, steps.length)
+  }
+
+  const rootRow = root.rows[0]
+  if (rootRow) pushRowSteps([], rootRow)
 
   function walkLoop(table: PyodideIterationTable, parentPath: IterationStepPath) {
     for (let rowIndex = 0; rowIndex < table.rows.length; rowIndex++) {
       const path = [...parentPath, { table, rowIndex }]
-      steps.push({ path })
+      pushRowSteps(path, table.rows[rowIndex])
       const children = table.childTables[String(rowIndex)]
       if (children) {
         for (const child of children) {
@@ -71,16 +139,16 @@ export function iterationSteps(root: PyodideIterationTable): IterationStep[] {
     walkLoop(loopTable, [])
   }
 
-  return steps
+  return { steps, revealIndex }
 }
 
-// True if `a` and `b` refer to the exact same row -- same path length,
-// same table object at each position (identity, not structural
-// equality -- see IterationStepPathEntry's own docstring), same row
-// index. Used by IterationTable.tsx to decide, for a given LoopTable/
-// ExpandableRow, whether ITS OWN row is the current step (highlight
-// it) and whether any PREFIX of the current path passes through it
-// (force it expanded even if not itself the current step).
+// True if `a` and `b` refer to the exact same ROW (path only -- NOT
+// snapshotIndex; two steps within the same row's own snapshots still
+// count as "the same row" for highlighting/expansion purposes, see
+// IterationTable.tsx's own isCurrentRow/isOnStepPath). Same path
+// length, same table object at each position (identity, not
+// structural equality -- see IterationStepPathEntry's own docstring),
+// same row index.
 export function samePath(a: IterationStepPath, b: IterationStepPath): boolean {
   if (a.length !== b.length) return false
   return a.every((entry, i) => entry.table === b[i].table && entry.rowIndex === b[i].rowIndex)
