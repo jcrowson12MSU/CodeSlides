@@ -163,3 +163,32 @@ export function isPathPrefixOf(path: IterationStepPath, ofPath: IterationStepPat
   if (path.length > ofPath.length) return false
   return path.every((entry, i) => entry.table === ofPath[i].table && entry.rowIndex === ofPath[i].rowIndex)
 }
+
+// The exact source line the CURRENT step's own snapshot was recorded
+// at (pyodideKernel.ts's PyodideSnapshot.line), or null if there is no
+// current step (stepping inactive) or the current step's row has no
+// snapshot at all yet (an empty row -- see rowVisible/revealIndex's
+// own docstring: a row can be VISIBLE with zero snapshots, in which
+// case there is genuinely no line to highlight). `root` is the SAME
+// PyodideIterationTable passed to IterationTable's own `table` prop --
+// needed here because an empty path (step.path.length === 0) means
+// "the root's own row," which isn't reachable by walking step.path's
+// own entries (those only ever name loop tables, never root itself).
+// The returned line is in the TRACED source's own line-number space
+// (PyodideSnapshot.line's own docstring in pyodideKernel.ts) -- for a
+// hide_def=True cell this is one line ahead of what CodeEditor
+// actually displays, so Cell.tsx subtracts its own defLineOffset
+// before feeding the result to CodeEditor's stepLine prop;
+// TestsElementWidget.tsx has no such cell and passes it straight
+// through unmodified.
+export function stepSourceLine(root: PyodideIterationTable, step: IterationStep | undefined): number | null {
+  if (!step) return null
+  let row: PyodideIterationRow | undefined
+  if (step.path.length === 0) {
+    row = root.rows[0]
+  } else {
+    const last = step.path[step.path.length - 1]
+    row = last.table.rows[last.rowIndex]
+  }
+  return row?.snapshots[step.snapshotIndex]?.line ?? null
+}

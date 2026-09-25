@@ -127,21 +127,39 @@ export interface PyodideIterationTable {
 }
 
 // One loop iteration's own trace. `snapshots` is an ORDERED list of
-// {variable: repr string} objects, one per breakpoint hit during this
+// PyodideSnapshot objects, one per breakpoint hit during this
 // iteration, in hit order -- this is what makes "one step per
 // breakpoint hit within an iteration, not one step per iteration"
 // possible (iterationSteps.ts/IterationTable.tsx): stepping through a
-// row's own snapshots in order updates ITS displayed values live,
-// without the step cursor moving to a different row. `snapshots` can
-// be EMPTY -- an iteration that never hit any breakpoint inside the
-// loop's body still gets a row (for iteration-counting purposes), it's
-// just rendered blank (see IterationTable.tsx). A snapshot missing a
-// given column entirely (rather than holding an empty string) is what
-// tells the renderer to show a blank cell for a variable not yet
-// assigned as of that specific breakpoint hit.
+// row's own snapshots in order updates ITS displayed values (and the
+// source line CodeEditor highlights) live, without the step cursor
+// moving to a different row. `snapshots` can be EMPTY -- an iteration
+// that never hit any breakpoint inside the loop's body still gets a
+// row (for iteration-counting purposes), it's just rendered blank
+// (see IterationTable.tsx).
 export interface PyodideIterationRow {
   iteration: number
-  snapshots: Record<string, string>[]
+  snapshots: PyodideSnapshot[]
+}
+
+// One breakpoint hit's own recorded state. `line` is the exact source
+// line that hit fired on (1-based, in the TRACED source's own line-
+// number space -- cell.source as run_cell_with_breakpoints_b64/
+// _debug_run_one see it, i.e. latestRunSourceRef.current in Cell.tsx,
+// which is meta.executable_source, the def-line-INCLUDED source for a
+// hide_def=True cell -- NOT meta.source, the def-line-free body
+// CodeEditor actually displays). Cell.tsx/TestsElementWidget.tsx
+// convert this back into meta.source's own line-number space
+// (subtracting the same def-line offset runWithBreakpoints ADDS to
+// breakpointLines before sending them, for a hide_def=True cell)
+// before feeding it to CodeEditor's stepLine prop -- see Cell.tsx's
+// own defLineOffset/currentStepLine. `variables` is a {name: repr
+// string} map -- a name missing entirely (rather than holding an
+// empty string) is what tells the renderer to show a blank cell for a
+// variable not yet assigned as of that specific breakpoint hit.
+export interface PyodideSnapshot {
+  line: number
+  variables: Record<string, string>
 }
 
 // run_cell_with_breakpoints_b64's own result shape -- deliberately its
@@ -811,16 +829,26 @@ def _new_iteration_row(iteration):
     counter (previously stored as an ordinary column value under a
     caller-chosen key like "iteration" -- now a dedicated field, since
     it's the same for every snapshot within this one row and isn't
-    itself a breakpoint-hit snapshot). snapshots is an ORDERED list
-    of {variable: repr string} dicts, one per breakpoint hit that
-    occurred during this iteration, in the order they were hit --
-    empty if no breakpoint inside the loop's body was ever hit during
-    this particular iteration (the row still exists, for iteration-
-    counting purposes, it's just blank when rendered -- see the
-    frontend's own IterationTable.tsx). This is the shape that makes
-    "one step per breakpoint hit, not one step per iteration" possible:
-    stepping through this row's own snapshots in order updates its
-    displayed values live, without changing which ROW is showing."""
+    itself a breakpoint-hit snapshot). snapshots is an ORDERED list of
+    {"line": line_no, "variables": {variable: repr string}} dicts, one
+    per breakpoint hit that occurred during this iteration, in the
+    order they were hit -- empty if no breakpoint inside the loop's
+    body was ever hit during this particular iteration (the row still
+    exists, for iteration-counting purposes, it's just blank when
+    rendered -- see the frontend's own IterationTable.tsx). line is the
+    exact source line that breakpoint hit fired on, in THIS source's
+    own line-number space (cell.source as this run traced it) -- the
+    frontend (Cell.tsx/TestsElementWidget.tsx) converts it back into
+    whatever CodeEditor is actually displaying (a hide_def=True cell's
+    editor never shows this same source's own def line, so its numbers
+    differ by one) before feeding it to CodeEditor's own stepLine prop,
+    so the editor highlights the real line the current step's values
+    came from, not just the row/table they landed in. This is the
+    shape that makes "one step per
+    breakpoint hit, not one step per iteration" possible: stepping
+    through this row's own snapshots in order updates its displayed
+    values (and the highlighted source line) live, without changing
+    which ROW is showing."""
     return {"iteration": iteration, "snapshots": []}
 
 def _make_loop_tracer(
@@ -947,16 +975,16 @@ def _make_loop_tracer(
             return False
         return True
 
-    def _append_snapshot(table, variables):
+    def _append_snapshot(table, line_no, variables):
         if not table["rows"]:
             return
         row = table["rows"][-1]
-        snapshot = {}
+        values = {}
         for name, value in variables.items():
             if name not in table["columns"]:
                 table["columns"].append(name)
-            snapshot[name] = value
-        row["snapshots"].append(snapshot)
+            values[name] = value
+        row["snapshots"].append({"line": line_no, "variables": values})
 
     def _descend(chain, create):
         """Walk root_table down through chain (a list of loopIds,
@@ -1068,7 +1096,7 @@ def _make_loop_tracer(
                 current_table[innermost] = table
         else:
             table = root_table
-        _append_snapshot(table, variables)
+        _append_snapshot(table, line_no, variables)
         return _tracer
 
     return _tracer

@@ -3,7 +3,7 @@ import { runTestWithBreakpointsClientSide, type PyodideTestDebugRunResult } from
 import { CodeEditor } from './CodeEditor'
 import type { ElementMeta, TestResult } from './elementMeta'
 import { IterationTable } from './IterationTable'
-import { iterationSteps } from './iterationSteps'
+import { iterationSteps, stepSourceLine } from './iterationSteps'
 
 // A `tests` element (ARCHITECTURE.md section 3b): a second, unittest-like
 // code editor attached to a cell. Reuses the same CodeMirror-based
@@ -94,6 +94,15 @@ export function TestsElementWidget({
     [debugResult],
   )
   const [stepIndex, setStepIndex] = useState(0)
+  // A tests element's own editor source is always standalone-compilable
+  // (no hide_def concept here at all -- unlike Cell.tsx's primary
+  // editor, there's no def-line reattachment, so the traced source IS
+  // exactly what's displayed and breakpoint/snapshot line numbers need
+  // no conversion in either direction).
+  const currentStepLine = useMemo(
+    () => (debugResult ? stepSourceLine(debugResult.iterationTable, steps[stepIndex]) : null),
+    [debugResult, steps, stepIndex],
+  )
 
   // Unlike Cell.tsx's own runWithBreakpoints, this reads `source` (the
   // prop, this component's own live-echoed test text -- App.tsx's own
@@ -133,13 +142,7 @@ export function TestsElementWidget({
           onRunAll={onChangeSource}
           breakpointLines={breakpointLines}
           onToggleBreakpoint={toggleBreakpoint}
-          // No single "current line" any more -- a row-per-iteration
-          // table has no one-frame-at-a-time position to point a
-          // gutter arrow at (see IterationTable.tsx's own module
-          // docstring on why this replaced the old step-scrubber).
-          // Breakpoint lines themselves still highlight, just inside
-          // the table below rather than via this prop.
-          stepLine={null}
+          stepLine={currentStepLine}
         />
       </div>
       {(breakpointLines.size > 0 || debugResult || debugError) && (

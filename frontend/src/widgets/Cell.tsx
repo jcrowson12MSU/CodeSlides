@@ -8,7 +8,7 @@ import { CodeEditor, type RemotePeerCursor } from './CodeEditor'
 import { EditCellPanel } from './EditCellPanel'
 import { ElementWidget } from './ElementWidget'
 import { IterationTable } from './IterationTable'
-import { iterationSteps } from './iterationSteps'
+import { iterationSteps, stepSourceLine } from './iterationSteps'
 import { TestsElementWidget } from './TestsElementWidget'
 import { ViewerElementWidget } from './ViewerElementWidget'
 import {
@@ -726,6 +726,25 @@ export function Cell({
     [debugResult],
   )
   const [debugStepIndex, setDebugStepIndex] = useState(0)
+  // How many lines meta.executable_source (what's actually traced, and
+  // what PyodideSnapshot.line's own numbers are in terms of) has ahead
+  // of meta.source (what CodeEditor actually displays) -- mirrors the
+  // exact reattachment onRunCell does below (meta.executable_source's
+  // own first line, prepended back onto the dedented body) for a
+  // hide_def=True cell. Shared by both directions of the same
+  // conversion: runWithBreakpoints adds it (display -> traced) before
+  // sending breakpoints, currentStepLine subtracts it (traced ->
+  // display) before highlighting.
+  const defLineOffset = meta.hide_def ? 1 : 0
+  // The current step's own breakpoint-hit line, converted back down
+  // into meta.source's line-number space so CodeEditor -- which only
+  // ever displays meta.source, never executable_source -- highlights
+  // the right line even for a hide_def=True cell.
+  const currentStepLine = useMemo(() => {
+    if (!debugResult) return null
+    const line = stepSourceLine(debugResult.iterationTable, debugSteps[debugStepIndex])
+    return line === null ? null : line - defLineOffset
+  }, [debugResult, debugSteps, debugStepIndex, defLineOffset])
 
   // This app's client-side-only execution model never writes a local
   // edit back into deck.cells[cellId].source/meta.source at all (App.tsx's
@@ -760,7 +779,19 @@ export function Cell({
     setDebugRunning(true)
     setDebugError(null)
     const cellsInput = { [cellId]: { source: latestRunSourceRef.current, elements: meta.elements } }
-    runCellWithBreakpointsClientSide(cellId, cellsInput, breakpointLines)
+    // breakpointLines is collected from CodeEditor's own gutter, i.e. in
+    // meta.source's line-number space -- the def-line-free body, for a
+    // hide_def=True cell (see toggleBreakpoint/CodeEditor's lineMarker).
+    // latestRunSourceRef.current (what's actually traced, above) is
+    // always the REAL, def-line-included source for such a cell (the
+    // same reattachment onRunCell does), one line longer. Without this
+    // adjustment a breakpoint set on the body's own first line would be
+    // checked against the def line itself in the traced source, and
+    // every other line off by the same one-line gap. defLineOffset
+    // itself is hoisted above (shared with currentStepLine's own
+    // reverse conversion).
+    const tracedBreakpointLines = new Set([...breakpointLines].map((line) => line + defLineOffset))
+    runCellWithBreakpointsClientSide(cellId, cellsInput, tracedBreakpointLines)
       .then((result) => {
         setDebugResult(result)
         setDebugStepIndex(0)
@@ -769,7 +800,7 @@ export function Cell({
         setDebugError(err instanceof Error ? err.message : String(err))
       })
       .finally(() => setDebugRunning(false))
-  }, [cellId, meta.elements, breakpointLines])
+  }, [cellId, meta.elements, defLineOffset, breakpointLines])
 
   // The left column's own top/bottom split -- declared here (not next to
   // startLeftPanelResizing/stopLeftPanelResizing further down, where
@@ -1237,11 +1268,11 @@ export function Cell({
             onToggleLineHighlight={toggleLineHighlight}
             breakpointLines={breakpointLines}
             onToggleBreakpoint={toggleBreakpoint}
-            // No single "current line" any more -- a row-per-iteration
-            // table has no one-frame-at-a-time position to point a
-            // gutter arrow at (see IterationTable.tsx's own module
-            // docstring on why this replaced the old step-scrubber).
-            stepLine={null}
+            // The current step's own breakpoint-hit line (currentStepLine,
+            // above) -- converted into meta.source's own line-number
+            // space already, so CodeEditor can feed it straight to
+            // doc.line(...) with no further adjustment needed here.
+            stepLine={currentStepLine}
             lineOffset={lineOffset}
             onLineCountChange={onLineCountChange}
             cellId={cellId}
