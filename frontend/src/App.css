@@ -1136,6 +1136,26 @@ body.cs-resizing-vertical {
   background: #f7f9ff;
 }
 
+/* The step-cursor's current row/table (IterationTable.tsx's own
+   currentStepPath) -- deliberately a different color/shape than
+   .cs-iteration-loop-highlighted (breakpoint-line highlighting on a
+   whole loop table): the two answer different questions ("which loop
+   has a breakpoint" vs. "which row is the step on right now") and
+   must never look like the same kind of marker, or a breakpoint and
+   the step cursor landing on/near each other would be unreadable. A
+   left border (not an outline, which .cs-iteration-loop-highlighted
+   already uses) keeps this readable even nested several levels deep,
+   where an outline would visually compete with the outer loop's own
+   highlight box. */
+.cs-iteration-row-current {
+  background: #dff3e0 !important;
+  box-shadow: inset 3px 0 0 0 #2e8b45;
+}
+
+.cs-iteration-table-root.cs-iteration-row-current {
+  box-shadow: inset 3px 0 0 0 #2e8b45;
+}
+
 .cs-element-viewer {
   flex-direction: column;
   align-items: stretch;

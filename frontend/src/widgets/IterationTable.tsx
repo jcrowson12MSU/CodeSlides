@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { PyodideIterationTable } from '../pyodideKernel'
+import { isPathPrefixOf, samePath, type IterationStepPath } from './iterationSteps'
 
 // Renders a debug run's row-per-loop-iteration trace (pyodideKernel.ts's
 // _make_loop_tracer/_new_loop_table, PyodideIterationTable's own
@@ -50,9 +51,19 @@ export interface IterationTableProps {
   // has no hide_def concept at all) and simply omits this, defaulting
   // to 0.
   lineOffset?: number
+  // The row the step-cursor is currently on (Cell.tsx/TestsElementWidget.
+  // tsx's own step state, built via iterationSteps()/indexed by
+  // debugStepIndex) -- an empty array means the root's own single row
+  // is current, undefined/omitted means no stepping is active at all
+  // (nothing highlighted, nothing force-expanded, matching this
+  // component's original no-stepping behavior exactly). A row ON this
+  // path (not just the exact match) is force-expanded even if the
+  // user collapsed it locally, so stepping into a nested loop always
+  // reveals it -- see ExpandableRow's own isOnPath handling.
+  currentStepPath?: IterationStepPath
 }
 
-export function IterationTable({ table, highlightLines, lineOffset = 0 }: IterationTableProps) {
+export function IterationTable({ table, highlightLines, lineOffset = 0, currentStepPath }: IterationTableProps) {
   // table is ALWAYS the synthetic root (loopId === null, exactly one
   // row -- see PyodideIterationTable's own docstring) -- rendered
   // flat, with NO surrounding chrome (no "loop N" label, no collapse
@@ -68,11 +79,16 @@ export function IterationTable({ table, highlightLines, lineOffset = 0 }: Iterat
   const row = table.rows[0] ?? {}
   const columns = table.columns
   const topLevelLoops = table.childTables['0'] ?? []
+  const rootIsCurrentStep = currentStepPath != null && currentStepPath.length === 0
 
   return (
     <>
       {columns.length > 0 && (
-        <table className="cs-iteration-table cs-iteration-table-root">
+        <table
+          className={`cs-iteration-table cs-iteration-table-root${
+            rootIsCurrentStep ? ' cs-iteration-row-current' : ''
+          }`}
+        >
           <thead>
             <tr>
               {columns.map((col) => (
@@ -90,7 +106,15 @@ export function IterationTable({ table, highlightLines, lineOffset = 0 }: Iterat
         </table>
       )}
       {topLevelLoops.map((loopTable, i) => (
-        <LoopTable key={i} table={loopTable} highlightLines={highlightLines} lineOffset={lineOffset} depth={0} />
+        <LoopTable
+          key={i}
+          table={loopTable}
+          highlightLines={highlightLines}
+          lineOffset={lineOffset}
+          currentStepPath={currentStepPath}
+          path={[]}
+          depth={0}
+        />
       ))}
       {columns.length === 0 && topLevelLoops.length === 0 && (
         <p className="cs-iteration-table-empty">No variables recorded yet.</p>
@@ -103,11 +127,23 @@ function LoopTable({
   table,
   highlightLines,
   lineOffset,
+  currentStepPath,
+  path,
   depth,
 }: {
   table: PyodideIterationTable
   highlightLines?: ReadonlySet<number>
   lineOffset: number
+  // The current step's full path, or undefined if stepping is
+  // inactive -- passed straight through to ExpandableRow unchanged;
+  // LoopTable itself doesn't compare against it directly (a LOOP
+  // table's own identity/position isn't itself "a step," only its
+  // individual ROWS are).
+  currentStepPath?: IterationStepPath
+  // The path from the root down to (but not including) THIS table's
+  // own rows -- i.e. exactly what ExpandableRow below appends its own
+  // {table, rowIndex} onto to build each row's full path.
+  path: IterationStepPath
   depth: number
 }) {
   const highlighted = table.startLine != null && highlightLines?.has(table.startLine)
@@ -146,6 +182,8 @@ function LoopTable({
                 children={children}
                 highlightLines={highlightLines}
                 lineOffset={lineOffset}
+                currentStepPath={currentStepPath}
+                rowPath={[...path, { table, rowIndex }]}
                 depth={depth}
               />
             )
@@ -162,6 +200,8 @@ function ExpandableRow({
   children,
   highlightLines,
   lineOffset,
+  currentStepPath,
+  rowPath,
   depth,
 }: {
   row: Record<string, string | number>
@@ -169,20 +209,45 @@ function ExpandableRow({
   children?: PyodideIterationTable[]
   highlightLines?: ReadonlySet<number>
   lineOffset: number
+  currentStepPath?: IterationStepPath
+  // This row's own full path (built by LoopTable as
+  // [...parentPath, {table: thisLoopTable, rowIndex: thisRow}]) --
+  // compared against currentStepPath to decide both whether THIS row
+  // is the current step (highlight) and whether the step is nested
+  // somewhere under it (force-expand).
+  rowPath: IterationStepPath
   depth: number
 }) {
   // Collapsed by default (per the feature's own accepted design: a
   // nested table's rows aren't the point of scanning the OUTER loop's
   // own history at a glance) -- expanding one row's inner loop(s) never
   // affects any other row's own expanded/collapsed state, each is
-  // fully independent local state.
+  // fully independent local state. isOnStepPath below can still force
+  // this open regardless of the local (possibly collapsed) value, but
+  // never forces it CLOSED -- a user who manually expanded a row keeps
+  // seeing it expanded even after stepping past it.
   const [expanded, setExpanded] = useState(false)
   const hasChildren = Boolean(children && children.length > 0)
+  const isCurrentStep = currentStepPath != null && samePath(rowPath, currentStepPath)
+  const isOnStepPath = currentStepPath != null && isPathPrefixOf(rowPath, currentStepPath)
+  const effectiveExpanded = expanded || isOnStepPath
+  const rowRef = useRef<HTMLTableRowElement>(null)
+
+  useEffect(() => {
+    if (isCurrentStep) {
+      rowRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }
+  }, [isCurrentStep])
 
   return (
     <>
       <tr
-        className={hasChildren ? 'cs-iteration-row-expandable' : undefined}
+        ref={rowRef}
+        className={
+          `${hasChildren ? 'cs-iteration-row-expandable' : ''}${
+            isCurrentStep ? ' cs-iteration-row-current' : ''
+          }`.trim() || undefined
+        }
         onClick={hasChildren ? () => setExpanded((e) => !e) : undefined}
       >
         {columns.map((col, i) => (
@@ -191,20 +256,20 @@ function ExpandableRow({
               <button
                 type="button"
                 className="cs-iteration-row-toggle"
-                aria-label={expanded ? 'Collapse nested loop' : 'Expand nested loop'}
+                aria-label={effectiveExpanded ? 'Collapse nested loop' : 'Expand nested loop'}
                 onClick={(e) => {
                   e.stopPropagation()
                   setExpanded((ex) => !ex)
                 }}
               >
-                {expanded ? '▾' : '▸'}
+                {effectiveExpanded ? '▾' : '▸'}
               </button>
             )}
             {col in row ? String(row[col]) : ''}
           </td>
         ))}
       </tr>
-      {hasChildren && expanded && (
+      {hasChildren && effectiveExpanded && (
         <tr>
           <td colSpan={columns.length} className="cs-iteration-nested-cell">
             {children!.map((childTable, i) => (
@@ -213,6 +278,8 @@ function ExpandableRow({
                 table={childTable}
                 highlightLines={highlightLines}
                 lineOffset={lineOffset}
+                currentStepPath={currentStepPath}
+                path={rowPath}
                 depth={depth + 1}
               />
             ))}
