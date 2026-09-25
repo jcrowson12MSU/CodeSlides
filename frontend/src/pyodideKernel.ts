@@ -918,19 +918,29 @@ def _make_input_shim(cell_name, elements, element_values):
 def _run_test(test_source, cell_name, elements):
     """Mirrors kernel.py's run_tests + _run_and_apply_test: run a tests
     element's source as plain top-level Python (ordinary asserts, not
-    unittest) against _namespace itself -- the SAME shared dict
-    _execute_one already exec'd the owning cell's function into, so the
-    test can call the cell's own function by name and read/write any
-    global it declares, exactly like a real Python script calling a
-    function from the same module. cs/turtle are already seeded into
-    _namespace once at runner-module init time (this file's own header
-    comment), so no separate seeding is needed here the way kernel.py's
-    run_tests does with setdefault (that call happened once, this
-    module's whole lifetime ago, and _namespace is the one shared dict
-    -- re-seeding here would just be a no-op every time).
+    unittest) against a shallow COPY of _namespace, not _namespace
+    itself -- a test box's own top-level assignments must stay local to
+    that one test run, never becoming silently readable from a
+    different cell's main editor or a different cell's own tests box
+    just because both share this one tab's _namespace. (Server-side
+    equivalent: kernel.py's run_tests docstring, which documents the
+    exact cross-cell leak this guards against and the accepted
+    trade-off below.) The test can still call the owning cell's own
+    function by name and read whatever global it already declared --
+    that function's own __globals__ is still the real _namespace,
+    fixed at compile time in _execute_one/_define_one, entirely
+    independent of which dict this call's own top-level exec runs
+    against. Trade-off, deliberately accepted (matches kernel.py's
+    run_tests): a called cell's global mutation still reaches the
+    real _namespace and persists for later cells/tests, but this same
+    test's OWN subsequent lines still see their copy's pre-call
+    snapshot, not that just-written value. cs/turtle are already seeded
+    into _namespace once at runner-module init time (this file's own
+    header comment) and thus already present in the copy too, since the
+    copy starts from _namespace's current contents.
 
-    input() is shadowed for the duration of this call only (same save/
-    restore-in-finally pattern kernel.py's run_tests uses), reading from
+    input() is bound directly onto the copy (no save/restore needed --
+    the copy is simply discarded when this call returns), reading from
     cell_name's own text_input/slider elements via _make_input_shim.
 
     turtle.execution_context() establishes a fresh canvas state (see
@@ -951,10 +961,9 @@ def _run_test(test_source, cell_name, elements):
         return result
 
     stdout, stderr = io.StringIO(), io.StringIO()
-    _NO_PRIOR_INPUT = object()
-    prior_input = _namespace.get("input", _NO_PRIOR_INPUT)
+    test_globals = dict(_namespace)
     element_values = _element_values.get(cell_name, {})
-    _namespace["input"] = _make_input_shim(cell_name, elements, element_values)
+    test_globals["input"] = _make_input_shim(cell_name, elements, element_values)
     try:
         with contextlib.ExitStack() as stack:
             stack.enter_context(contextlib.redirect_stdout(stdout))
@@ -962,18 +971,13 @@ def _run_test(test_source, cell_name, elements):
             turtle_commands = (
                 stack.enter_context(turtle.execution_context()) if turtle_element is not None else None
             )
-            exec(compile(test_source, "<test>", "exec"), _namespace)
+            exec(compile(test_source, "<test>", "exec"), test_globals)
     except AssertionError as exc:
         result["status"] = "fail"
         result["message"] = str(exc) or "assertion failed"
     except Exception:
         result["status"] = "error"
         result["message"] = traceback.format_exc()
-    finally:
-        if prior_input is _NO_PRIOR_INPUT:
-            _namespace.pop("input", None)
-        else:
-            _namespace["input"] = prior_input
 
     result["stdout"] = stdout.getvalue()
     result["stderr"] = stderr.getvalue()
@@ -1034,47 +1038,40 @@ def _debug_run_test(test_source, cell_name, elements, breakpoint_lines, all_cell
     or a debug run's snapshots would silently stop reflecting what an
     ordinary test run actually does).
 
-    Deliberately mirrors _run_test's own "run against the SAME shared
-    _namespace _execute_one already exec'd the owning cell's function
-    into" behavior -- so a test calling the cell's own function by name
-    can still be traced through that function's body too (the tracer's
-    own 'call' handling covers this: the cell's function was compiled
-    under "<cell:NAME>", a different filename than "<test>", so its own
-    lines are never captured as snapshots even though execution passes
-    through them -- a debug run here is scoped to the TEST's own lines,
-    not the cell body it exercises; debugging the cell body itself is
-    what Cell.tsx's own "Run with breakpoints" is for).
+    Like _run_test (see its own docstring for the full rationale), runs
+    against a shallow COPY of _namespace, not _namespace itself -- so a
+    test calling the cell's own function by name can still be traced
+    through that function's body too (the tracer's own 'call' handling
+    covers this: the cell's function was compiled under "<cell:NAME>",
+    a different filename than "<test>", so its own lines are never
+    captured as snapshots even though execution passes through them --
+    a debug run here is scoped to the TEST's own lines, not the cell
+    body it exercises; debugging the cell body itself is what Cell.tsx's
+    own "Run with breakpoints" is for).
 
     all_cell_names (every cell in the current deck, not just this one)
     plus _NAMESPACE_BASELINE_KEYS (cs/turtle) plus _RETURN_NAMED_VALUES
     (every name any cell's own return has EVER bound, across every
     cell, this whole tab's lifetime) plus "input" together form the
-    exclude_keys passed to _make_snapshot_tracer -- deliberately NOT
-    "whatever _namespace already contains right before this call", which
-    would silently under-exclude on a SECOND debug/ordinary run of the
-    same (or textually similar) test: this call's own test_source is
-    itself exec'd into the shared, persistent _namespace, so any name it
-    assigned on a PRIOR run (e.g. this test's own "total"/"i" loop
-    variables) is already sitting in _namespace by the time this run's
-    own baseline would be captured, and would be wrongly treated as
-    "pre-existing, not the test's own" forever after -- reproduced by
-    running the exact same test text twice in a row and watching its
-    second run's snapshots come back with an empty variables dict.
-
-    Cell names alone aren't enough either: a cell's own RETURN-named
-    value (e.g. base from a setup cell returning base) is a
-    DIFFERENT name from the cell itself, sitting in _namespace as its
-    own plain top-level binding with nothing marking which cell (if any)
-    produced it -- reproduced by testing a cell that reads an upstream
-    cell's return value (e.g. calling live_demo(3) inside a loop, where
-    "base" is upstream of live_demo) and watching that upstream value
-    show up in every snapshot's own variables as if the test itself had
-    assigned it. _RETURN_NAMED_VALUES (updated by _execute_one/
-    _debug_run_one at the exact point each one writes a return-named
-    value into _namespace) is what closes this gap. All four pieces are
-    stable regardless of run history, so computing exclude_keys from
-    those (never from _namespace's own current key set) is correct on
-    every run, first or hundredth alike."""
+    exclude_keys passed to _make_snapshot_tracer. This used to matter a
+    great deal more: before test runs were isolated onto a fresh copy
+    each time, a test's own prior-run locals (e.g. this test's own
+    "total"/"i" loop variables) stayed sitting in the shared, persistent
+    _namespace forever, so exclude_keys had to be computed from these
+    four stable sources rather than "whatever _namespace already
+    contains right now" -- otherwise a SECOND run of the same test would
+    wrongly treat its own leftover locals as pre-existing and exclude
+    them, snapshots coming back with an empty variables dict. Isolation
+    means a fresh copy no longer carries that leftover state in the
+    first place, so this exclude_keys computation is now more of a
+    belt-and-suspenders guard than a load-bearing fix for that specific
+    symptom -- kept exactly as-is regardless, since it's still correct
+    and still needed for the OTHER thing it guards: a cell's own
+    RETURN-named value (e.g. base from a setup cell returning base) is
+    a DIFFERENT name from the cell itself, with nothing else marking
+    which cell (if any) produced it, so _RETURN_NAMED_VALUES is what
+    keeps an upstream cell's real, legitimate value from being
+    misreported as if the test itself had just assigned it."""
     turtle_element = _find_turtle_canvas(elements)
     snapshots = []
     truncated = {"value": False}
@@ -1090,14 +1087,13 @@ def _debug_run_test(test_source, cell_name, elements, breakpoint_lines, all_cell
         return result
 
     stdout, stderr = io.StringIO(), io.StringIO()
-    _NO_PRIOR_INPUT = object()
-    prior_input = _namespace.get("input", _NO_PRIOR_INPUT)
+    test_globals = dict(_namespace)
     element_values = _element_values.get(cell_name, {})
-    _namespace["input"] = _make_input_shim(cell_name, elements, element_values)
+    test_globals["input"] = _make_input_shim(cell_name, elements, element_values)
     # See this function's own docstring for why this is every cell name
     # plus the permanently-seeded names, never _namespace's own current
-    # key set. exec(compile(...), _namespace) below also implicitly
-    # injects "__builtins__" into _namespace itself (a plain dict given
+    # key set. exec(compile(...), test_globals) below also implicitly
+    # injects "__builtins__" into test_globals itself (a plain dict given
     # as exec's globals gets one added automatically if not already
     # present, same as any top-level module's own __builtins__) --
     # filtered here as "any dunder name" rather than one more name to
@@ -1122,7 +1118,7 @@ def _debug_run_test(test_source, cell_name, elements, breakpoint_lines, all_cell
             if breakpoint_lines:
                 sys.settrace(_tracer)
             try:
-                exec(compile(test_source, "<test>", "exec"), _namespace)
+                exec(compile(test_source, "<test>", "exec"), test_globals)
             finally:
                 sys.settrace(None)
     except AssertionError as exc:
@@ -1131,11 +1127,6 @@ def _debug_run_test(test_source, cell_name, elements, breakpoint_lines, all_cell
     except Exception:
         result["status"] = "error"
         result["message"] = traceback.format_exc()
-    finally:
-        if prior_input is _NO_PRIOR_INPUT:
-            _namespace.pop("input", None)
-        else:
-            _namespace["input"] = prior_input
 
     result["stdout"] = stdout.getvalue()
     result["stderr"] = stderr.getvalue()

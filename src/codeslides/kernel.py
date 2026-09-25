@@ -695,37 +695,43 @@ def run_tests(
       presence rather than an empty list being ambiguous with "no
       canvas at all."
 
-    Runs directly against `namespace` itself (mutated in place), not a
-    copy -- a test box's own top-level code is exactly as "real" a
-    piece of top-level Python as any cell's body, so a name it assigns
-    persists into `session.namespace` the same way a cell's
-    `global`-declared write does (see `execute_cell`/
-    `_compile_cell_function`'s docstrings for why a copy fundamentally
-    cannot make this work: a called cell's `global x` always resolves
-    through that specific cell's own `__globals__` dict, fixed at
-    compile time, never through whatever dict happens to call it). This
-    is what makes a test like `x1 = 4; cell_2()` (where `cell_2` does
-    `global x1; x1 += 5`) able to see and mutate the same `x1` the
-    deck's other cells do, exactly like ordinary top-level script code
-    calling a function that declares `global`.
+    Runs against a shallow copy of `namespace`, not `namespace` itself --
+    a test box's own top-level assignments (`x = 5` typed directly in
+    the box) must stay local to that one test run, exactly like a
+    fresh Python script's globals never leak into a *different*
+    script's globals just because both happened to import the same
+    module. Without this copy, every `tests` box across the entire deck
+    shared one dict: a name assigned in cell A's test box became
+    silently readable (and writable) from cell B's main editor or test
+    box, with no graph edge recording the dependency and no way to
+    reason about which test ran first.
 
-    `cs`/`turtle`/`deck_imports` are seeded directly into `namespace`
-    (via `setdefault`, so a cell's own prior write to a same-named
-    global is never clobbered back to the framework's value) exactly
-    like `execute_cell`/`define_cell` do, for the same reason: test code
-    is still ordinary Python, needing the same framework names and
-    deck-level imports available without an explicit import. The turtle
+    Trade-off, deliberately accepted: a test calling into another
+    cell's function that declares `global` no longer sees the test's
+    own not-yet-persisted local assignments. `x1 = 4; cell_2()` (where
+    `cell_2` does `global x1; x1 += 5`) now raises `NameError` inside
+    `cell_2` if `x1` was never set by an earlier *cell* run -- `cell_2`'s
+    `__globals__` is fixed to the real `namespace` dict at compile time
+    (`_compile_cell_function`'s own docstring), which this copy
+    intentionally no longer shares with the test's own `x1 = 4`. A test
+    that needs to feed a value into a called cell's `global` must rely
+    on that name already existing in `namespace` (i.e. some earlier
+    cell actually set it), not assign it fresh in the test box itself.
+    Reads of anything upstream cells already wrote are entirely
+    unaffected, since the copy starts from -- and thus still contains --
+    everything `namespace` held at call time.
+
+    `cs`/`turtle`/`deck_imports`/`input` are all seeded into the copy
+    only, never the real `namespace` -- test code is still ordinary
+    Python, needing the same framework names and deck-level imports
+    available without an explicit import, but none of that setup (or
+    the `input()` shim reading this cell's own elements) has any
+    business persisting once the test finishes; the copy is simply
+    discarded afterward, so there's nothing left to restore. The turtle
     context is fresh for every test run (a clean `_TurtleState`,
     position reset to the origin) -- the test's drawing replaces
     whatever the cell's own last run drew, it never draws *on top of*
-    stale turtle state left over from the cell.
-
-    `element_instances` (the owning cell's `CellInstance.elements`, if
-    given) similarly seeds a per-call `input()` shim reading from this
-    cell's own `ui.text_input`/`ui.slider` elements in order -- see
-    `_make_input_shim`'s own docstring for why this is a direct
-    assignment, not `setdefault` like `cs`/`turtle` above, and restored
-    afterward rather than left in `namespace` for whatever runs next."""
+    stale turtle state left over from the cell."""
     turtle_element = _find_turtle_canvas(elements or [])
     result: dict[str, Any] = {"status": "pass", "message": "", "stdout": "", "stderr": ""}
     if turtle_element is not None:
@@ -734,13 +740,11 @@ def run_tests(
         return result
 
     stdout, stderr = io.StringIO(), io.StringIO()
+    test_globals = dict(namespace)
     for name, value in {"cs": cs, "turtle": turtle, **(deck_imports or {})}.items():
-        namespace.setdefault(name, value)
-    _NO_PRIOR_INPUT = object()
-    prior_input = namespace.get("input", _NO_PRIOR_INPUT)
+        test_globals.setdefault(name, value)
     if element_instances is not None:
-        namespace["input"] = _make_input_shim("<test>", elements or [], element_instances)
-    test_globals = namespace
+        test_globals["input"] = _make_input_shim("<test>", elements or [], element_instances)
     try:
         with (
             redirect_stdout(stdout),
@@ -754,12 +758,6 @@ def run_tests(
     except Exception:  # noqa: BLE001 - any other exception is a test-runner-level error, not a pass/fail
         result["status"] = "error"
         result["message"] = traceback.format_exc()
-    finally:
-        if element_instances is not None:
-            if prior_input is _NO_PRIOR_INPUT:
-                namespace.pop("input", None)
-            else:
-                namespace["input"] = prior_input
 
     result["stdout"] = stdout.getvalue()
     result["stderr"] = stderr.getvalue()
