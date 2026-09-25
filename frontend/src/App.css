@@ -984,8 +984,11 @@ body.cs-resizing-vertical {
    scrubbing through recorded breakpoint-hit snapshots, not a live pause/
    resume debugger (see pyodideKernel.ts's _debug_run_one docstring).
    Matches .cs-cell-output/.cs-cell-error's own margin/font-size/
-   border-radius conventions so it reads as one family of "stuff that
-   shows up below the editor", not a bolted-on separate widget. */
+   border-radius conventions so it reads as one family with the rest of
+   the app's output-ish panels. This is now DebuggerPanel.tsx's own root
+   -- content for a whole tab (protocol.ts's debuggerTabId) rather than
+   a block glued below the editor, so the small outer margin doubles as
+   this tab's own content padding. */
 .cs-cell-debugger {
   margin: 0.35rem 0.75rem 0;
   padding: 0.5rem;
