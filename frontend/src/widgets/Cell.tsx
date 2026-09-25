@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { CellState } from '../deckState'
 import { CODE_TAB_ID, INPUTS_TAB_ID, type CellLayout, type Quadrant } from '../protocol'
 import { runCellWithBreakpointsClientSide, type PyodideDebugRunResult } from '../pyodideKernel'
@@ -8,6 +8,7 @@ import { CodeEditor, type RemotePeerCursor } from './CodeEditor'
 import { EditCellPanel } from './EditCellPanel'
 import { ElementWidget } from './ElementWidget'
 import { IterationTable } from './IterationTable'
+import { iterationSteps } from './iterationSteps'
 import { TestsElementWidget } from './TestsElementWidget'
 import { ViewerElementWidget } from './ViewerElementWidget'
 import {
@@ -709,12 +710,16 @@ export function Cell({
   // ordinary Shift+Enter execution flow, so it needs its own status
   // rather than overloading `state`.
   const [debugResult, setDebugResult] = useState<PyodideDebugRunResult | null>(null)
-  // Only used by the disabled step-scrubber fallback further below
-  // (kept commented out, not deleted, per this feature's own accepted
-  // "revert is a small diff" design) -- currently dead state.
-  // const [debugStepIndex, setDebugStepIndex] = useState(0)
   const [debugRunning, setDebugRunning] = useState(false)
   const [debugError, setDebugError] = useState<string | null>(null)
+
+  // Flattened, depth-first walk of debugResult's own iterationTable
+  // (iterationSteps.ts) -- the SAME table IterationTable itself
+  // renders below, just re-derived here as a linear sequence for the
+  // step cursor to index into. Recomputed only when debugResult
+  // actually changes.
+  const debugSteps = useMemo(() => (debugResult ? iterationSteps(debugResult.iterationTable) : []), [debugResult])
+  const [debugStepIndex, setDebugStepIndex] = useState(0)
 
   // This app's client-side-only execution model never writes a local
   // edit back into deck.cells[cellId].source/meta.source at all (App.tsx's
@@ -752,8 +757,7 @@ export function Cell({
     runCellWithBreakpointsClientSide(cellId, cellsInput, breakpointLines)
       .then((result) => {
         setDebugResult(result)
-        // setDebugStepIndex(0) -- only needed by the disabled step-
-        // scrubber fallback; see its own declaration above.
+        setDebugStepIndex(0)
       })
       .catch((err: unknown) => {
         setDebugError(err instanceof Error ? err.message : String(err))
@@ -1097,6 +1101,29 @@ export function Cell({
               >
                 {debugRunning ? 'Running…' : 'Run with breakpoints'}
               </button>
+              {debugSteps.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setDebugStepIndex((i) => Math.max(0, i - 1))}
+                    disabled={debugStepIndex === 0}
+                    aria-label="Step back"
+                  >
+                    ◀
+                  </button>
+                  <span className="cs-cell-debugger-step-counter">
+                    step {debugStepIndex + 1} / {debugSteps.length}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setDebugStepIndex((i) => Math.min(debugSteps.length - 1, i + 1))}
+                    disabled={debugStepIndex === debugSteps.length - 1}
+                    aria-label="Step forward"
+                  >
+                    ▶
+                  </button>
+                </>
+              )}
             </div>
             {debugError && <pre className="cs-cell-error">{debugError}</pre>}
             {debugResult?.truncated && (
@@ -1113,6 +1140,7 @@ export function Cell({
                 table={debugResult.iterationTable}
                 highlightLines={breakpointLines}
                 lineOffset={lineOffset}
+                currentStepPath={debugSteps[debugStepIndex]?.path}
               />
             )}
             {/* Former step-scrubber view (one PyodideDebugSnapshot at a

@@ -1,8 +1,9 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { runTestWithBreakpointsClientSide, type PyodideTestDebugRunResult } from '../pyodideKernel'
 import { CodeEditor } from './CodeEditor'
 import type { ElementMeta, TestResult } from './elementMeta'
 import { IterationTable } from './IterationTable'
+import { iterationSteps } from './iterationSteps'
 
 // A `tests` element (ARCHITECTURE.md section 3b): a second, unittest-like
 // code editor attached to a cell. Reuses the same CodeMirror-based
@@ -75,12 +76,18 @@ export function TestsElementWidget({
   }, [])
 
   const [debugResult, setDebugResult] = useState<PyodideTestDebugRunResult | null>(null)
-  // Only used by the disabled step-scrubber fallback in the JSX below
-  // (kept commented out, not deleted, per this feature's own accepted
-  // "revert is a small diff" design) -- currently dead state.
-  // const [debugStepIndex, setDebugStepIndex] = useState(0)
   const [debugRunning, setDebugRunning] = useState(false)
   const [debugError, setDebugError] = useState<string | null>(null)
+
+  // Flattened, depth-first walk of debugResult's own iterationTable
+  // (iterationSteps.ts) -- the SAME table IterationTable itself
+  // renders, just re-derived here as a linear sequence for the step
+  // cursor below to index into. Recomputed only when debugResult
+  // actually changes (a fresh "Run with breakpoints" click), never on
+  // every render/step -- the table itself is immutable once a debug
+  // run finishes.
+  const steps = useMemo(() => (debugResult ? iterationSteps(debugResult.iterationTable) : []), [debugResult])
+  const [stepIndex, setStepIndex] = useState(0)
 
   // Unlike Cell.tsx's own runWithBreakpoints, this reads `source` (the
   // prop, this component's own live-echoed test text -- App.tsx's own
@@ -97,8 +104,7 @@ export function TestsElementWidget({
     runTestWithBreakpointsClientSide(cellId, source, cellsInput, breakpointLines, allCellNames)
       .then((result) => {
         setDebugResult(result)
-        // setDebugStepIndex(0) -- only needed by the disabled step-
-        // scrubber fallback; see its own declaration above.
+        setStepIndex(0)
       })
       .catch((err: unknown) => {
         setDebugError(err instanceof Error ? err.message : String(err))
@@ -145,6 +151,29 @@ export function TestsElementWidget({
             >
               {debugRunning ? 'Running…' : 'Run with breakpoints'}
             </button>
+            {steps.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setStepIndex((i) => Math.max(0, i - 1))}
+                  disabled={stepIndex === 0}
+                  aria-label="Step back"
+                >
+                  ◀
+                </button>
+                <span className="cs-cell-debugger-step-counter">
+                  step {stepIndex + 1} / {steps.length}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setStepIndex((i) => Math.min(steps.length - 1, i + 1))}
+                  disabled={stepIndex === steps.length - 1}
+                  aria-label="Step forward"
+                >
+                  ▶
+                </button>
+              </>
+            )}
           </div>
           {debugError && <pre className="cs-cell-error">{debugError}</pre>}
           {debugResult?.truncated && (
@@ -157,7 +186,11 @@ export function TestsElementWidget({
             <pre className="cs-cell-error">{debugResult.message}</pre>
           )}
           {debugResult && (
-            <IterationTable table={debugResult.iterationTable} highlightLines={breakpointLines} />
+            <IterationTable
+              table={debugResult.iterationTable}
+              highlightLines={breakpointLines}
+              currentStepPath={steps[stepIndex]?.path}
+            />
           )}
           {/* Former step-scrubber view (one PyodideDebugSnapshot at a
               time, stepped with prev/next arrows) -- superseded by
