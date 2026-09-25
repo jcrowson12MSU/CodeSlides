@@ -7,6 +7,7 @@ import { hasCellOutput } from './cellOutput'
 import { CodeEditor, type RemotePeerCursor } from './CodeEditor'
 import { EditCellPanel } from './EditCellPanel'
 import { ElementWidget } from './ElementWidget'
+import { IterationTable } from './IterationTable'
 import { TestsElementWidget } from './TestsElementWidget'
 import { ViewerElementWidget } from './ViewerElementWidget'
 import {
@@ -708,7 +709,10 @@ export function Cell({
   // ordinary Shift+Enter execution flow, so it needs its own status
   // rather than overloading `state`.
   const [debugResult, setDebugResult] = useState<PyodideDebugRunResult | null>(null)
-  const [debugStepIndex, setDebugStepIndex] = useState(0)
+  // Only used by the disabled step-scrubber fallback further below
+  // (kept commented out, not deleted, per this feature's own accepted
+  // "revert is a small diff" design) -- currently dead state.
+  // const [debugStepIndex, setDebugStepIndex] = useState(0)
   const [debugRunning, setDebugRunning] = useState(false)
   const [debugError, setDebugError] = useState<string | null>(null)
 
@@ -748,7 +752,8 @@ export function Cell({
     runCellWithBreakpointsClientSide(cellId, cellsInput, breakpointLines)
       .then((result) => {
         setDebugResult(result)
-        setDebugStepIndex(0)
+        // setDebugStepIndex(0) -- only needed by the disabled step-
+        // scrubber fallback; see its own declaration above.
       })
       .catch((err: unknown) => {
         setDebugError(err instanceof Error ? err.message : String(err))
@@ -1092,41 +1097,39 @@ export function Cell({
               >
                 {debugRunning ? 'Running…' : 'Run with breakpoints'}
               </button>
-              {debugResult && debugResult.snapshots.length > 0 && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setDebugStepIndex((i) => Math.max(0, i - 1))}
-                    disabled={debugStepIndex === 0}
-                    aria-label="Step back"
-                  >
-                    ◀
-                  </button>
-                  <span className="cs-cell-debugger-step-counter">
-                    step {debugStepIndex + 1} / {debugResult.snapshots.length}
-                    {' — line '}
-                    {debugResult.snapshots[debugStepIndex].line + lineOffset}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setDebugStepIndex((i) => Math.min(debugResult.snapshots.length - 1, i + 1))}
-                    disabled={debugStepIndex === debugResult.snapshots.length - 1}
-                    aria-label="Step forward"
-                  >
-                    ▶
-                  </button>
-                </>
-              )}
             </div>
             {debugError && <pre className="cs-cell-error">{debugError}</pre>}
             {debugResult?.truncated && (
               <p className="cs-cell-debugger-warning">
-                Stopped recording after 500 breakpoint hits (the program still ran to completion) —
-                narrow down which line you break on to see the rest.
+                Stopped recording after 500 iterations of one loop (the program still ran to
+                completion) — narrow down which loop you're inspecting to see the rest.
               </p>
             )}
             {debugResult && debugResult.status === 'error' && (
               <pre className="cs-cell-error">{debugResult.error}</pre>
+            )}
+            {debugResult && (
+              <IterationTable
+                table={debugResult.iterationTable}
+                highlightLines={breakpointLines}
+                lineOffset={lineOffset}
+              />
+            )}
+            {/* Former step-scrubber view (one PyodideDebugSnapshot at a
+                time, stepped with prev/next arrows) -- superseded by
+                IterationTable above, kept here disabled rather than
+                deleted so reverting to it is a small diff. Would need
+                debugStepIndex reintroduced as live state and
+                debugResult.iterationTable's rows flattened back into a
+                snapshots-shaped list to actually compile again.
+            {debugResult && debugResult.snapshots.length > 0 && (
+              <>
+                <button onClick={() => setDebugStepIndex((i) => Math.max(0, i - 1))} disabled={debugStepIndex === 0}>◀</button>
+                <span className="cs-cell-debugger-step-counter">
+                  step {debugStepIndex + 1} / {debugResult.snapshots.length} — line {debugResult.snapshots[debugStepIndex].line + lineOffset}
+                </span>
+                <button onClick={() => setDebugStepIndex((i) => Math.min(debugResult.snapshots.length - 1, i + 1))} disabled={debugStepIndex === debugResult.snapshots.length - 1}>▶</button>
+              </>
             )}
             {debugResult && debugResult.snapshots.length === 0 && debugResult.status === 'idle' && (
               <p className="cs-cell-debugger-warning">Ran to completion without hitting any breakpoint.</p>
@@ -1148,6 +1151,7 @@ export function Cell({
                 </pre>
               </div>
             )}
+            */}
           </div>
         ) : null
       const codeEditor = (
@@ -1198,7 +1202,11 @@ export function Cell({
             onToggleLineHighlight={toggleLineHighlight}
             breakpointLines={breakpointLines}
             onToggleBreakpoint={toggleBreakpoint}
-            stepLine={debugResult && debugResult.snapshots.length > 0 ? debugResult.snapshots[debugStepIndex].line : null}
+            // No single "current line" any more -- a row-per-iteration
+            // table has no one-frame-at-a-time position to point a
+            // gutter arrow at (see IterationTable.tsx's own module
+            // docstring on why this replaced the old step-scrubber).
+            stepLine={null}
             lineOffset={lineOffset}
             onLineCountChange={onLineCountChange}
             cellId={cellId}
