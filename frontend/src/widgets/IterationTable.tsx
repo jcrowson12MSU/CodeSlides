@@ -81,11 +81,11 @@ function rowVisible(row: PyodideIterationRow, revealIndex: WeakMap<PyodideIterat
 // cursor is CURRENTLY on this exact row, its own snapshotIndex (live
 // update as stepping moves within it); otherwise (stepping inactive,
 // or the cursor has already moved past this row) its LAST snapshot --
-// the settled, final value this row ever reached. `{}` for a row with
-// no snapshots at all (rendered blank).
-function currentSnapshot(row: PyodideIterationRow, isCurrentRow: boolean, currentStep: IterationStep | undefined): Record<string, string> {
+// the settled, final value this row ever reached. `undefined` for a
+// row with no snapshots at all (rendered blank, no line to highlight).
+function currentSnapshot(row: PyodideIterationRow, isCurrentRow: boolean, currentStep: IterationStep | undefined) {
   const index = isCurrentRow ? (currentStep?.snapshotIndex ?? 0) : row.snapshots.length - 1
-  return row.snapshots[index] ?? {}
+  return row.snapshots[index]
 }
 
 export function IterationTable({
@@ -111,7 +111,8 @@ export function IterationTable({
   const topLevelLoops = table.childTables['0'] ?? []
   const rootIsCurrentRow = currentStep != null && currentStep.path.length === 0
   const rootVisible = rootRow != null && rowVisible(rootRow, revealIndex, currentStep?.globalIndex)
-  const rootSnapshot = rootRow ? currentSnapshot(rootRow, rootIsCurrentRow, currentStep) : {}
+  const rootSnapshot = rootRow ? currentSnapshot(rootRow, rootIsCurrentRow, currentStep) : undefined
+  const rootVariables = rootSnapshot?.variables ?? {}
 
   return (
     <>
@@ -131,7 +132,7 @@ export function IterationTable({
           <tbody>
             <tr>
               {table.columns.map((col) => (
-                <td key={col}>{col in rootSnapshot ? String(rootSnapshot[col]) : ''}</td>
+                <td key={col}>{col in rootVariables ? String(rootVariables[col]) : ''}</td>
               ))}
             </tr>
           </tbody>
@@ -288,6 +289,7 @@ function ExpandableRow({
   const effectiveExpanded = expanded || isOnStepPath
   const rowRef = useRef<HTMLTableRowElement>(null)
   const snapshot = currentSnapshot(row, isCurrentRow, currentStep)
+  const variables = snapshot?.variables ?? {}
 
   useEffect(() => {
     if (isCurrentRow) {
@@ -323,7 +325,7 @@ function ExpandableRow({
           {row.iteration}
         </td>
         {columns.map((col) => (
-          <td key={col}>{col in snapshot ? snapshot[col] : ''}</td>
+          <td key={col}>{col in variables ? variables[col] : ''}</td>
         ))}
       </tr>
       {hasChildren && effectiveExpanded && (
