@@ -99,17 +99,29 @@ export interface PyodideCellInput {
   elements: PyodideElementMeta[]
 }
 
-// One recorded breakpoint hit from a debug run (_debug_run_one's own
-// snapshot dict, run_cell_with_breakpoints_b64) -- `variables` holds
-// repr() strings, never live values (see that function's own docstring
-// for why), and `stdoutSoFar` is the cell's full accumulated stdout up
-// to and including this line, so Cell.tsx can show "the output as it
-// looked at this step" just by displaying the string directly, no
-// further slicing needed.
-export interface PyodideDebugSnapshot {
-  line: number
-  variables: Record<string, string>
-  stdoutSoFar: string
+// A debug run's row-per-loop-iteration trace (_make_loop_tracer's own
+// _new_loop_table shape, kernel.py/pyodideKernel.ts's shared Python
+// runner) -- recursive: nestedTables under a given row index holds
+// that SAME shape again for a loop that ran during that one parent
+// iteration, one entry per time that inner loop started fresh within
+// that parent row (almost always one entry in practice, but never
+// assumed -- see _new_loop_table's own docstring on why it's a list,
+// not a single nested table). loopId is null only for the single
+// synthetic root table every debug run starts with (never a real
+// source line), letting TestsElementWidget.tsx/Cell.tsx render "no
+// loop at all" and "inside a loop" through the one same component,
+// rather than a separate branch for each. rows are plain objects
+// keyed by column name (repr() strings, never live values, same
+// reasoning PyodideDebugSnapshot's own docstring gave) -- a row
+// missing a given column entirely (rather than holding an empty
+// string) is what tells the renderer to show a blank cell for a
+// variable not yet assigned as of that iteration.
+export interface PyodideIterationTable {
+  loopId: number | null
+  startLine: number | null
+  columns: string[]
+  rows: Record<string, string | number>[]
+  childTables: Record<string, PyodideIterationTable[]>
 }
 
 // run_cell_with_breakpoints_b64's own result shape -- deliberately its
@@ -117,19 +129,20 @@ export interface PyodideDebugSnapshot {
 // elementWrites (cs.image()/turtle canvas writes are still recorded
 // server^Wclient-side but a debug run's whole point is inspecting the
 // cell's own step-by-step state, not updating other elements) and adds
-// `snapshots`/`truncated` that an ordinary run has no use for.
+// iterationTable/truncated that an ordinary run has no use for.
 export interface PyodideDebugRunResult {
   status: 'idle' | 'error'
   error: string | null
   stdout: string
   stderr: string
-  snapshots: PyodideDebugSnapshot[]
-  // True once _MAX_DEBUG_SNAPSHOTS (500) breakpoint hits were recorded
-  // and tracing was turned off for the rest of the run -- the cell's
-  // function still ran to completion either way (see _debug_run_one's
-  // own docstring: this only stops RECORDING further snapshots, never
-  // aborts execution), so `truncated` is purely an informational flag
-  // for the UI to show a "stopped recording after 500 hits" notice.
+  iterationTable: PyodideIterationTable
+  // True once _MAX_DEBUG_ITERATIONS (500) rows were recorded for some
+  // one loop and tracing was turned off for the rest of the run -- the
+  // cell's function still ran to completion either way (see
+  // _debug_run_one's own docstring: this only stops RECORDING further
+  // rows, never aborts execution), so truncated is purely an
+  // informational flag for the UI to show a "stopped recording after
+  // 500 iterations" notice.
   truncated: boolean
   finalValue?: unknown
   finalKind?: 'text' | 'markdown' | 'image' | 'dataframe' | null
@@ -155,19 +168,19 @@ export interface PyodideTestResult {
 
 // run_test_with_breakpoints_b64's own result shape -- PyodideTestResult's
 // status vocabulary ('pass'/'fail'/'error', not PyodideDebugRunResult's
-// 'idle'/'error') plus PyodideDebugRunResult's own snapshots/truncated,
-// since a tests-element debug run is "the step-through debugger, but for
-// test source" -- see _debug_run_test's own docstring for why its
-// snapshots never include turtleCommands or a final value the way a
-// cell's own debug run does (a test has no single "return value", and
-// the debugger's own point here is inspecting the test's line-by-line
-// state, not its drawing).
+// 'idle'/'error') plus PyodideDebugRunResult's own iterationTable/
+// truncated, since a tests-element debug run is "the step-through
+// debugger, but for test source" -- see _debug_run_test's own docstring
+// for why its iterationTable never includes turtleCommands or a final
+// value the way a cell's own debug run does (a test has no single
+// "return value", and the debugger's own point here is inspecting the
+// test's line-by-line state, not its drawing).
 export interface PyodideTestDebugRunResult {
   status: 'pass' | 'fail' | 'error'
   message: string
   stdout: string
   stderr: string
-  snapshots: PyodideDebugSnapshot[]
+  iterationTable: PyodideIterationTable
   truncated: boolean
 }
 
@@ -657,81 +670,371 @@ def _safe_repr(value):
     except Exception as exc:
         return f"<repr() failed: {exc!r}>"
 
-def _make_snapshot_tracer(
-    filename, breakpoint_lines, stdout, snapshots, truncated, exclude_keys=frozenset(), exclude_dunders=False
+_MAX_DEBUG_ITERATIONS = 500
+
+def _find_loops(source):
+    """Statically maps every line of source to the ordered chain of
+    while/for loops it's lexically nested inside (outermost first),
+    keyed by loop identity ("loopId") -- the 1-based line number of the
+    loop's own while/for statement, stable across the whole run
+    since it's fixed by the source text, never by execution order.
+    Built once per debug run via a single ast.walk, not per traced
+    line, so the tracer's own per-line work stays O(1) lookups into
+    the dicts this returns.
+
+    Returns (line_to_loop_chain, loop_first_body_line, loop_header_line):
+    - line_to_loop_chain: {line_no: [loopId, ...]} -- every line that
+      is reachable from inside at least one loop, mapped to the full
+      chain of loopIds it's nested in (outer to inner). A line outside
+      any loop is simply absent (never an empty list), so checking
+      "line in line_to_loop_chain" alone answers "is this line inside
+      a loop at all" without a separate membership check.
+    - loop_first_body_line: {loopId: line_no} -- the line number of the
+      very FIRST statement in that loop's own body (not the while/for
+      line itself). This is the line the tracer watches re-execution of
+      to detect a new iteration: a while/for loop's condition check
+      itself fires on every pass (including the one that exits the
+      loop, which never re-enters the body), but the body's first
+      statement only ever executes once per actual iteration, and
+      always as that iteration's very first line -- true regardless of
+      any if/else branching deeper in the body, since it's the one
+      statement every iteration is guaranteed to reach before any
+      branch point. A loop with an empty body (only pass) still has
+      exactly one such line, pass itself.
+    - loop_header_line: {loopId: line_no} -- the line number of the
+      while/for statement itself (== loopId, returned as its own dict
+      purely so the tracer doesn't need to remember "loopId IS a line
+      number" as a separate fact). sys.settrace's own 'line' events fire
+      BEFORE a line runs, so the truly final post-body state of a
+      loop's LAST iteration is never directly observable at any body
+      line -- it only becomes visible as the seed for a next iteration's
+      row, which doesn't exist once the loop is exiting. The tracer
+      additionally watches re-hits of this header line specifically to
+      backfill that last row with its real final values right before
+      the loop condition is re-evaluated and (assuming it's now False)
+      the loop exits -- see _make_loop_tracer's own docstring.
+    - loop_by_header_line: {line_no: loopId} -- the exact inverse of
+      loop_header_line, so the tracer can go straight from "which line
+      just fired" to "which loop's own last row does this backfill,"
+      given the header line is deliberately NOT itself a member of any
+      chain in line_to_loop_chain (see the "outer chain" comment below).
+    - loop_parent_chain: {loopId: [loopId, ...]} -- the SAME chain a
+      body line inside this loop would have, EXCLUDING the loop's own
+      id (i.e. line_to_loop_chain[loop_first_body_line[loopId]] with
+      the last element dropped) -- how the tracer descends root_table's
+      own nesting to reach the correct table to append this loop's next
+      row into, or backfill its last row, without needing a body line's
+      chain as a stand-in for the header line's own position.
+
+    A nested loop's own lines are included in both the outer loop's
+    line_to_loop_chain entries (with the outer loop's id first) and the
+    inner loop's own entries -- e.g. line 5 inside an inner loop nested
+    in an outer loop starting at line 2 maps to [2, 5], not just [5]."""
+    line_to_loop_chain = {}
+    loop_first_body_line = {}
+    loop_header_line = {}
+    loop_parent_chain = {}
+
+    try:
+        tree = ast.parse(textwrap.dedent(source))
+    except SyntaxError:
+        return line_to_loop_chain, loop_first_body_line, loop_header_line, {}, loop_parent_chain
+
+    def walk(node, chain):
+        is_loop = isinstance(node, (ast.While, ast.For, ast.AsyncFor))
+        my_chain = chain
+        if is_loop:
+            loop_id = node.lineno
+            my_chain = chain + [loop_id]
+            loop_header_line[loop_id] = node.lineno
+            loop_parent_chain[loop_id] = list(chain)
+            if node.body:
+                loop_first_body_line[loop_id] = node.body[0].lineno
+        header_children = (getattr(node, "test", None), getattr(node, "iter", None), getattr(node, "target", None))
+        for child in ast.iter_child_nodes(node):
+            # A loop's own header expressions (While.test, For.iter/
+            # target) belong to the OUTER chain, not the loop they
+            # introduce -- "while x > 0:" itself isn't "inside" the loop
+            # it opens, matching how Python only re-enters the BODY each
+            # iteration, never re-executes the header line as a body
+            # statement. Registered (and recursed into) using chain,
+            # never my_chain, so the while/for line itself is never
+            # marked as belonging to its own loop.
+            child_chain = chain if (is_loop and child in header_children) else my_chain
+            if hasattr(child, "lineno") and child_chain:
+                line_to_loop_chain.setdefault(child.lineno, child_chain)
+            walk(child, child_chain)
+
+    for top in tree.body:
+        walk(top, [])
+
+    loop_by_header_line = {line: loop_id for loop_id, line in loop_header_line.items()}
+    return line_to_loop_chain, loop_first_body_line, loop_header_line, loop_by_header_line, loop_parent_chain
+
+def _new_loop_table(loop_id, start_line):
+    """One loop's own trace: columns in first-seen order (the counter
+    column is inserted by the caller BEFORE this table is ever shown to
+    the tracer, not here -- see _make_loop_tracer's own iterCountKey
+    handling), rows one dict per iteration keyed by column name (a
+    row's own dict, not a parallel list, so a column added mid-loop
+    just leaves earlier rows without that key -- the frontend renders a
+    missing key as a blank cell), and childTables mapping a PARENT
+    row's index (as a str, since this whole structure round-trips
+    through json.dumps/JSON.parse) to the list of nested-loop tables
+    that ran during that one parent iteration -- a list, not a single
+    table, since the same inner loop can start fresh multiple times
+    across different iterations of the outer loop, and each such run is
+    its own independent set of rows, never appended onto a prior run's
+    leftover rows from an earlier outer iteration."""
+    return {"loopId": loop_id, "startLine": start_line, "columns": [], "rows": [], "childTables": {}}
+
+def _make_loop_tracer(
+    filename,
+    line_to_loop_chain,
+    loop_first_body_line,
+    loop_header_line,
+    loop_by_header_line,
+    loop_parent_chain,
+    iter_count_key,
+    stdout,
+    root_table,
+    truncated,
+    exclude_keys=frozenset(),
+    exclude_dunders=False,
 ):
-    """Builds a sys.settrace-compatible tracer function recording a
-    snapshot (line, local variables as repr() strings, stdout captured
-    so far) each time execution reaches a line in breakpoint_lines
-    inside code compiled under filename -- shared by both a cell's own
-    debug run (_debug_run_one, filename is "<cell:NAME>") and a tests
-    element's own debug run (_debug_run_test, filename is "<test>") so
-    the two never drift in tracing/cap semantics. snapshots and
-    truncated are the caller's own mutable list/dict (not created
-    here) so the caller can still read them after sys.settrace(None) --
-    a tracer function itself has no return channel back to its caller
-    once installed.
+    """Builds a sys.settrace-compatible tracer recording a ROW-PER-
+    ITERATION trace (not a flat list of breakpoint-hit snapshots -- see
+    this module's own docstring history/kernel.py's run_tests for the
+    older, still-present _make_snapshot_tracer this supersedes for the
+    debugger UI, kept only for TestsElementWidget.tsx's/Cell.tsx's own
+    "restore the old view" escape hatch). Traces EVERY line
+    unconditionally (there is no breakpoint_lines gate here -- see this
+    file's own module-level notes: a user's breakpoints are now just
+    row highlights the frontend applies afterward, never a precondition
+    for recording anything at all), because loop-iteration boundaries
+    have to be detected from every line executed, not from a sparse set
+    of user-chosen lines.
 
-    Only traces frames whose code was compiled from the SAME source this
-    debug run is tracing (an exact filename match) -- a breakpoint line
-    number is only ever meaningful relative to that one source; a call
-    into cs.*/turtle.*/any other module's code (a different co_filename)
-    is never checked against breakpoint_lines, just allowed to run
-    unobserved. Returning the tracer itself (not None) from a 'call'
-    event is what makes sys.settrace keep tracing 'line' events inside a
-    nested function DEFINED in that same source (e.g. a helper def'd
-    inside a cell, or inside a test) -- without this, only the outermost
-    frame would ever be traced.
+    root_table is the caller's own mutable dict (not created here, same
+    "caller keeps a handle to read after sys.settrace(None)" pattern
+    _make_snapshot_tracer already uses for snapshots/truncated) --
+    ALWAYS a loop-table shape (_new_loop_table), even for code with no
+    real loop at all: every line traced outside any loop is folded into
+    root_table itself as one single, continuously-updated row (never a
+    new row per line -- there's no iteration to delimit it), giving
+    TestsElementWidget.tsx/Cell.tsx one consistent table shape to render
+    regardless of whether the traced code has a loop, per the accepted
+    "single-row fallback, not a separate no-loop view" design.
 
-    exclude_keys/exclude_dunders: a tests element's own source runs as
-    plain top-level statements via exec(compile(...), _namespace)
-    (_run_test/_debug_run_test), NOT inside a function call the way a
-    cell's own body does -- and at true module/top-level scope,
-    frame.f_locals IS frame.f_globals, so it would otherwise include
-    every pre-existing name in the shared _namespace (cs, turtle, every
-    other cell's own function, ...) in every single snapshot, not just
-    the test's own variables. _debug_run_test passes every current cell
-    name plus the permanently-seeded names as exclude_keys (see that
-    function's own docstring for why this must be a STABLE set, never
-    "whatever _namespace happens to contain right now" -- the latter
-    breaks on a second run of the same test text), so a snapshot only
-    ever shows names the test itself introduced or overwrote -- exactly
-    the variables someone stepping through THIS test actually wrote.
-    exclude_dunders additionally drops any key that looks like
-    "__name__" (exec's own implicit "__builtins__" injection into a
-    plain dict passed as globals, plus any other dunder a test's own
-    source might itself assign) -- a fixed prefix/suffix check rather
-    than one more name to list by hand in exclude_keys, since Python's
-    own set of implicitly-injected dunder globals isn't otherwise this
-    function's concern to track. A cell's own debug run passes neither
-    (both default to "nothing excluded"): tracing there happens inside a
-    real function call, where frame.f_locals is already correctly scoped
-    to just that function's own parameters/local variables, so no
-    filtering is needed."""
+    iter_count_key is the caller-chosen column name for the always-
+    present, always-first iteration-count column (e.g. "iteration");
+    incremented once per loop, independent of any real counter variable
+    the traced code itself happens to declare -- a genuine counter
+    variable the code assigns still gets its OWN separate column later
+    in first-seen order, this one is never conflated with it.
+
+    THE HARD PART -- detecting a genuine new iteration -- is NOT done
+    by watching a loop's first body line, even though that sounds like
+    the obvious signal. It breaks the moment a loop's first body
+    statement is itself ANOTHER loop's header (e.g. "for row in
+    range(3):" immediately followed by "for col in range(3):" with
+    nothing else in the outer body) -- that inner header line then
+    fires several times per OUTER iteration (once per inner iteration
+    attempt), not once, so "first body line was hit" massively
+    overcounts the outer loop's own rows. Reproduced and fixed while
+    building this: see the git history/PR description for the
+    intermediate broken attempts if you're touching this again.
+
+    The actually-correct signal is a loop's own HEADER line
+    (loop_by_header_line) -- Python's own sys.settrace fires a 'line'
+    event there exactly once per iteration ATTEMPT: every time the
+    condition is (re-)checked or the next item requested, whether or
+    not the loop ends up continuing. confirmed[loop_id] (a dict local
+    to this tracer's own closure, not part of the table structure
+    itself) tracks whether the CURRENT speculative row -- the one
+    started at this loop's most recent header hit -- has since been
+    confirmed real by at least one actual body-line execution.
+    current_table[loop_id] caches the ACTUAL table dict object that
+    row currently lives in -- see this closure's own comment just above
+    its declaration for why re-deriving that object on every access
+    (by re-descending root_table's nesting from scratch) is unsound: an
+    ancestor loop's own row count can advance in between two
+    operations meant to target the SAME still-pending row, silently
+    misdirecting a later pop/backfill onto the wrong (not-yet-existing)
+    table:
+
+    - On a header hit for loop_id: if confirmed.get(loop_id) is
+      False, the PREVIOUS speculative row was never confirmed (the
+      loop just exited without that attempted iteration ever really
+      starting) -- pop it from current_table[loop_id] and clear that
+      cache entry (the next line below re-derives it fresh, correctly
+      landing under whatever the loop's parent row now is). Otherwise,
+      backfill the row that's genuinely current (current_table[loop_id],
+      if already set) with the live locals -- the real, confirmed
+      final state of the iteration that just finished -- BEFORE
+      starting a new speculative row below (must happen first, or the
+      backfill would land in the wrong, not-yet-real row). Either way,
+      then (re-)descend to loop_id's own table, cache it into
+      current_table[loop_id], append a fresh speculative row (seeded
+      from whatever's now current), and set confirmed[loop_id] = False.
+    - On any ordinary body line: for every loop_id in that line's own
+      line_to_loop_chain, set confirmed[loop_id] = True (this line
+      proves that loop's current speculative row is a real iteration).
+      Merge frame.f_locals into the DEEPEST such loop's own current
+      row, reusing current_table[innermost] if already cached (the
+      ordinary case -- still the same row a recent header hit started)
+      or deriving and caching it fresh otherwise (the first body line
+      of a freshly-started row, which the header-hit branch above
+      already created but this is the first line-event to see it).
+    - On the traced function/module's own 'return' event: any loop
+      still showing confirmed[loop_id] is False has a trailing
+      speculative row from a header hit that was never followed by
+      either a body line OR another header hit (the loop, and the
+      function containing it, both ended together) -- pop it too, via
+      the same current_table cache, then clear both dicts for the next
+      debug run.
+
+    A line with an EMPTY line_to_loop_chain (not inside any loop) just
+    merges straight into root_table's own current row (root_table
+    starts with exactly one row, seeded by the caller up front, so
+    there's always somewhere for pre-loop/no-loop lines to land)."""
+
+    def _keep(k):
+        if k in exclude_keys:
+            return False
+        if exclude_dunders and k.startswith("__") and k.endswith("__"):
+            return False
+        return True
+
+    def _merge_row(table, variables):
+        if not table["rows"]:
+            return
+        row = table["rows"][-1]
+        for name, value in variables.items():
+            if name not in table["columns"]:
+                table["columns"].append(name)
+            row[name] = value
+
+    def _descend(chain, create):
+        """Walk root_table down through chain (a list of loopIds,
+        outer to inner, INCLUDING the target loop's own id as the last
+        element -- e.g. loop_parent_chain[loop_id] + [loop_id]),
+        returning the table at the end -- creating any missing nested
+        table along the way only if create is True. A freshly created
+        table's own startLine is the loop's HEADER line (loop_header_
+        line), matching what a person actually sees at that loop's own
+        while/for statement in the editor -- NOT loop_first_body_line,
+        which is one or more lines further down and, for a loop whose
+        own first body statement is itself another loop, is a
+        completely different loop's header entirely (the exact
+        confusion this fix avoids: "Loop at line 4" pointing at
+        print(seconds) instead of the while line 3 above it)."""
+        table = root_table
+        for loop_id in chain:
+            parent_row_index = str(len(table["rows"]) - 1)
+            children = table["childTables"].get(parent_row_index, [])
+            child = children[-1] if children and children[-1]["loopId"] == loop_id else None
+            if child is None:
+                if not create:
+                    return None
+                child = _new_loop_table(loop_id, loop_header_line.get(loop_id))
+                table["childTables"].setdefault(parent_row_index, []).append(child)
+            table = child
+        return table
+
+    # current_table[loop_id]: the ACTUAL table dict object this loop's
+    # rows are currently landing in -- a direct reference, cached at
+    # creation time, deliberately NEVER re-derived by re-descending
+    # root_table's own nesting on every access. This matters because a
+    # loop's own "which parent row am I nested under" can change
+    # WHILE that loop's most recent row is still only speculatively
+    # pending: e.g. inner loop I's 3rd header hit (its exit-check for
+    # outer iteration N) creates a speculative row in I's table-for-N;
+    # before I's NEXT header hit ever arrives to judge that row
+    # unconfirmed, outer loop O's OWN header fires first and advances
+    # O to iteration N+1 -- if I's pop/backfill later tried to re-
+    # descend via "parent's CURRENT last row index" at that point, it
+    # would compute O's NEW row index (N+1's), landing on I's
+    # not-yet-created table-for-(N+1) instead of the real target,
+    # table-for-N -- silently doing nothing (create=False finds no
+    # such child yet) while table-for-N's stale trailing row is left
+    # corrupted by a later backfill that also mis-targets it. Caching
+    # the real object once, when the row is actually appended,
+    # sidesteps this entirely: every subsequent pop/backfill/merge for
+    # that SAME speculative row operates on the exact same dict,
+    # regardless of what any ancestor loop's own row count does in the
+    # meantime.
+    current_table = {}
+    confirmed = {}
+
+    def _pop_last_row(loop_id):
+        table = current_table.get(loop_id)
+        if table is not None and table["rows"]:
+            table["rows"].pop()
 
     def _tracer(frame, event, arg):
         if frame.f_code.co_filename != filename:
             return None
         if event == "call":
             return _tracer
-        if event == "line" and not truncated["value"]:
-            line_no = frame.f_lineno
-            if line_no in breakpoint_lines:
-                if len(snapshots) >= _MAX_DEBUG_SNAPSHOTS:
-                    truncated["value"] = True
-                    return None
-                def _keep(k):
-                    if k in exclude_keys:
-                        return False
-                    if exclude_dunders and k.startswith("__") and k.endswith("__"):
-                        return False
-                    return True
 
-                snapshots.append({
-                    "line": line_no,
-                    "variables": {k: _safe_repr(v) for k, v in frame.f_locals.items() if _keep(k)},
-                    "stdoutSoFar": stdout.getvalue(),
-                })
+        if event == "return":
+            for loop_id, is_confirmed in list(confirmed.items()):
+                if not is_confirmed:
+                    _pop_last_row(loop_id)
+            confirmed.clear()
+            current_table.clear()
+            return _tracer
+
+        if event != "line" or truncated["value"]:
+            return _tracer
+
+        line_no = frame.f_lineno
+        variables = {k: _safe_repr(v) for k, v in frame.f_locals.items() if _keep(k)}
+
+        if line_no in loop_by_header_line:
+            loop_id = loop_by_header_line[line_no]
+            if confirmed.get(loop_id) is False:
+                _pop_last_row(loop_id)
+                # This loop's row just got discarded -- its own cached
+                # table may now be stale if an ancestor loop's row
+                # advanced in the meantime (see this closure's own
+                # current_table docstring above), so force a fresh
+                # re-descend below rather than reusing it.
+                current_table.pop(loop_id, None)
+            else:
+                # Still backfill the row that's genuinely current
+                # (a real, confirmed prior iteration, or nothing yet)
+                # BEFORE starting a new speculative one -- must use the
+                # SAME cached object this loop was last writing to.
+                table = current_table.get(loop_id)
+                if table is not None:
+                    _merge_row(table, variables)
+            table = _descend(loop_parent_chain[loop_id] + [loop_id], create=True)
+            current_table[loop_id] = table
+            if len(table["rows"]) >= _MAX_DEBUG_ITERATIONS:
+                truncated["value"] = True
+                return None
+            prior = table["rows"][-1] if table["rows"] else {}
+            table["rows"].append(dict(prior))
+            table["rows"][-1][iter_count_key] = len(table["rows"])
+            if iter_count_key not in table["columns"]:
+                table["columns"].insert(0, iter_count_key)
+            confirmed[loop_id] = False
+            return _tracer
+
+        chain = line_to_loop_chain.get(line_no, [])
+        for loop_id in chain:
+            confirmed[loop_id] = True
+        if chain:
+            innermost = chain[-1]
+            table = current_table.get(innermost)
+            if table is None:
+                table = _descend(chain, create=True)
+                current_table[innermost] = table
+        else:
+            table = root_table
+        _merge_row(table, variables)
         return _tracer
 
     return _tracer
@@ -742,21 +1045,30 @@ def _debug_run_one(cell_name, source, elements, breakpoint_lines):
     arbitrary synchronous Python mid-call and resume later on a JS event,
     see this file's own ensureMatplotlibIfNeeded comment for the same
     limitation hit elsewhere). The cell's function still runs exactly
-    once, uninterrupted, to completion -- sys.settrace's own 'line' trace
-    events (fired before each source line in the traced function/its own
-    nested calls executes) are used only to RECORD a snapshot (line
-    number, a repr() of every local variable, and stdout captured so far)
-    each time execution reaches a line in breakpoint_lines, never to
-    pause anything. The caller then scrubs through the recorded list
+    once, uninterrupted, to completion -- sys.settrace's own 'line'/
+    'return' trace events (fired before each source line in the traced
+    function/its own nested calls executes, and once when it returns)
+    are used only to RECORD a ROW-PER-LOOP-ITERATION trace (see
+    _make_loop_tracer's own docstring for the full algorithm), never to
+    pause anything. The caller then scrubs through the recorded rows
     after the fact with plain array indexing (App.tsx/Cell.tsx) -- no
     worker, no Atomics, no suspend/resume bridge needed.
+
+    Tracing now runs UNCONDITIONALLY, regardless of breakpoint_lines --
+    this used to be gated behind "at least one breakpoint set" (the
+    older _make_snapshot_tracer's only trigger), but detecting loop-
+    iteration boundaries needs every line traced, not a sparse
+    user-chosen set. breakpoint_lines is still accepted and returned
+    through unchanged (App.tsx/Cell.tsx use it purely to highlight
+    matching rows/lines in the resulting table -- a UI affordance now,
+    not a precondition for recording anything at all).
 
     Deliberately a separate function from _execute_one rather than a
     flag added to it: _execute_one is also used by the ordinary Shift+
     Enter/run-all/element-changed paths, none of which have any use for
-    tracing overhead or a breakpoint_lines argument, and keeping this
-    entirely separate means a normal run's performance/behavior is
-    unaffected by this feature ever existing.
+    tracing overhead, and keeping this entirely separate means a normal
+    run's performance/behavior is unaffected by this feature ever
+    existing.
 
     Only ever called directly for the ONE cell the user asked to debug
     (Cell.tsx's own "Run with breakpoints" action) -- unlike
@@ -768,20 +1080,35 @@ def _debug_run_one(cell_name, source, elements, breakpoint_lines):
     would need.
 
     Local variables are captured as repr() strings (never the live
-    objects themselves): a snapshot is a JSON-serializable record for the
-    JS side to store and scroll through, not a live reference into a
-    namespace that keeps mutating after the snapshot was taken -- a repr
+    objects themselves): a row is a JSON-serializable record for the JS
+    side to store and scroll through, not a live reference into a
+    namespace that keeps mutating after the row was taken -- a repr
     also survives objects that plain JSON can't encode at all (a turtle
     Canvas, a DataFrame, a custom class instance) with a readable
     display value instead of an encoding error aborting the whole debug
     run. A repr() that itself raises (a buggy __repr__) is caught
-    per-variable so one bad object can't blow up the entire snapshot."""
+    per-variable so one bad object can't blow up the entire row."""
     stdout, stderr = io.StringIO(), io.StringIO()
     turtle_element = _find_turtle_canvas(elements)
-    snapshots = []
-    truncated = {"value": False}
     cell_filename = f"<cell:{cell_name}>"
-    _tracer = _make_snapshot_tracer(cell_filename, breakpoint_lines, stdout, snapshots, truncated)
+    line_to_loop_chain, loop_first_body_line, loop_header_line, loop_by_header_line, loop_parent_chain = _find_loops(
+        source
+    )
+    iteration_table = _new_loop_table(None, 1)
+    iteration_table["rows"].append({})
+    truncated = {"value": False}
+    _tracer = _make_loop_tracer(
+        cell_filename,
+        line_to_loop_chain,
+        loop_first_body_line,
+        loop_header_line,
+        loop_by_header_line,
+        loop_parent_chain,
+        "iteration",
+        stdout,
+        iteration_table,
+        truncated,
+    )
 
     try:
         return_names = _return_names_for(source)
@@ -795,8 +1122,7 @@ def _debug_run_one(cell_name, source, elements, breakpoint_lines):
             turtle_commands = (
                 stack.enter_context(turtle.execution_context()) if turtle_element is not None else None
             )
-            if breakpoint_lines:
-                sys.settrace(_tracer)
+            sys.settrace(_tracer)
             try:
                 value = fn(**kwargs)
             finally:
@@ -828,7 +1154,7 @@ def _debug_run_one(cell_name, source, elements, breakpoint_lines):
             "error": traceback.format_exc(),
             "stdout": stdout.getvalue(),
             "stderr": stderr.getvalue(),
-            "snapshots": snapshots,
+            "iterationTable": iteration_table,
             "truncated": truncated["value"],
         }
     resolved = _output.resolve_output(value)
@@ -837,7 +1163,7 @@ def _debug_run_one(cell_name, source, elements, breakpoint_lines):
         "error": None,
         "stdout": stdout.getvalue(),
         "stderr": stderr.getvalue(),
-        "snapshots": snapshots,
+        "iterationTable": iteration_table,
         "truncated": truncated["value"],
         "finalValue": _output.wire_safe_value(value),
         "finalKind": resolved.kind,
@@ -1025,18 +1351,18 @@ def run_test_b64(cell_name_b64, test_source_b64, cells_json_b64):
 def _debug_run_test(test_source, cell_name, elements, breakpoint_lines, all_cell_names):
     """The step-through debugger's "Run with breakpoints" action, for a
     tests element's own editor (TestsElementWidget) -- same time-travel
-    "record snapshots on one uninterrupted run, scrub through them after
-    the fact" shape as _debug_run_one, sharing its exact tracer/cap
-    semantics via _make_snapshot_tracer, but wrapping _run_test's own
-    "exec the test source as top-level statements" shape instead of a
-    cell's "call the compiled function" shape -- there is no function
-    call to wrap here, so breakpoint lines are simply lines of
-    test_source itself, traced under the SAME "<test>" filename
-    _run_test already compiles under (kept in sync with that function
-    deliberately: any change to how _run_test executes test_source --
-    the input() shim, the turtle context -- must be mirrored here too,
-    or a debug run's snapshots would silently stop reflecting what an
-    ordinary test run actually does).
+    "record a row-per-loop-iteration trace on one uninterrupted run,
+    scrub through it after the fact" shape as _debug_run_one, sharing
+    its exact tracer semantics via _make_loop_tracer, but wrapping
+    _run_test's own "exec the test source as top-level statements"
+    shape instead of a cell's "call the compiled function" shape --
+    there is no function call to wrap here, so the traced lines are
+    simply lines of test_source itself, traced under the SAME "<test>"
+    filename _run_test already compiles under (kept in sync with that
+    function deliberately: any change to how _run_test executes
+    test_source -- the input() shim, the turtle context -- must be
+    mirrored here too, or a debug run's rows would silently stop
+    reflecting what an ordinary test run actually does).
 
     Like _run_test (see its own docstring for the full rationale), runs
     against a shallow COPY of _namespace, not _namespace itself -- so a
@@ -1053,7 +1379,7 @@ def _debug_run_test(test_source, cell_name, elements, breakpoint_lines, all_cell
     plus _NAMESPACE_BASELINE_KEYS (cs/turtle) plus _RETURN_NAMED_VALUES
     (every name any cell's own return has EVER bound, across every
     cell, this whole tab's lifetime) plus "input" together form the
-    exclude_keys passed to _make_snapshot_tracer. This used to matter a
+    exclude_keys passed to _make_loop_tracer. This used to matter a
     great deal more: before test runs were isolated onto a fresh copy
     each time, a test's own prior-run locals (e.g. this test's own
     "total"/"i" loop variables) stayed sitting in the shared, persistent
@@ -1061,7 +1387,7 @@ def _debug_run_test(test_source, cell_name, elements, breakpoint_lines, all_cell
     four stable sources rather than "whatever _namespace already
     contains right now" -- otherwise a SECOND run of the same test would
     wrongly treat its own leftover locals as pre-existing and exclude
-    them, snapshots coming back with an empty variables dict. Isolation
+    them, rows coming back with an empty variables dict. Isolation
     means a fresh copy no longer carries that leftover state in the
     first place, so this exclude_keys computation is now more of a
     belt-and-suspenders guard than a load-bearing fix for that specific
@@ -1073,14 +1399,18 @@ def _debug_run_test(test_source, cell_name, elements, breakpoint_lines, all_cell
     keeps an upstream cell's real, legitimate value from being
     misreported as if the test itself had just assigned it."""
     turtle_element = _find_turtle_canvas(elements)
-    snapshots = []
+    line_to_loop_chain, loop_first_body_line, loop_header_line, loop_by_header_line, loop_parent_chain = _find_loops(
+        test_source
+    )
+    iteration_table = _new_loop_table(None, 1)
+    iteration_table["rows"].append({})
     truncated = {"value": False}
     result = {
         "status": "pass",
         "message": "",
         "stdout": "",
         "stderr": "",
-        "snapshots": snapshots,
+        "iterationTable": iteration_table,
         "truncated": False,
     }
     if not test_source.strip():
@@ -1100,11 +1430,16 @@ def _debug_run_test(test_source, cell_name, elements, breakpoint_lines, all_cell
     # list by hand, since Python's own set of implicitly-injected dunder
     # globals isn't otherwise this function's concern to track.
     exclude_keys = frozenset(all_cell_names) | _NAMESPACE_BASELINE_KEYS | _RETURN_NAMED_VALUES | {"input"}
-    _tracer = _make_snapshot_tracer(
+    _tracer = _make_loop_tracer(
         "<test>",
-        breakpoint_lines,
+        line_to_loop_chain,
+        loop_first_body_line,
+        loop_header_line,
+        loop_by_header_line,
+        loop_parent_chain,
+        "iteration",
         stdout,
-        snapshots,
+        iteration_table,
         truncated,
         exclude_keys=exclude_keys,
         exclude_dunders=True,
@@ -1115,8 +1450,7 @@ def _debug_run_test(test_source, cell_name, elements, breakpoint_lines, all_cell
             stack.enter_context(contextlib.redirect_stderr(stderr))
             if turtle_element is not None:
                 stack.enter_context(turtle.execution_context())
-            if breakpoint_lines:
-                sys.settrace(_tracer)
+            sys.settrace(_tracer)
             try:
                 exec(compile(test_source, "<test>", "exec"), test_globals)
             finally:

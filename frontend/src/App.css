@@ -1060,6 +1060,82 @@ body.cs-resizing-vertical {
   margin: 0;
 }
 
+/* Row-per-loop-iteration debug table (IterationTable.tsx) -- the
+   active debugger view, replacing the step-scrubber above (whose
+   markup/CSS stays in place, unused, as the accepted "revert is a
+   small diff" escape hatch). Matches .cs-cell-debugger-variables's own
+   border/font conventions so it still reads as the same family of
+   "stuff below the editor" as everything else in .cs-cell-debugger. */
+.cs-iteration-loop {
+  margin-top: 0.5rem;
+}
+
+.cs-iteration-loop:first-child {
+  margin-top: 0;
+}
+
+.cs-iteration-loop-highlighted {
+  outline: 2px solid #f5a623;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.cs-iteration-table-empty {
+  margin: 0.25rem 0;
+  font-size: var(--cs-font-sm);
+  color: #555;
+}
+
+.cs-iteration-loop-label {
+  margin: 0 0 0.15rem;
+  font-size: var(--cs-font-sm);
+  color: #445;
+  font-weight: 600;
+}
+
+.cs-iteration-table {
+  border-collapse: collapse;
+  font-size: var(--cs-font-sm);
+  width: 100%;
+}
+
+.cs-iteration-table th,
+.cs-iteration-table td {
+  border: 1px solid #d3ddf7;
+  padding: 0.15rem 0.4rem;
+  font-family: ui-monospace, monospace;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cs-iteration-table th {
+  background: #e4ebfd;
+  font-weight: 600;
+}
+
+.cs-iteration-row-expandable {
+  cursor: pointer;
+}
+
+.cs-iteration-row-expandable:hover {
+  background: #e9eefc;
+}
+
+.cs-iteration-row-toggle {
+  border: none;
+  background: none;
+  padding: 0 0.25rem 0 0;
+  cursor: pointer;
+  font-size: var(--cs-font-sm);
+  line-height: 1;
+}
+
+.cs-iteration-nested-cell {
+  padding: 0.25rem 0.4rem !important;
+  background: #f7f9ff;
+}
+
 .cs-element-viewer {
   flex-direction: column;
   align-items: stretch;

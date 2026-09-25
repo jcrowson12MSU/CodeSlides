@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import { runTestWithBreakpointsClientSide, type PyodideTestDebugRunResult } from '../pyodideKernel'
 import { CodeEditor } from './CodeEditor'
 import type { ElementMeta, TestResult } from './elementMeta'
+import { IterationTable } from './IterationTable'
 
 // A `tests` element (ARCHITECTURE.md section 3b): a second, unittest-like
 // code editor attached to a cell. Reuses the same CodeMirror-based
@@ -74,7 +75,10 @@ export function TestsElementWidget({
   }, [])
 
   const [debugResult, setDebugResult] = useState<PyodideTestDebugRunResult | null>(null)
-  const [debugStepIndex, setDebugStepIndex] = useState(0)
+  // Only used by the disabled step-scrubber fallback in the JSX below
+  // (kept commented out, not deleted, per this feature's own accepted
+  // "revert is a small diff" design) -- currently dead state.
+  // const [debugStepIndex, setDebugStepIndex] = useState(0)
   const [debugRunning, setDebugRunning] = useState(false)
   const [debugError, setDebugError] = useState<string | null>(null)
 
@@ -93,7 +97,8 @@ export function TestsElementWidget({
     runTestWithBreakpointsClientSide(cellId, source, cellsInput, breakpointLines, allCellNames)
       .then((result) => {
         setDebugResult(result)
-        setDebugStepIndex(0)
+        // setDebugStepIndex(0) -- only needed by the disabled step-
+        // scrubber fallback; see its own declaration above.
       })
       .catch((err: unknown) => {
         setDebugError(err instanceof Error ? err.message : String(err))
@@ -116,7 +121,13 @@ export function TestsElementWidget({
           onRunAll={onChangeSource}
           breakpointLines={breakpointLines}
           onToggleBreakpoint={toggleBreakpoint}
-          stepLine={debugResult && debugResult.snapshots.length > 0 ? debugResult.snapshots[debugStepIndex].line : null}
+          // No single "current line" any more -- a row-per-iteration
+          // table has no one-frame-at-a-time position to point a
+          // gutter arrow at (see IterationTable.tsx's own module
+          // docstring on why this replaced the old step-scrubber).
+          // Breakpoint lines themselves still highlight, just inside
+          // the table below rather than via this prop.
+          stepLine={null}
         />
       </div>
       {(breakpointLines.size > 0 || debugResult || debugError) && (
@@ -134,44 +145,35 @@ export function TestsElementWidget({
             >
               {debugRunning ? 'Running…' : 'Run with breakpoints'}
             </button>
-            {debugResult && debugResult.snapshots.length > 0 && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setDebugStepIndex((i) => Math.max(0, i - 1))}
-                  disabled={debugStepIndex === 0}
-                  aria-label="Step back"
-                >
-                  ◀
-                </button>
-                <span className="cs-cell-debugger-step-counter">
-                  step {debugStepIndex + 1} / {debugResult.snapshots.length}
-                  {' — line '}
-                  {debugResult.snapshots[debugStepIndex].line}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setDebugStepIndex((i) => Math.min(debugResult.snapshots.length - 1, i + 1))}
-                  disabled={debugStepIndex === debugResult.snapshots.length - 1}
-                  aria-label="Step forward"
-                >
-                  ▶
-                </button>
-              </>
-            )}
           </div>
           {debugError && <pre className="cs-cell-error">{debugError}</pre>}
           {debugResult?.truncated && (
             <p className="cs-cell-debugger-warning">
-              Stopped recording after 500 breakpoint hits (the test still ran to completion) — narrow
-              down which line you break on to see the rest.
+              Stopped recording after 500 iterations of one loop (the test still ran to completion) —
+              narrow down which loop you're inspecting to see the rest.
             </p>
           )}
-          {debugResult && debugResult.status !== 'pass' && debugResult.snapshots.length === 0 && (
+          {debugResult && debugResult.status !== 'pass' && (
             <pre className="cs-cell-error">{debugResult.message}</pre>
           )}
-          {debugResult && debugResult.status === 'pass' && debugResult.snapshots.length === 0 && (
-            <p className="cs-cell-debugger-warning">Ran to completion without hitting any breakpoint.</p>
+          {debugResult && (
+            <IterationTable table={debugResult.iterationTable} highlightLines={breakpointLines} />
+          )}
+          {/* Former step-scrubber view (one PyodideDebugSnapshot at a
+              time, stepped with prev/next arrows) -- superseded by
+              IterationTable above, kept here disabled rather than
+              deleted so reverting to it is a small diff. Would need
+              debugStepIndex reintroduced as live state and
+              debugResult.iterationTable's rows flattened back into a
+              snapshots-shaped list to actually compile again.
+          {debugResult && debugResult.snapshots.length > 0 && (
+            <>
+              <button onClick={() => setDebugStepIndex((i) => Math.max(0, i - 1))} disabled={debugStepIndex === 0}>◀</button>
+              <span className="cs-cell-debugger-step-counter">
+                step {debugStepIndex + 1} / {debugResult.snapshots.length} — line {debugResult.snapshots[debugStepIndex].line}
+              </span>
+              <button onClick={() => setDebugStepIndex((i) => Math.min(debugResult.snapshots.length - 1, i + 1))} disabled={debugStepIndex === debugResult.snapshots.length - 1}>▶</button>
+            </>
           )}
           {debugResult && debugResult.snapshots.length > 0 && (
             <div className="cs-cell-debugger-snapshot">
@@ -190,9 +192,7 @@ export function TestsElementWidget({
               </pre>
             </div>
           )}
-          {debugResult && debugResult.status !== 'pass' && debugResult.snapshots.length > 0 && (
-            <pre className="cs-cell-error">{debugResult.message}</pre>
-          )}
+          */}
         </div>
       )}
       {result && result.status !== 'pass' && result.message && (
