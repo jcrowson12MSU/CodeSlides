@@ -50,6 +50,7 @@ to a topic."""
         ui.notes('notes'),
         ui.text_input('sample_word', default='Trish'),
         ui.tests('Index example', default='\ntext = input("sample_word ")\nprint(text)\n\n'),
+        ui.tests('Unittest', default=''),
     ],
     hide_def=True,
     hide_code=True,
@@ -163942,6 +163943,7 @@ lengths of three very differently sized names."""
     elements=[
         ui.notes('notes'),
         ui.tests('Positive and negative indexing', default='\n"""                   1         2         3\n            0123456789012345678901234567890123456789"""\nalphabet = "ABxzcrjtukylu,rsbdtjkCDecwrshrtjyum,vabc"\n\nlength = len(alphabet)\nprint(length, alphabet)\nprint(alphabet[0], alphabet[1], alphabet[2])\nprint(alphabet[-1], alphabet[-2], alphabet[-3])\nprint(alphabet[length-1], alphabet[length-2], alphabet[length-3])'),
+        ui.turtle_canvas('Canvas', width=400, height=400),
     ],
     hide_code=True,
     layout={'column_fraction': 0.23663922447958016, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Positive and negative indexing': 'top-right'}, 'extra_code_fraction': 0.5},

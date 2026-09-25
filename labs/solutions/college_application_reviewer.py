@@ -1,10 +1,5 @@
 # College Application Evaluator
 
-print("========================================")
-print("College Application Evaluator")
-print("========================================")
-print()
-
 # ---------------------------------------------------------
 # Get applicant information
 # ---------------------------------------------------------
@@ -19,6 +14,11 @@ service_hours = int(input("Community service hours: "))
 activities = int(input("Number of extracurricular activities: "))
 first_generation = input("First-generation college student? (yes/no): ")
 major = input("Intended major: ")
+
+print("========================================")
+print("College Application Evaluator")
+print("========================================")
+print()
 
 print()
 print("Application Results for", name)

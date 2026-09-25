@@ -1,38 +1,3 @@
-"""While loops -- lecture deck built from Lectures/ZybooksNotes/Chapter 7
-(zyBooks CSE 1284, sections 7.1-7.4) and
-Lectures/ZybooksNotes/Chapter 7/chapter 7 plan.md.
-
-Like chapter1.py/chapter2.py/chapter3.py/chapter4.py/chapter6.py, this
-deck is deliberately straight-line code -- no `def` anywhere inside a
-cell body, since functions haven't been taught yet. Every cell's own
-MAIN code editor is hidden (`hide_code=True`); the runnable/editable
-code a student sees and can experiment with lives in one or more
-`ui.tests(...)` boxes instead, mirroring zyBooks' own "type this exact
-program, run it, change the input" pattern.
-
-Per the plan doc, this deck teaches `while` loops only -- `for` loops
-are left for a later chapter, even though chapter6.py already used
-them for list iteration. Most worked examples here are deliberately
-*different* from the zyBooks source examples (the plan asks for that
-explicitly); the GCD example is the one exception, reused from 7.3
-almost verbatim but with an added iteration counter, since the plan
-asks for a counter variable on that specific slide.
-"""
-
-from codeslides import App, cs, ui
-
-app = App()
-
-
-@app.cell(
-    instance='static',
-    elements=[
-        ui.notes('notes'),
-    ],
-    hide_def=True,
-    hide_code=True,
-)
-def intro():
     """# While Loops
 
 Four zyBooks sections (7.1-7.4) on `while` loops -- the general loop
@@ -47,16 +12,6 @@ Use **Slides** to step through in order, or **Cells** to jump straight
 to a topic."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('if vs. while', default='attempts = 0\n\nprint("--- if version (runs once) ---")\n\nif attempts < 3:\n    print(f"attempt {attempts}")\n    attempts = attempts + 1\n\nprint(f"after if: attempts = {attempts}")\n\n\nprint("--- while version (repeats) ---")\nattempts = 0\nwhile attempts < 3:\n    print(f"attempt {attempts}")\n    attempts = attempts + 1\nprint(f"after while: attempts = {attempts}")\n'),
-    ],
-    hide_def=True,
-    hide_code=True,
-)
-def while_vs_if():
     """## While Loops vs. `if` Statements
 
 A **loop** is a program construct that repeatedly executes a block of
@@ -94,14 +49,6 @@ incrementing `attempts` -- until `attempts < 3` finally turns
 `False`."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('countdown_start_text', default='5'),
-        ui.tests('Rocket launch countdown', default='seconds = int(input("Countdown timer: "))\n\nwhile seconds > 0:\n    print(seconds)\n    seconds = seconds - 1\n\nprint("Liftoff!")\n'),
-    ],
-)
 def simple_while_example(countdown_start_text):
     """## A Simple While Loop: Countdown
 
@@ -151,15 +98,6 @@ change."""
     return countdown_result
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Largest temperature reading', default='readings = [68, 74, 71, 80, 77]\n\nindex = 0\nlargest = readings[0]\n\nwhile index < len(readings):\n    if readings[index] > largest:\n        largest = readings[index]\n    index = index + 1\n\nprint(f"Largest reading: {largest}")\n'),
-    ],
-    hide_code=True,
-    layout={'column_fraction': 0.32471264367816094, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'Largest temperature reading': 'top-right'}, 'extra_code_fraction': 0.5},
-)
 def while_over_list():
     """## Finding the Largest Item
 
@@ -173,26 +111,6 @@ once the index reaches the list's length.
 Each iteration compares the current element, `readings[index]`, against the best value seen so far, replacing `largest` whenever a bigger reading turns up. `index` is incremented on every iteration regardless forgetting that line would leave `index` stuck at `0` and turn this into an infinite loop."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests(
-            'Sentinel-controlled grocery list',
-            default=(
-                'print("Enter grocery items one at a time.")\n'
-                'print("Type \'done\' when you\'re finished.\\n")\n\n'
-                'item = input("Item: ")\n'
-                'items = []\n\n'
-                'while item != "done":\n'
-                '    items.append(item)\n'
-                '    item = input("Item: ")\n\n'
-                'print(f"\\nGrocery list ({len(items)} items): {items}")\n'
-            ),
-        ),
-    ],
-    hide_code=True,
-)
 def sentinel_values():
     """## Sentinel Values
 
@@ -205,47 +123,6 @@ iterations (adding `"milk"` and `"eggs"`) -- the third input, `"done"`, never ge
 password example in 7.2 any value works as a sentinel as long as it can't be confused with real data."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests(
-            'Finite loop',
-            default=(
-                'count = 0\n'
-                'while count < 5:\n'
-                '    print(count)\n'
-                '    count = count + 1\n'
-                'print("done -- finite, ran exactly 5 times")\n'
-            ),
-        ),
-        ui.tests(
-            'Indefinite loop (sentinel)',
-            default=(
-                'total = 0\n'
-                'value = int(input("Enter a number (0 to stop): "))\n'
-                'while value != 0:\n'
-                '    total = total + value\n'
-                '    value = int(input("Enter a number (0 to stop): "))\n'
-                'print(f"Total: {total}")\n'
-            ),
-        ),
-        ui.tests(
-            'Infinite loop -- DO NOT RUN without a fix',
-            default=(
-                '# count = 0\n'
-                '# while count < 5:\n'
-                '#     print(count)\n'
-                '#     # forgot to update count -- count < 5 is always True\n'
-                '\n'
-                '# Uncomment above to see the bug, or fix it by adding:\n'
-                '# count = count + 1\n'
-                'print("This box is commented out on purpose -- see the notes.")\n'
-            ),
-        ),
-    ],
-    hide_code=True,
-)
 def loop_duration_types():
     """Come back on Monday
 ## Finite, Indefinite, and Infinite Iteration
@@ -271,17 +148,6 @@ infinite, and is only ever exited with a `break` or by closing the
 program."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.text_input('gcd_a_text', default='48'),
-        ui.text_input('gcd_b_text', default='18'),
-        ui.notes('notes'),
-        ui.tests('GCD with an iteration counter', default='num_a = int(input("Enter first positive integer: "))\nnum_b = int(input("Enter second positive integer: "))\n\niteration_count = 0   # counter variable\n\nwhile num_a != num_b:\n    if num_a > num_b:\n        num_a = num_a - num_b\n    else:\n        num_b = num_b - num_a\n    iteration_count = iteration_count + 1\n\nprint(f"GCD is {num_a}")\nprint(f"Found in {iteration_count} iterations")\n'),
-    ],
-    hide_code=True,
-    layout={'column_fraction': 0.4408783783783784, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'GCD with an iteration counter': 'top-right'}, 'extra_code_fraction': 0.5},
-)
 def gcd_with_counter(gcd_a_text, gcd_b_text):
     """## Greatest Common Divisor, with a Counter Variable
 
@@ -324,29 +190,6 @@ This is the behavior that I want for the breakpoint debugging behavior.
     return gcd_result
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests(
-            'Sentinel variable vs. counter variable',
-            default=(
-                '# Sentinel variable: its VALUE stops the loop\n'
-                'answer = ""\n'
-                'while answer != "quit":\n'
-                '    answer = input("Type quit to exit: ")\n'
-                'print("Sentinel example done.\\n")\n\n'
-                '# Counter variable: it just tallies iterations\n'
-                'count = 0\n'
-                'while count < 3:\n'
-                '    print(f"iteration {count}")\n'
-                '    count = count + 1\n'
-                'print(f"Counter example done, ran {count} times.")\n'
-            ),
-        ),
-    ],
-    hide_code=True,
-)
 def sentinel_vs_counter():
     """## Sentinel Variable vs. Counter (Loop) Variable
 
@@ -387,43 +230,3 @@ as a sentinel. The GCD program above actually uses *both* at once:
 `num_a != num_b` is the sentinel-style condition that ends the
 algorithm, while `iteration_count` is a separate counter tracking how
 long it took."""
-
-
-@app.slide("Title", cells=[])
-def slide_title():
-    """"""
-
-
-@app.slide("While Loops vs. if Statements", cells=["while_vs_if"])
-def slide_1():
-    """"""
-
-
-@app.slide("A Simple While Loop: Countdown", cells=["simple_while_example"])
-def slide_2():
-    """"""
-
-
-@app.slide("Iterating a List with While", cells=["while_over_list"])
-def slide_3():
-    """"""
-
-
-@app.slide("Sentinel Values", cells=["sentinel_values"])
-def slide_4():
-    """"""
-
-
-@app.slide("Finite, Indefinite, and Infinite Iteration", cells=["loop_duration_types"])
-def slide_5():
-    """"""
-
-
-@app.slide("Greatest Common Divisor, with a Counter Variable", cells=["gcd_with_counter"])
-def slide_6():
-    """"""
-
-
-@app.slide("Sentinel Variable vs. Counter Variable", cells=["sentinel_vs_counter"])
-def slide_7():
-    """"""

@@ -1,44 +1,3 @@
-"""Lists -- lecture deck built from Lectures/ZybooksNotes/Chapter 6
-(zyBooks CSE 1284, sections 6.1-6.4 and 6.6-6.9; section 6.5's source
-PDF was not provided and is skipped).
-
-Like chapter1.py/chapter2.py/chapter3.py/chapter4.py, this deck is
-deliberately straight-line code -- no `def` anywhere inside a cell
-body, since functions haven't been taught yet. Every cell's own MAIN
-code editor is hidden (`hide_code=True`); the runnable/editable code a
-student sees and can experiment with lives in one or more
-`ui.tests(...)` boxes instead, mirroring zyBooks' own "type this exact
-program, run it, change the input" pattern. Unlike `def`, `for`/`while`
-loops are used freely here (both in the cell bodies and the test
-boxes) -- zyBooks' own Chapter 6 examples already lean on `for` to
-iterate lists (e.g. building/printing a list, nested loops over a 2D
-list), and there's no earlier chapter in this deck series to introduce
-loops separately, so this deck follows the source material rather than
-inventing a loop-free rewrite.
-
-Where zyBooks used an interactive walkthrough/animation tool (the
-list-of-references diagram, in-place-modification traces, the 2D-list
-row/column grid, the membership-operator check marks) this deck
-re-creates the same teaching point as Markdown (worked traces, tables)
-plus a live `ui.tests` box a student can actually run, consistent with
-the prior chapters' "real reactive control instead of a canned
-animation" pattern.
-"""
-
-from codeslides import App, cs, ui
-
-app = App()
-
-
-@app.cell(
-    instance='static',
-    elements=[
-        ui.notes('notes'),
-    ],
-    hide_def=True,
-    hide_code=True,
-)
-def intro():
     """# Lists
 
 Eight zyBooks sections (6.1-6.4, 6.6-6.9) on Python's `list` type --
@@ -53,14 +12,6 @@ Use **Slides** to step through in order, or **Cells** to jump straight
 to a topic."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Creating and indexing a list', default='prices = ["$2", 14.99, 50, 30]\nprint(len(prices), prices)\nprint(prices[0])\nprint(prices[2])\n'),
-    ],
-    hide_code=True,
-)
 def list_basics():
     """## Lists: Container, Element, Index
 
@@ -86,15 +37,6 @@ themselves -- `prices[0]` looks up whatever object currently sits at
 index 0."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('update_index_text', default='0'),
-        ui.tests('Updating an element in-place', default='prices = [1.50, 3.75, 7]\n# prices = "qwertyuio"\nprint(prices)\nprint("Cost:", prices[0])\n\nprices[0] = "A"\nprint(prices)\nprint("Updated cost:", prices[0])'),
-    ],
-    hide_code=True,
-)
 def in_place_modification(update_index_text):
     """## In-Place Modification
 
@@ -123,15 +65,6 @@ replaced with `99.99`."""
     return cs.md(f"**Output:** `{result}`")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('append, pop, remove', default='my_list = [10, "bw"]\nprint(my_list)\n\nmy_list.append("abc")\nprint(f"After append abc: {my_list}")\nmy_list.append("xyz")\nprint(f"After append xyz: {my_list}")\n\nmy_list.append("abc")\nprint(f"After append abc: {my_list}")\nmy_list.insert(2, "thing")\nprint(f"After insert thing at index pos 2: {my_list}")\n\n\n\nmy_list.pop(1)\nprint(f"pop the element at index pos 1 out of the list: {my_list}")\n\nmy_list.pop()\nprint(f"pop the element the last element out of the list: {my_list}")\n\nmy_list.remove("thing")\nprint(f"After remove: {my_list}")\n\n# s = "qwertyu"\n# print(s.find("123456"))'),
-    ],
-    hide_code=True,
-    layout={'column_fraction': 0.3546257528786501, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'append, pop, remove': 'top-left'}, 'extra_code_fraction': 0.5},
-)
 def append_pop_remove():
     """## Adding and Removing Elements: A Method Preview
 
@@ -164,14 +97,6 @@ print(f"After remove: {my_list}")       # After remove: [10]
 full set is covered a few slides ahead."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Sequence functions and methods', default='house_prices1 = [380000, 900000, 100, 875000, 100]\nhouse_prices2 = [225000, 100000, 100]\ntotal_house_prices = house_prices1 + house_prices2\n\nprint(f"There are {len(total_house_prices)} prices in the list")\nprint(total_house_prices)\ncost = min(total_house_prices)\nprint(f"Lowest cost housing: {cost}")\nprint(f"Highest cost housing: {max(total_house_prices)}")\nprint(f"Total value: {sum(total_house_prices)}")\nprint(f"Index of 225000: {total_house_prices.index(225000)}")\nprint(f"Count of 100: {total_house_prices.count(100)}")'),
-    ],
-    hide_code=True,
-)
 def sequence_functions_table():
     """## Sequence-Type Functions and Methods
 
@@ -196,17 +121,6 @@ cost = min(house_prices)
 ```"""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('slice_start_text', default='0'),
-        ui.text_input('slice_end_text', default='2'),
-        ui.tests('List slicing', default='boston_bruins = ["Tyler", "Zdeno", "Patrice"]\nprint(f"Elements 0 and 1: {boston_bruins[0:2]}")\nprint(f"Elements 1 and 2: {boston_bruins[1:3]}")\n\nelection_years = [1992, 1996, 2000, 2004, 2008]\nprint(election_years[0:-1])   # Every year except the last\nprint(election_years[0:-3])   # Every year except the last three\nprint(election_years[-3:-1])  # The third and second to last years\nprint(election_years[-1:-4])  # The third and second to last years\nprint(election_years[-1:-4:-1])  # The third and second to last years'),
-    ],
-    hide_code=True,
-    layout={'column_fraction': 0.2838338358392081, 'left_panel_fraction': 0.5, 'right_panel_fraction': 0.5, 'tab_quadrant': {'List slicing': 'top-right', '__inputs__': 'bottom-left'}, 'extra_code_fraction': 0.5},
-)
 def list_slicing(slice_start_text, slice_end_text):
     """## List Slicing
 
@@ -244,15 +158,6 @@ Type a start/end index below to slice `boston_bruins` yourself."""
     return cs.md(f"**Output:** `{result}`")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Full method trace', default='vals = [1, 4, 16]\n\nvals.append(9)\nprint(f"append(9): {vals}")\n\nvals.insert(2, 18)\nprint(f"insert(2, 18): {vals}")\n\n# value = vals.pop()\n# print(f"pop() -> {value}, list now {vals}")\n\n# vals.remove(4)\n# print(f"remove(4): {vals}")\n\n# # vals.remove(55) would raise ValueError -- 55 is not in vals'),
-        ui.tests('sort / reverse', default='my_list = [14, 5, 8]\nmy_list.sort()\nprint(f"sort(): {my_list}")\n\nmy_list.reverse()\nprint(f"reverse(): {my_list}")'),
-    ],
-    hide_code=True,
-)
 def list_methods_table():
     """## List Methods
 
@@ -289,16 +194,6 @@ Removing a value that isn't there (`list.remove(55)` on a list without
 that line."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('nest_row_text', default='0'),
-        ui.text_input('nest_col_text', default='0'),
-        ui.tests('Tic-tac-toe board', default='tic_tac_toe = [["X", "O", "X"], [" ", "X", " "], ["O", "O", "X"]]\nprint(len(tic_tac_toe))\nprint(tic_tac_toe)\nmiddle_row = tic_tac_toe[1]\nprint(middle_row)\nmiddle_row[2] = "O"\nprint(middle_row)\nprint(tic_tac_toe)\n# print(tic_tac_toe[0][0], tic_tac_toe[0][1], tic_tac_toe[0][2])\n# print(tic_tac_toe[1][0], tic_tac_toe[1][1], tic_tac_toe[1][2])\n# print(tic_tac_toe[2][0], tic_tac_toe[2][1], tic_tac_toe[2][2])'),
-    ],
-    hide_code=True,
-)
 def list_nesting(nest_row_text, nest_col_text):
     """MWF10 Covered 2D lists and did cover 2d lists, talk about popping returning a value
 MWF11 Covered up to 2d lists but did not cover 2d lists
@@ -348,15 +243,6 @@ Type a row/column below to read a cell from `tic_tac_toe`."""
     return cs.md(f"**Output:** `{result}`")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('Nested for loop', default='currency = [\n    [1.00, 5.00, 10.0],  # US Dollars\n    [0.75, 3.77, 7.53],  # Euros\n    [0.65, 3.25, 6.50],  # British pounds\n]\n\nfor row in currency:\n    for cell in row:\n        print(cell, end=" ")\n    print()'),
-        ui.tests('enumerate() for indices', default='currency = [\n    [1, 5, 10],\n    [0.75, 3.77, 7.53],\n    [0.65, 3.25, 6.50],\n]\n\nfor row_index, row in enumerate(currency):\n    for column_index, item in enumerate(row):\n        print(f"currency[{row_index}][{column_index}] is {item:.2f}")'),
-    ],
-    hide_code=True,
-)
 def nested_for_loops():
     """## Iterating Multi-Dimensional Lists
 
@@ -391,15 +277,6 @@ for row_index, row in enumerate(currency):
 ```"""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('membership_name_text', default='Messi'),
-        ui.tests('in / not in on a list', default='prices = ["$20", 15, 5]\nprint(15 in prices)\nprint(44 in prices)\n\nrequest_str = "GET index.html HTTP/1.1"\nif "/1.1" in request_str:\n    print("HTTP protocol 1.1")\nif "HTTPS" not in request_str:\n    print("Unsecured connection")'),
-    ],
-    hide_code=True,
-)
 def membership_operators(membership_name_text):
     """## Membership Operators: `in` / `not in`
 
@@ -441,14 +318,6 @@ Type a name below to check it against the Barcelona roster."""
     return cs.md(f"**Output:** `{result}`")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('is / is not', default='w = 500\nx = 500 + 500  # Create a new object with value 1000\ny = w + w      # Create a second object with value 1000\nz = x          # Bind z to the same object as x\n\nif z is x:\n    print("z and x are bound to the same object")\nif z is not y:\n    print("z and y are NOT bound to the same object")'),
-    ],
-    hide_code=True,
-)
 def identity_operators():
     """## Identity Operators: `is` / `is not`
 
@@ -477,16 +346,6 @@ they're two *different* objects, so `x is y` is `False`. `==` compares
 values; `is` compares identity."""
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.text_input('separator_text', default='/'),
-        ui.tests('split()', default='url = "en.wikipedia.org/wiki/ethanol"\ntokens = url.split("/")  # Uses "/" separator\nprint(tokens)\n\nsentence = "I love python"\nprint(sentence.split())  # No argument: splits on whitespace'),
-        ui.tests('join()', default='web_path = ["www.website.com", "profile", "settings"]\nseparator = "/"\nurl = separator.join(web_path)\nprint(url)\n\n# split() and join() together: swap a path\'s separator\npath = "C:/Users/Wolfman/Documents/report.pdf"\ntokens = path.split("/")\nprint("\\\\".join(tokens))'),
-    ],
-    hide_code=True,
-)
 def split_and_join(separator_text):
     """## Splitting and Joining Strings
 
@@ -522,15 +381,6 @@ Type a separator below to re-join `web_path` with it."""
     return cs.md(f"**Output:** `{joined}`")
 
 
-@app.cell(
-    instance='editable',
-    elements=[
-        ui.notes('notes'),
-        ui.tests('sort() vs sorted()', default='my_list = [150, 47, 500, -37, 0]\nmy_list.sort()\nprint(my_list)\n\nnumbers = [-5, 3, 10, 0]\nsorted_numbers = sorted(numbers)\nprint(f"Original numbers: {numbers}")\nprint(f"Sorted numbers: {sorted_numbers}")'),
-        ui.tests('key and reverse', default='names = ["Serena Williams", "Venus Williams", "rafael Nadal", "john McEnroe"]\nno_key_sort = sorted(names)\nkey_sort = sorted(names, key=str.lower)\nprint(f"Sorting without key: {no_key_sort}")\nprint(f"Sorting with key: {key_sort}")\n\nnums = [3, 1, 4, 1, 5, 9]\nprint(sorted(nums, reverse=True))'),
-    ],
-    hide_code=True,
-)
 def sorting_lists():
     """## Sorting Lists
 
@@ -566,68 +416,3 @@ print(sorted(nums, reverse=True))     # [9, 5, 4, 3, 1, 1] -- highest to lowest
 Without `key=str.lower`, uppercase letters sort before *all* lowercase
 letters, so `"john McEnroe"` would land after every capitalized
 name."""
-
-
-@app.slide("Title", cells=[])
-def slide_title():
-    """"""
-
-
-@app.slide("Lists: Container, Element, Index", cells=["list_basics"])
-def slide_1():
-    """"""
-
-
-@app.slide("In-Place Modification", cells=["in_place_modification"])
-def slide_2():
-    """"""
-
-
-@app.slide("Adding and Removing Elements", cells=["append_pop_remove"])
-def slide_3():
-    """"""
-
-
-@app.slide("Sequence-Type Functions and Methods", cells=["sequence_functions_table"])
-def slide_4():
-    """"""
-
-
-@app.slide("List Slicing", cells=["list_slicing"])
-def slide_5():
-    """"""
-
-
-@app.slide("List Methods", cells=["list_methods_table"])
-def slide_6():
-    """"""
-
-
-@app.slide("List Nesting: 2D Lists", cells=["list_nesting"])
-def slide_7():
-    """"""
-
-
-@app.slide("Iterating Multi-Dimensional Lists", cells=["nested_for_loops"])
-def slide_8():
-    """"""
-
-
-@app.slide("Membership Operators: in / not in", cells=["membership_operators"])
-def slide_9():
-    """"""
-
-
-@app.slide("Identity Operators: is / is not", cells=["identity_operators"])
-def slide_10():
-    """"""
-
-
-@app.slide("Splitting and Joining Strings", cells=["split_and_join"])
-def slide_11():
-    """"""
-
-
-@app.slide("Sorting Lists", cells=["sorting_lists"])
-def slide_12():
-    """"""
