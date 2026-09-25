@@ -64,24 +64,33 @@ def test_run_tests_sees_the_passed_namespace():
     assert result["status"] == "pass"
 
 
-def test_run_tests_mutates_the_namespace_directly():
-    """A test box's own top-level writes -- and any `global`-declared
-    write made by a cell it calls -- must land in the real namespace,
-    not a throwaway copy: a called cell's `global x` only ever resolves
-    through that cell's own __globals__ dict (fixed at compile time), so
-    a copy here could never make a shared global actually work. See
-    kernel.py's run_tests/_compile_cell_function docstrings."""
+def test_run_tests_does_not_mutate_the_real_namespace():
+    """A test box's own top-level writes must stay local to that one
+    test run, never landing in the caller's real namespace dict -- this
+    is what makes two unrelated `tests` boxes (or a `tests` box and
+    another cell) unable to silently see each other's locals just
+    because they happen to run against the same Session. See
+    kernel.py's run_tests docstring for the full rationale and the
+    accepted trade-off (a test's own fresh assignment is no longer
+    visible to a cell it calls via `global`, unlike before this test
+    was rewritten)."""
     namespace = {"base": 5}
     run_tests("base = 999", namespace)
-    assert namespace["base"] == 999
+    assert namespace["base"] == 5  # untouched -- the write stayed in run_tests's private copy
 
 
-def test_run_tests_seeds_a_global_before_calling_a_cell_that_declares_it():
-    """Regression guard for examples/marchingSquares.py's cell_2/cell_3
-    pattern: a test box seeds a shared global itself, then calls a cell
-    that reads/mutates it via `global`. This can only work if the test
-    runs against the exact same dict object the cell's own __globals__
-    is -- see run_tests/_compile_cell_function's docstrings."""
+def test_run_tests_cannot_leak_a_fresh_local_into_a_cell_it_calls():
+    """Former regression guard for examples/marchingSquares.py's
+    cell_2/cell_3 pattern -- a test box used to be able to seed a
+    not-yet-real global itself (`x1 = 4`) and have a called cell's
+    `global x1` mutation see and build on it. That's the exact
+    cross-boundary leak this fix closes: `cell_2`'s own __globals__ is
+    still the real `session.namespace` (a called cell's `global`
+    mutation still works -- see test_run_tests_sees_a_prior_cells_real_
+    global_write below), but the test's *own* `x1 = 4` now stays in
+    run_tests's private copy, so `cell_2` sees no `x1` at all here and
+    raises NameError, exactly like calling a function from an unrelated
+    module that references a global you only set in your own script."""
     from codeslides.deck import Cell, Deck, Element
 
     deck = Deck()
@@ -97,6 +106,42 @@ def test_run_tests_seeds_a_global_before_calling_a_cell_that_declares_it():
     kernel.run_all(session)  # has a tests element -- defined only, never eagerly called
 
     result = run_tests("x1 = 4\ncell_2()\nassert x1 == 9, f'expected 9, got {x1}'", session.namespace)
+    assert result["status"] == "error"
+    assert "NameError" in result["message"]
+    assert "x1" not in session.namespace  # the test's own local never escaped
+
+
+def test_run_tests_sees_a_prior_cells_real_global_write():
+    """The pattern that still works after this fix: if some earlier
+    *cell* run (not the test box itself) already set a global for real,
+    a test calling a cell that mutates it via `global` still persists
+    that mutation into the real session.namespace -- `cell_2`'s own
+    __globals__ is still the real dict, entirely unaffected by which
+    dict the *test's* own top-level exec runs against.
+
+    Accepted corollary of running the test against a private copy: the
+    test's own subsequent code (its next line, right after the call)
+    still sees its copy's pre-call snapshot, not the just-written real
+    value -- so this checks the mutation via session.namespace
+    afterward, not via an assert inside the test source itself. No
+    current chapter deck or example asserts on a global immediately
+    after mutating it via a called cell within the same test box."""
+    from codeslides.deck import Cell, Deck, Element
+
+    deck = Deck()
+    deck.add_cell(
+        Cell(
+            name="cell_2",
+            source="def cell_2():\n    global x1\n    x1 += 5\n",
+            elements=[Element(name="unit", kind="tests")],
+        )
+    )
+    kernel = Kernel(deck)
+    session = Session(deck=deck)
+    session.namespace["x1"] = 4  # a real, already-persisted global -- not set by the test itself
+    kernel.run_all(session)
+
+    result = run_tests("cell_2()", session.namespace)
     assert result["status"] == "pass", result["message"]
     assert session.namespace["x1"] == 9
 
@@ -106,7 +151,10 @@ def test_run_tests_cannot_alter_a_cell_it_only_reads_a_global_from():
     examples/marchingSquares.py): a cell that reads a name with no
     `global` declaration is an ordinary local if it ever assigns that
     name, or a free variable resolving to the shared global if it only
-    reads -- either way, it can never write back to the shared name."""
+    reads -- either way, it can never write back to the shared name.
+    Uses a real, already-persisted global (not one the test itself
+    assigns) since a test's own fresh top-level writes no longer reach
+    session.namespace at all -- see the tests above."""
     from codeslides.deck import Cell, Deck, Element
 
     deck = Deck()
@@ -119,11 +167,41 @@ def test_run_tests_cannot_alter_a_cell_it_only_reads_a_global_from():
     )
     kernel = Kernel(deck)
     session = Session(deck=deck)
+    session.namespace["x2"] = 5  # a real, already-persisted global
     kernel.run_all(session)  # has a tests element -- defined only, never eagerly called
 
-    result = run_tests("x2 = 5\nassert cell_3() == 5", session.namespace)
+    result = run_tests("assert cell_3() == 5", session.namespace)
     assert result["status"] == "pass", result["message"]
     assert session.namespace["x2"] == 5  # cell_3 never had a way to alter it
+
+
+def test_run_tests_own_locals_do_not_leak_into_another_cells_test_box():
+    """The actual bug report this fix addresses: a variable assigned in
+    one cell's `tests` box must not become readable from a completely
+    unrelated cell's `tests` box (or main editor) just because both
+    happen to run against the same Session. Before this fix, `run_tests`
+    executed straight against the live session.namespace, so cell A's
+    `leaked_var = 999` silently became visible everywhere else in the
+    deck with no graph edge recording any dependency."""
+    from codeslides.deck import Cell, Deck, Element
+
+    deck = Deck()
+    deck.add_cell(
+        Cell(name="cell_a", source="def cell_a():\n    pass\n", elements=[Element(name="t1", kind="tests")])
+    )
+    deck.add_cell(
+        Cell(name="cell_b", source="def cell_b():\n    pass\n", elements=[Element(name="t2", kind="tests")])
+    )
+    kernel = Kernel(deck)
+    session = Session(deck=deck)
+    kernel.run_all(session)
+
+    run_tests("leaked_var = 999", session.namespace)
+    assert "leaked_var" not in session.namespace
+
+    result = run_tests("print(leaked_var)", session.namespace)
+    assert result["status"] == "error"
+    assert "NameError" in result["message"]
 
 
 def test_run_tests_empty_source_passes_trivially():
