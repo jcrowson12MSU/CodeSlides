@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { CellState } from '../deckState'
-import { CODE_TAB_ID, INPUTS_TAB_ID, type CellLayout, type Quadrant } from '../protocol'
+import { CODE_TAB_ID, INPUTS_TAB_ID, debuggerOwnerTab, debuggerTabId, isDebuggerTabId, type CellLayout, type Quadrant } from '../protocol'
 import { runCellWithBreakpointsClientSide, type PyodideDebugRunResult } from '../pyodideKernel'
 import { CellOutputView } from './CellOutputView'
 import { hasCellOutput } from './cellOutput'
 import { CodeEditor, type RemotePeerCursor } from './CodeEditor'
+import { DebuggerPanel } from './DebuggerPanel'
 import { EditCellPanel } from './EditCellPanel'
 import { ElementWidget } from './ElementWidget'
-import { IterationTable } from './IterationTable'
 import { iterationSteps, stepSourceLine } from './iterationSteps'
 import { TestsElementWidget } from './TestsElementWidget'
+import { deriveTestDebugView, useTestsDebugState } from './useTestsDebugState'
 import { ViewerElementWidget } from './ViewerElementWidget'
 import {
   isInputElement,
@@ -746,6 +747,14 @@ export function Cell({
     return line === null ? null : line - defLineOffset
   }, [debugResult, debugSteps, debugStepIndex, defLineOffset])
 
+  // Every `tests` element's own independent breakpoint set/debug run --
+  // see useTestsDebugState's own docstring for why this lives here
+  // rather than inside TestsElementWidget: the editor tab and the
+  // debugger tab for the SAME test both need to read/drive this same
+  // state, and they're now two independently-positionable tabs rather
+  // than one component owning both.
+  const testsDebug = useTestsDebugState(cellId, meta.elements, allCellNames)
+
   // This app's client-side-only execution model never writes a local
   // edit back into deck.cells[cellId].source/meta.source at all (App.tsx's
   // own mergedCellState comment: "deck.cells[cellId].source only updates
@@ -945,11 +954,34 @@ export function Cell({
     elementTabIds.push(element.name)
   }
   const allTabs = hasPrimaryEditorTab ? [...elementTabIds, CODE_TAB_ID] : elementTabIds
+  // A debugger tab (protocol.ts's debuggerTabId) is synthetic -- never
+  // one of `allTabs` (EditCellPanel's own tab list: default-tab picker,
+  // reorder UI, etc. -- none of those make sense for a tab that only
+  // exists conditionally and is always positioned relative to its own
+  // owner tab, never independently reorderable among real elements).
+  // It's appended right after its owner's own tab, present only once
+  // there's actually something to show for it (a breakpoint set, or a
+  // previous debug run's results still on screen) -- same "additive
+  // feature, costs nothing until used" gating the old inline panel
+  // always had, just now decided per-tab instead of per-render-branch.
+  const quadrantTabs: string[] = []
+  for (const tab of allTabs) {
+    quadrantTabs.push(tab)
+    if (tab === CODE_TAB_ID) {
+      if (breakpointLines.size > 0 || debugResult || debugError) quadrantTabs.push(debuggerTabId(tab))
+      continue
+    }
+    const element = meta.elements.find((e) => e.name === tab)
+    if (element && isTestElement(element.kind)) {
+      const slot = testsDebug.slotOf(tab)
+      if (slot.breakpointLines.size > 0 || slot.debugResult || slot.debugError) quadrantTabs.push(debuggerTabId(tab))
+    }
+  }
   const tabsByQuadrant: Record<Quadrant, string[]> = {
-    'top-left': allTabs.filter((t) => quadrantOf(t) === 'top-left'),
-    'top-right': allTabs.filter((t) => quadrantOf(t) === 'top-right'),
-    'bottom-left': allTabs.filter((t) => quadrantOf(t) === 'bottom-left'),
-    'bottom-right': allTabs.filter((t) => quadrantOf(t) === 'bottom-right'),
+    'top-left': quadrantTabs.filter((t) => quadrantOf(t) === 'top-left'),
+    'top-right': quadrantTabs.filter((t) => quadrantOf(t) === 'top-right'),
+    'bottom-left': quadrantTabs.filter((t) => quadrantOf(t) === 'bottom-left'),
+    'bottom-right': quadrantTabs.filter((t) => quadrantOf(t) === 'bottom-right'),
   }
 
   // Each quadrant owns which of *its own* tabs is currently selected --
@@ -1099,6 +1131,53 @@ export function Cell({
   // quadrant system. Same `extraCodeFraction`-driven top/bottom split,
   // draggable via the same handle, as before this item.
   function renderTabContent(tab: string) {
+    if (isDebuggerTabId(tab)) {
+      const owner = debuggerOwnerTab(tab)
+      if (owner === CODE_TAB_ID) {
+        return (
+          <DebuggerPanel
+            running={debugRunning}
+            onRun={runWithBreakpoints}
+            hasBreakpoints={breakpointLines.size > 0}
+            steps={debugSteps}
+            stepIndex={debugStepIndex}
+            onStepBack={() => setDebugStepIndex((i) => Math.max(0, i - 1))}
+            onStepForward={() => setDebugStepIndex((i) => Math.min(debugSteps.length - 1, i + 1))}
+            error={debugError}
+            truncated={debugResult?.truncated ?? false}
+            truncatedMessage="Stopped recording after 500 iterations of one loop (the program still ran to completion) — narrow down which loop you're inspecting to see the rest."
+            resultError={debugResult && debugResult.status === 'error' ? debugResult.error : null}
+            iterationTable={debugResult?.iterationTable ?? null}
+            highlightLines={breakpointLines}
+            lineOffset={lineOffset}
+            revealIndex={debugRevealIndex}
+          />
+        )
+      }
+      const element = meta.elements.find((e) => e.name === owner)
+      if (!element || !isTestElement(element.kind)) return null
+      const slot = testsDebug.slotOf(owner)
+      const { steps, revealIndex } = deriveTestDebugView(slot)
+      const testSource = testSourceValues[owner] ?? String(element.config.default ?? '')
+      return (
+        <DebuggerPanel
+          running={slot.debugRunning}
+          onRun={() => testsDebug.runWithBreakpoints(owner, testSource, latestRunSourceRef.current)}
+          hasBreakpoints={slot.breakpointLines.size > 0}
+          steps={steps}
+          stepIndex={slot.stepIndex}
+          onStepBack={() => testsDebug.setStepIndex(owner, (i) => Math.max(0, i - 1))}
+          onStepForward={() => testsDebug.setStepIndex(owner, (i) => Math.min(steps.length - 1, i + 1))}
+          error={slot.debugError}
+          truncated={slot.debugResult?.truncated ?? false}
+          truncatedMessage="Stopped recording after 500 iterations of one loop (the test still ran to completion) — narrow down which loop you're inspecting to see the rest."
+          resultError={slot.debugResult && slot.debugResult.status !== 'pass' ? slot.debugResult.message : null}
+          iterationTable={slot.debugResult?.iterationTable ?? null}
+          highlightLines={slot.breakpointLines}
+          revealIndex={revealIndex}
+        />
+      )
+    }
     if (tab === CODE_TAB_ID) {
       // The cell's own execution error/returned-value output
       // (ARCHITECTURE.md section 6) render directly below the code
@@ -1117,109 +1196,6 @@ export function Cell({
           )}
         </>
       )
-      // Step-through debugger panel: only takes up space once there's
-      // something to debug (at least one breakpoint set) or a previous
-      // debug run's results are still showing -- a cell nobody is
-      // debugging pays nothing extra in its layout, same "additive
-      // feature" rule the presenter-highlight feature already follows.
-      const debuggerPanel =
-        !collapsed && (breakpointLines.size > 0 || debugResult || debugError) ? (
-          <div className="cs-cell-debugger">
-            <div className="cs-cell-debugger-controls">
-              <button
-                type="button"
-                onClick={runWithBreakpoints}
-                disabled={debugRunning || breakpointLines.size === 0}
-                title={
-                  breakpointLines.size === 0
-                    ? 'Click a line number in the gutter to set a breakpoint first'
-                    : undefined
-                }
-              >
-                {debugRunning ? 'Running…' : 'Run with breakpoints'}
-              </button>
-              {debugSteps.length > 0 && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setDebugStepIndex((i) => Math.max(0, i - 1))}
-                    disabled={debugStepIndex === 0}
-                    aria-label="Step back"
-                  >
-                    ◀
-                  </button>
-                  <span className="cs-cell-debugger-step-counter">
-                    step {debugStepIndex + 1} / {debugSteps.length}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setDebugStepIndex((i) => Math.min(debugSteps.length - 1, i + 1))}
-                    disabled={debugStepIndex === debugSteps.length - 1}
-                    aria-label="Step forward"
-                  >
-                    ▶
-                  </button>
-                </>
-              )}
-            </div>
-            {debugError && <pre className="cs-cell-error">{debugError}</pre>}
-            {debugResult?.truncated && (
-              <p className="cs-cell-debugger-warning">
-                Stopped recording after 500 iterations of one loop (the program still ran to
-                completion) — narrow down which loop you're inspecting to see the rest.
-              </p>
-            )}
-            {debugResult && debugResult.status === 'error' && (
-              <pre className="cs-cell-error">{debugResult.error}</pre>
-            )}
-            {debugResult && (
-              <IterationTable
-                table={debugResult.iterationTable}
-                highlightLines={breakpointLines}
-                lineOffset={lineOffset}
-                currentStep={debugSteps[debugStepIndex]}
-                revealIndex={debugRevealIndex}
-              />
-            )}
-            {/* Former step-scrubber view (one PyodideDebugSnapshot at a
-                time, stepped with prev/next arrows) -- superseded by
-                IterationTable above, kept here disabled rather than
-                deleted so reverting to it is a small diff. Would need
-                debugStepIndex reintroduced as live state and
-                debugResult.iterationTable's rows flattened back into a
-                snapshots-shaped list to actually compile again.
-            {debugResult && debugResult.snapshots.length > 0 && (
-              <>
-                <button onClick={() => setDebugStepIndex((i) => Math.max(0, i - 1))} disabled={debugStepIndex === 0}>◀</button>
-                <span className="cs-cell-debugger-step-counter">
-                  step {debugStepIndex + 1} / {debugResult.snapshots.length} — line {debugResult.snapshots[debugStepIndex].line + lineOffset}
-                </span>
-                <button onClick={() => setDebugStepIndex((i) => Math.min(debugResult.snapshots.length - 1, i + 1))} disabled={debugStepIndex === debugResult.snapshots.length - 1}>▶</button>
-              </>
-            )}
-            {debugResult && debugResult.snapshots.length === 0 && debugResult.status === 'idle' && (
-              <p className="cs-cell-debugger-warning">Ran to completion without hitting any breakpoint.</p>
-            )}
-            {debugResult && debugResult.snapshots.length > 0 && (
-              <div className="cs-cell-debugger-snapshot">
-                <table className="cs-cell-debugger-variables">
-                  <tbody>
-                    {Object.entries(debugResult.snapshots[debugStepIndex].variables).map(([name, value]) => (
-                      <tr key={name}>
-                        <td className="cs-cell-debugger-var-name">{name}</td>
-                        <td className="cs-cell-debugger-var-value">{value}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <pre className="cs-cell-output cs-cell-debugger-output">
-                  {debugResult.snapshots[debugStepIndex].stdoutSoFar || '(no output yet)'}
-                </pre>
-              </div>
-            )}
-            */}
-          </div>
-        ) : null
       const codeEditor = (
         <div className="cs-cell-code-and-output">
           <CodeEditor
@@ -1280,7 +1256,6 @@ export function Cell({
             onCursorChange={onCursorChange}
             remotePeers={remotePeers}
           />
-          {debuggerPanel}
           {outputBelowEditor}
         </div>
       )
@@ -1362,19 +1337,9 @@ export function Cell({
             onChangeTestSource(element.name, source)
             if (reviewMode && onStageTestEdit) onStageTestEdit(element.name, source)
           }}
-          cellId={cellId}
-          // The SAME latestRunSourceRef.current the primary editor's own
-          // runWithBreakpoints already uses -- the owning cell's actual
-          // last-committed, standalone-compilable source (hide_def
-          // reattachment already applied there, see that ref's own
-          // docstring), never meta.source/meta.executable_source
-          // directly, so a test's debug run defines the SAME code its
-          // own pass/fail run would define if this tab hasn't touched
-          // the cell yet, and the SAME code a local edit to the cell
-          // (not yet reflected in meta.*) would use.
-          cellSource={latestRunSourceRef.current}
-          cellElements={meta.elements}
-          allCellNames={allCellNames}
+          breakpointLines={testsDebug.slotOf(element.name).breakpointLines}
+          onToggleBreakpoint={(line) => testsDebug.toggleBreakpoint(element.name, line)}
+          stepLine={deriveTestDebugView(testsDebug.slotOf(element.name)).currentStepLine}
         />
       )
     }
@@ -1447,7 +1412,13 @@ export function Cell({
               }}
               onDragEnd={() => setDraggedTab(null)}
             >
-              {tab === CODE_TAB_ID ? 'Code' : tab === INPUTS_TAB_ID ? 'Inputs' : tab}
+              {tab === CODE_TAB_ID
+                ? 'Code'
+                : tab === INPUTS_TAB_ID
+                  ? 'Inputs'
+                  : isDebuggerTabId(tab)
+                    ? 'Debugger'
+                    : tab}
             </button>
           ))}
         </div>

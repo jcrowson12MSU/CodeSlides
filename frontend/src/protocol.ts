@@ -51,6 +51,42 @@ export const CODE_TAB_ID = '__code__'
 // no mergeable input elements at all, not "present but empty."
 export const INPUTS_TAB_ID = '__inputs__'
 
+// Reserved `tab_quadrant`/tab-id key for the cell's own step-through
+// debugger view -- the breakpoint/step-cursor/IterationTable panel that
+// used to render as a fixed block glued below the primary code editor.
+// Movable/draggable now, same as every other tab, but its own tab id is
+// DERIVED (debuggerTabId below), not a single fixed sentinel like
+// CODE_TAB_ID/INPUTS_TAB_ID -- the primary editor's debug run is one
+// debugger, but a cell can also have any number of `tests` elements,
+// each with its OWN independent breakpoint set/debug run (see
+// TestsElementWidget's own docstring), so each needs its own separate,
+// independently-positionable tab. `"::debugger"` is never a legal
+// suffix of a real element name (element names are Python identifiers,
+// which can't contain `:`), so appending it to CODE_TAB_ID or any real
+// element name is guaranteed collision-free with no separate reserved-
+// name registry needed.
+export function debuggerTabId(ownerTab: string): string {
+  return `${ownerTab}::debugger`
+}
+
+// True if `tab` is a debugger tab id (debuggerTabId's own output shape),
+// false for any real element name or other sentinel -- used wherever a
+// tab needs different treatment just for being a debugger tab (e.g.
+// EditCellPanel's default-tab picker excludes them, tabLabel special-
+// cases them) without hardcoding the "::debugger" suffix in more than
+// one place.
+export function isDebuggerTabId(tab: string): boolean {
+  return tab.endsWith('::debugger')
+}
+
+// The tab this debugger tab belongs to/was derived from (debuggerTabId's
+// own inverse) -- CODE_TAB_ID for the primary editor's debugger, or a
+// `tests` element's own name for that test's debugger. Only meaningful
+// when isDebuggerTabId(tab) is true.
+export function debuggerOwnerTab(tab: string): string {
+  return tab.slice(0, -'::debugger'.length)
+}
+
 export interface CellLayout {
   // New shape (3 independent dividers + 4-quadrant tab assignment).
   column_fraction?: number
