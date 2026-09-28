@@ -1,5 +1,5 @@
-"""While loops -- lecture deck built from Lectures/ZybooksNotes/Chapter 7
-(zyBooks CSE 1284, sections 7.1-7.4) and
+"""Loops -- lecture deck built from Lectures/ZybooksNotes/Chapter 7
+(zyBooks CSE 1284, sections 7.1-7.13, 7.15) and
 Lectures/ZybooksNotes/Chapter 7/chapter 7 plan.md.
 
 Like chapter1.py/chapter2.py/chapter3.py/chapter4.py/chapter6.py, this
@@ -10,14 +10,17 @@ code a student sees and can experiment with lives in one or more
 `ui.tests(...)` boxes instead, mirroring zyBooks' own "type this exact
 program, run it, change the input" pattern.
 
-Per the plan doc, this deck teaches `while` loops only -- `for` loops
-are left for a later chapter, even though chapter6.py already used
-them for list iteration. Most worked examples here are deliberately
-*different* from the zyBooks source examples (the plan asks for that
-explicitly); the GCD example is the one exception, reused from 7.3
-almost verbatim but with an added iteration counter, since the plan
-asks for a counter variable on that specific slide.
-"""
+The plan doc has two halves, separated by its own `---`. The first
+half (while loops -- the general loop concept, Python's `while` syntax,
+sentinel values, infinite loops, a counter variable) became the cells
+up through `sentinel_vs_counter` below; several of those cells' own
+notes carry hand-edits made directly in this file after the fact (typos
+and all -- left exactly as written, never "cleaned up"). The second
+half (`for_loop_intro` onward) is `for` loops: ranges, comparing `for`
+to `while`, list comprehensions, nested loops, `break`, `enumerate()`/
+`zip()`. Per that section's own instruction, its worked examples are
+new code, not reused from the zyBooks sections OR from chapter6.py's
+own earlier (nested, `enumerate()`-only) `for`-loop example."""
 
 from codeslides import App, cs, ui
 
@@ -389,6 +392,564 @@ algorithm, while `iteration_count` is a separate counter tracking how
 long it took."""
 
 
+@app.cell(
+    instance='static',
+    elements=[
+        ui.notes('notes'),
+    ],
+    hide_def=True,
+    hide_code=True,
+)
+def for_loop_intro():
+    """# For Loops
+
+Every `while` loop example so far has needed the same three pieces of
+bookkeeping written out by hand: a starting value, a boolean condition
+to check, and a line that updates a variable so the loop eventually
+stops iterating.
+
+A **`for` loop** is a different kind of loop built specifically for
+**iterating** -- visiting each item in something, one at a time --
+without writing that bookkeeping yourself. Python manages the starting
+value, the stopping check, and the update automatically; the programmer
+just says *what* to iterate over.
+
+The rest of this chapter builds up `for` loops from the ground up: how
+they iterate over ranges of numbers and over lists, when to reach for
+one instead of a `while` loop, and several more things `for` loops make
+easy -- comprehensions, nested loops, `enumerate()`, and `zip()`."""
+
+
+@app.cell(
+    instance='editable',
+    elements=[
+        ui.notes('notes'),
+        ui.text_input('range_stop_text', default='6'),
+        ui.tests(
+            'range() examples',
+            default=(
+                'print("range(6):", list(range(6)))\n'
+                'print("range(2, 6):", list(range(2, 6)))\n'
+                'print("range(2, 12, 3):", list(range(2, 12, 3)))\n'
+                'print("range(10, 0, -2):", list(range(10, 0, -2)))\n'
+            ),
+        ),
+    ],
+)
+def for_loops_and_ranges(range_stop_text):
+    """## For Loops and `range()`
+
+A `for` loop's basic shape is:
+
+```python
+for loop_variable in something_iterable:
+    # body runs once per item, loop_variable holds the current one
+```
+
+`range()` generates a sequence of whole numbers without ever storing
+them all in memory -- it's built specifically to pair with `for` loops
+when what's needed is "do this N times" or "count from A to B."
+
+```python
+for count in range(5):
+    print(count)
+```
+```text
+0
+1
+2
+3
+4
+```
+
+`range()` takes the same **start / end / stride** shape as the slice
+notation from Chapter 3 (`my_list[start:end:stride]`): `range(end)`
+starts at `0`, `range(start, end)` starts wherever you say, and
+`range(start, end, stride)` adds a step size -- negative to count
+down. Just like slicing, `end` is never included in the result.
+
+| Call | Produces |
+| --- | --- |
+| `range(6)` | `0, 1, 2, 3, 4, 5` |
+| `range(2, 6)` | `2, 3, 4, 5` |
+| `range(2, 12, 3)` | `2, 5, 8, 11` |
+| `range(10, 0, -2)` | `10, 8, 6, 4, 2` |
+
+`list(range(...))` is used above only to *print* every value at once
+for comparison -- a real `for` loop never needs `list()`, it consumes
+`range()`'s values directly, one at a time.
+
+Type a stopping value below to see `range(0, that value)`'s own
+values."""
+    try:
+        stop = int(range_stop_text)
+        values = list(range(stop))
+        range_demo_result = cs.md(f'**Output:** `range(0, {stop})` produces `{values}`')
+    except ValueError:
+        range_demo_result = cs.md('**Output:** enter a whole number')
+    return range_demo_result
+
+
+@app.cell(
+    instance='editable',
+    elements=[
+        ui.notes('notes'),
+        ui.tests(
+            'for vs. while, same job',
+            default=(
+                'print("--- for loop ---")\n'
+                'for step in range(4):\n'
+                '    print(f"step {step}")\n\n'
+                'print("--- identical while loop ---")\n'
+                'step = 0\n'
+                'while step < 4:\n'
+                '    print(f"step {step}")\n'
+                '    step = step + 1\n'
+            ),
+        ),
+    ],
+    hide_code=True,
+)
+def for_vs_while():
+    """## `for` Loops vs. `while` Loops
+
+These two loops do exactly the same thing:
+
+```python
+for step in range(4):
+    print(f"step {step}")
+
+step = 0
+while step < 4:
+    print(f"step {step}")
+    step = step + 1
+```
+
+The `for` version is shorter because Python is handling three things
+automatically that the `while` version has to spell out by hand:
+
+- **Creating the loop variable** -- `step` starts at `0` with no
+  separate `step = 0` line needed.
+- **Working toward the boolean condition becoming false** -- each pass
+  through `range(4)` moves to the next value on its own; there's no
+  `step = step + 1` to remember (or forget).
+- **Managing the boolean condition itself** -- there's no `step < 4` to
+  write at all; the loop simply ends once `range(4)` runs out of
+  values.
+
+That's also exactly where the risk of an infinite loop disappears: a
+`while` loop only stops if its own body updates the right variable in
+the right direction, but a `for` loop iterating over a range or a list
+always has a known, finite number of items, so it's *guaranteed* to
+finish.
+
+**Rule of thumb:** when the number of iterations is knowable up front
+(a fixed count, or "once per item in this list"), reach for a `for`
+loop. Save `while` for when the stopping point depends on something
+that can only be known while the program is running -- user input, a
+sentinel value, or a condition that isn't a simple count."""
+
+
+@app.cell(
+    instance='editable',
+    elements=[
+        ui.text_input('lcm_a_text', default='4'),
+        ui.text_input('lcm_b_text', default='6'),
+        ui.notes('notes'),
+        ui.tests(
+            'LCM with a for loop',
+            default=(
+                'num_a = int(input("Enter first positive integer: "))\n'
+                'num_b = int(input("Enter second positive integer: "))\n'
+                'bigger = max(num_a, num_b)\n\n'
+                'lcm = None\n'
+                'for candidate in range(bigger, num_a * num_b + 1, bigger):\n'
+                '    if candidate % num_a == 0 and candidate % num_b == 0:\n'
+                '        lcm = candidate\n'
+                '        break\n\n'
+                'print(f"LCM is {lcm}")\n'
+            ),
+        ),
+    ],
+    hide_code=True,
+)
+def lcm_with_for_loop(lcm_a_text, lcm_b_text):
+    """## Least Common Multiple, with a `for` Loop
+
+Where the earlier GCD example used a `while` loop (its stopping point,
+"until the two numbers are equal," isn't a fixed count), finding the
+**least common multiple** of two numbers fits a `for` loop perfectly:
+the only numbers worth checking are the multiples of the larger value,
+and there's a known point to stop looking -- `num_a * num_b` is always
+a common multiple, even if not the smallest one.
+
+```python
+bigger = max(num_a, num_b)
+lcm = None
+for candidate in range(bigger, num_a * num_b + 1, bigger):
+    if candidate % num_a == 0 and candidate % num_b == 0:
+        lcm = candidate
+        break
+```
+
+`range()` here only ever produces multiples of `bigger` (its own
+stride), so every `candidate` is already a multiple of one of the two
+numbers -- the loop just checks each one against the *other* number
+until it finds a match, then `break`s out immediately (more on `break`
+later in this chapter).
+
+Type two positive integers below to see their LCM."""
+    try:
+        a = int(lcm_a_text)
+        b = int(lcm_b_text)
+        if a <= 0 or b <= 0:
+            lcm_result = cs.md('**Output:** both numbers must be positive')
+        else:
+            bigger = max(a, b)
+            lcm = None
+            for candidate in range(bigger, a * b + 1, bigger):
+                if candidate % a == 0 and candidate % b == 0:
+                    lcm = candidate
+                    break
+            lcm_result = cs.md(f'**Output:**\n```text\nLCM is {lcm}\n```')
+    except ValueError:
+        lcm_result = cs.md('**Output:** enter two whole numbers')
+    return lcm_result
+
+
+@app.cell(
+    instance='editable',
+    elements=[
+        ui.notes('notes'),
+        ui.tests(
+            'Doubling every price',
+            default=(
+                'prices = [4.50, 12.00, 7.25, 20.00]\n\n'
+                'for index in range(len(prices)):\n'
+                '    prices[index] = prices[index] * 2\n\n'
+                'print(prices)\n'
+            ),
+        ),
+    ],
+    hide_code=True,
+)
+def modifying_list_with_for():
+    """## Modifying a List with a `for` Loop
+
+`for item in my_list:` is great for *reading* every element, but
+`item` is just a copy of each value -- reassigning it doesn't change
+the list:
+
+```python
+prices = [4.50, 12.00, 7.25, 20.00]
+for item in prices:
+    item = item * 2   # does NOT change prices
+print(prices)          # unchanged
+```
+
+To actually modify the list, loop over its **indices** instead (via
+`range(len(my_list))`) and assign back through `my_list[index]`:
+
+```python
+prices = [4.50, 12.00, 7.25, 20.00]
+for index in range(len(prices)):
+    prices[index] = prices[index] * 2
+print(prices)
+```
+```text
+[9.0, 24.0, 14.5, 40.0]
+```
+
+A `for` loop is the natural choice here -- and for iterating a list in
+general -- because a list's length is already known the moment the
+loop starts (`len(prices)` doesn't change while the loop runs), so
+there's no need to track a separate counter or watch for a sentinel;
+`range(len(prices))` visits each valid index exactly once."""
+
+
+@app.cell(
+    instance='editable',
+    elements=[
+        ui.notes('notes'),
+        ui.tests(
+            'List comprehension',
+            default=(
+                'prices = [4.50, 12.00, 7.25, 20.00]\n\n'
+                'doubled = [price * 2 for price in prices]\n\n'
+                'print(doubled)\n'
+            ),
+        ),
+    ],
+    hide_code=True,
+)
+def list_comprehensions():
+    """## List Comprehensions
+
+A **list comprehension** builds a new list from an existing iterable
+in a single line, instead of writing out a `for` loop that appends to
+an empty list:
+
+```python
+prices = [4.50, 12.00, 7.25, 20.00]
+
+doubled = []
+for price in prices:
+    doubled.append(price * 2)
+```
+
+is the same as:
+
+```python
+doubled = [price * 2 for price in prices]
+```
+
+The general shape is `[expression for loop_variable in iterable]` --
+`expression` (usually built from `loop_variable`) is evaluated for
+every item, and the results become the new list's elements.
+
+A comprehension can also filter which items are included at all, by
+adding `if condition` at the end:
+
+```python
+on_sale = [price for price in prices if price < 10]
+```
+
+This only keeps prices under `10`, skipping the rest entirely --
+equivalent to a `for` loop with an `if` check before each `append()`.
+Comprehensions read best for short, simple transformations; a regular
+`for` loop is usually clearer once the logic needs more than one
+line."""
+
+
+@app.cell(
+    instance='static',
+    elements=[
+        ui.notes('notes'),
+    ],
+    hide_def=True,
+    hide_code=True,
+)
+def conditional_expression_review():
+    """## Reminder: Conditional Expressions
+
+Chapter 4 introduced the **conditional expression** -- an `if`-`else`
+packed into a single expression:
+
+```python
+expr_when_true if condition else expr_when_false
+```
+
+It's worth keeping in mind heading into comprehensions: a
+comprehension's own `expression` slot can *be* a conditional
+expression, which is a different thing from the `if condition` filter
+on the previous slide. `[x for x in nums if x > 0]` *removes* items;
+`[x if x > 0 else 0 for x in nums]` *keeps every item*, just replacing
+the negative ones with `0`. It's easy to reach for the wrong one --
+when in doubt, ask whether the goal is "skip some items" (filter) or
+"transform every item, differently depending on a condition"
+(conditional expression)."""
+
+
+@app.cell(
+    instance='editable',
+    elements=[
+        ui.notes('notes'),
+        ui.tests(
+            'Multiplication grid',
+            default=(
+                'for row in range(1, 4):\n'
+                '    line = ""\n'
+                '    for col in range(1, 4):\n'
+                '        line = line + str(row * col) + "\\t"\n'
+                '    print(line)\n'
+            ),
+        ),
+    ],
+    hide_code=True,
+)
+def nested_for_loop_example():
+    """## Nested `for` Loops
+
+A loop written inside another loop's body is a **nested loop** -- the
+**outer loop** runs once per iteration of some larger task, and the
+**inner loop** runs completely, start to finish, on *every single*
+iteration of the outer one.
+
+Printing a small multiplication grid needs one loop per dimension: the
+outer loop picks a row number, the inner loop picks a column number for
+that row, and each cell is their product:
+
+```python
+for row in range(1, 4):
+    line = ""
+    for col in range(1, 4):
+        line = line + str(row * col) + "\\t"
+    print(line)
+```
+```text
+1	2	3
+2	4	6
+3	6	9
+```
+
+For every one of the outer loop's 3 iterations, the inner loop runs all
+3 of its own iterations -- 9 total cell calculations for a 3x3 grid.
+Nested loops like this are exactly how `chapter6.py`'s multi-dimensional
+list examples visit every row and column."""
+
+
+@app.cell(
+    instance='static',
+    elements=[
+        ui.notes('notes'),
+    ],
+    hide_def=True,
+    hide_code=True,
+)
+def fixme_comments():
+    """## `FIXME` Comments
+
+Real programs are rarely written all at once, correct on the first
+try -- they're built up incrementally, one small piece at a time, with
+each piece tested before moving to the next. A **`FIXME` comment**
+marks a spot that's intentionally incomplete or known to be wrong, so
+it isn't forgotten once the surrounding code starts to work:
+
+```python
+def grade_for(score):
+    if score >= 90:
+        return "A"
+    # FIXME: only handles A grades so far -- add B/C/D/F (jc, 3/1)
+    return "unknown"
+```
+
+`FIXME` (often tagged with an author's initials and a date, as above)
+is a plain-text convention, not a Python keyword -- it works purely
+because it's a distinctive word a programmer (or an editor's search
+function) can scan for later. The same convention shows up as `TODO`
+in a lot of real codebases; both mean the same thing. Leaving one is
+almost always better than leaving a guess or a silent gap: it turns "I
+hope I remember this later" into something searchable."""
+
+
+@app.cell(
+    instance='editable',
+    elements=[
+        ui.notes('notes'),
+        ui.tests(
+            'break out of a while loop',
+            default=(
+                'target = "banana"\n'
+                'fruit = ""\n\n'
+                'while True:\n'
+                '    fruit = input("Enter a fruit (or the secret word to stop): ")\n'
+                '    if fruit == target:\n'
+                '        print("Found it -- stopping early.")\n'
+                '        break\n'
+                '    print(f"{fruit} is not it, keep going.")\n'
+            ),
+        ),
+    ],
+    hide_code=True,
+)
+def break_with_while():
+    """## `break`ing Out of a `while` Loop
+
+A **`break` statement** immediately exits the loop it's inside --
+execution jumps straight past the loop entirely, skipping any remaining
+iterations, no matter what the loop's own boolean condition says.
+
+`break` is especially handy with `while True:`, a loop that would
+otherwise never stop on its own -- the exit condition is checked
+*inside* the body instead of in the loop's own header:
+
+```python
+target = "banana"
+while True:
+    fruit = input("Enter a fruit (or the secret word to stop): ")
+    if fruit == target:
+        print("Found it -- stopping early.")
+        break
+    print(f"{fruit} is not it, keep going.")
+```
+
+Without the `break`, this loop would need its stopping condition
+written into `while <condition>:` itself -- but the condition here
+("the user just typed the secret word") can only be checked *after*
+reading their input, which is why `while True:` plus an inner `if` and
+`break` reads more naturally than trying to force the check into the
+loop's own header."""
+
+
+@app.cell(
+    instance='editable',
+    elements=[
+        ui.notes('notes'),
+        ui.tests(
+            'enumerate()',
+            default=(
+                'runners = ["Ava", "Noah", "Mia"]\n\n'
+                'for place, runner in enumerate(runners, start=1):\n'
+                '    print(f"{place}. {runner}")\n'
+            ),
+        ),
+        ui.tests(
+            'zip()',
+            default=(
+                'runners = ["Ava", "Noah", "Mia"]\n'
+                'finish_times = [14.2, 14.8, 15.1]\n\n'
+                'for runner, finish_time in zip(runners, finish_times):\n'
+                '    print(f"{runner} finished in {finish_time} seconds")\n'
+            ),
+        ),
+    ],
+    hide_code=True,
+)
+def enumerate_and_zip():
+    """## `enumerate()` and `zip()`
+
+Two `for`-loop helpers that come up constantly once loops are iterating
+over more than one thing at a time.
+
+**`enumerate()`** pairs each item with its own index, so there's no
+need for a separate counter variable or `range(len(...))`:
+
+```python
+runners = ["Ava", "Noah", "Mia"]
+for place, runner in enumerate(runners, start=1):
+    print(f"{place}. {runner}")
+```
+```text
+1. Ava
+2. Noah
+3. Mia
+```
+
+`start=1` shifts where the numbering begins (`enumerate()` starts at
+`0` by default) -- handy any time the count should read naturally to a
+person, like places in a race rather than array indices.
+
+**`zip()`** walks *multiple* lists together, pairing up their items by
+position:
+
+```python
+runners = ["Ava", "Noah", "Mia"]
+finish_times = [14.2, 14.8, 15.1]
+for runner, finish_time in zip(runners, finish_times):
+    print(f"{runner} finished in {finish_time} seconds")
+```
+```text
+Ava finished in 14.2 seconds
+Noah finished in 14.8 seconds
+Mia finished in 15.1 seconds
+```
+
+Without `zip()`, pairing two lists up this way would mean looping over
+indices instead (`for i in range(len(runners)):` then indexing into
+both lists) -- `zip()` skips that entirely and hands over both values
+directly, already matched up."""
+
+
 @app.slide("Title", cells=[])
 def slide_title():
     """"""
@@ -426,4 +987,59 @@ def slide_6():
 
 @app.slide("Sentinel Variable vs. Counter Variable", cells=["sentinel_vs_counter"])
 def slide_7():
+    """"""
+
+
+@app.slide("For Loops", cells=["for_loop_intro"])
+def slide_8():
+    """"""
+
+
+@app.slide("For Loops and range()", cells=["for_loops_and_ranges"])
+def slide_9():
+    """"""
+
+
+@app.slide("For Loops vs. While Loops", cells=["for_vs_while"])
+def slide_10():
+    """"""
+
+
+@app.slide("Least Common Multiple, with a For Loop", cells=["lcm_with_for_loop"])
+def slide_11():
+    """"""
+
+
+@app.slide("Modifying a List with a For Loop", cells=["modifying_list_with_for"])
+def slide_12():
+    """"""
+
+
+@app.slide("List Comprehensions", cells=["list_comprehensions"])
+def slide_13():
+    """"""
+
+
+@app.slide("Reminder: Conditional Expressions", cells=["conditional_expression_review"])
+def slide_14():
+    """"""
+
+
+@app.slide("Nested For Loops", cells=["nested_for_loop_example"])
+def slide_15():
+    """"""
+
+
+@app.slide("FIXME Comments", cells=["fixme_comments"])
+def slide_16():
+    """"""
+
+
+@app.slide("Break with a While Loop", cells=["break_with_while"])
+def slide_17():
+    """"""
+
+
+@app.slide("enumerate() and zip()", cells=["enumerate_and_zip"])
+def slide_18():
     """"""
